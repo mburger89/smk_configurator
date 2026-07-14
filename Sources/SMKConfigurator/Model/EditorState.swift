@@ -36,9 +36,11 @@ class EditorState {
     var loadError: String? = nil
 
     /// Persisted across launches so the drawer stays the size you left it.
-    var drawerHeight: Double {
-        didSet { UserDefaults.standard.set(drawerHeight, forKey: drawerHeightDefaultsKey) }
-    }
+    /// Plain stored property (no `didSet`) -- the `@ObservableObject` macro
+    /// explicitly skips properties with accessors, so a `didSet` here would
+    /// silently stop it from publishing changes. Use `setDrawerHeight(_:)`
+    /// to change it (assigns, then persists to `UserDefaults` separately).
+    var drawerHeight: Double
 
     var activeDesign: KeyboardDesign
     var availableDesigns: [KeyboardDesign] = []
@@ -141,6 +143,11 @@ class EditorState {
 
     func toggleSelection(_ token: ActionToken) {
         selectedToken = (selectedToken == token) ? nil : token
+    }
+
+    func setDrawerHeight(_ height: Double) {
+        drawerHeight = height
+        UserDefaults.standard.set(drawerHeight, forKey: drawerHeightDefaultsKey)
     }
 
     // MARK: - Design management

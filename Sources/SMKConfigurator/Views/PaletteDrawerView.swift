@@ -40,7 +40,7 @@ struct PaletteDrawerView: View {
     }
 
     private var drawerHeightBinding: Binding<Double> {
-        Binding(get: { editor.drawerHeight }, set: { editor.drawerHeight = $0 })
+        Binding(get: { editor.drawerHeight }, set: { editor.setDrawerHeight($0) })
     }
 
     private func section(_ title: String, tokens: [ActionToken], rows: Int = 1) -> some View {
