@@ -23,6 +23,25 @@ struct KeyboardDesign: Codable, Equatable, Identifiable {
     var rowCount: Int { matrix.rows.count }
     var colCount: Int { matrix.cols.count }
 
+    struct Slot: Identifiable {
+        var row: Int
+        var col: Int
+        var widthUnits: Double
+        var id: String { "\(row),\(col)" }
+    }
+
+    /// The non-gap slots in row `r`, left to right. Shared by every board
+    /// renderer (`KeyboardBoardView`, `ThemePreviewBoardView`) so gaps are
+    /// skipped consistently -- a placeholder child there would get `HStack`
+    /// spacing on both sides and double the gap.
+    func visibleSlots(row r: Int) -> [Slot] {
+        (0..<colCount).compactMap { c in
+            let cell = grid[r][c]
+            guard !cell.isGap else { return nil }
+            return Slot(row: r, col: c, widthUnits: cell.width)
+        }
+    }
+
     /// The bundled default: gateron_lp_kbd (`~/esp/SMK_Keyboard`), 5x12,
     /// row 4 col 5 is a 2U key, row 4 col 6 has no switch. Matches
     /// `generate_kbd.py`'s `KEYS`/`key_pos` and the GPIO map documented in
