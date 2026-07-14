@@ -20,8 +20,12 @@ let themeStore = JSONFileStore<KeyboardTheme>(
     nameOf: { $0.name }
 )
 
+private let drawerHeightDefaultsKey = "drawerHeight"
+
 @ObservableObject
 class EditorState {
+    static let drawerHeightRange: ClosedRange<Double> = 120...480
+
     var document: KeymapDocument
     var fileURL: URL?
     var isDirty: Bool = false
@@ -31,6 +35,11 @@ class EditorState {
     var pendingLayerIndex: Int = 1
     var loadError: String? = nil
 
+    /// Persisted across launches so the drawer stays the size you left it.
+    var drawerHeight: Double {
+        didSet { UserDefaults.standard.set(drawerHeight, forKey: drawerHeightDefaultsKey) }
+    }
+
     var activeDesign: KeyboardDesign
     var availableDesigns: [KeyboardDesign] = []
 
@@ -38,6 +47,10 @@ class EditorState {
     var availableThemes: [KeyboardTheme] = []
 
     init() {
+        let storedHeight = UserDefaults.standard.object(forKey: drawerHeightDefaultsKey) as? Double ?? 260
+        let range = Self.drawerHeightRange
+        self.drawerHeight = min(max(storedHeight, range.lowerBound), range.upperBound)
+
         designStore.ensureSeeded(with: [.gateronLPKBD])
         themeStore.ensureSeeded(with: KeyboardTheme.allBuiltIns)
 

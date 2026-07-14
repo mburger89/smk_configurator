@@ -7,20 +7,40 @@ struct PaletteDrawerView: View {
     @Environment(EditorState.self) var editor
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 14) {
-                section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) }, rows: 2)
-                section("Numbers", tokens: KeyName.digits.map { ActionToken.key($0) })
-                section("Editing & Punctuation", tokens: KeyName.editing.map { ActionToken.key($0) })
-                section("Navigation", tokens: KeyName.navigation.map { ActionToken.key($0) })
-                section("Modifiers", tokens: ModifierName.allCases.map { ActionToken.modifier($0) })
-                layerSection
-                section("Special", tokens: [.transparent, .none, .toggleConnection])
+        VStack(spacing: 0) {
+            resizeControl
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 14) {
+                    section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) }, rows: 2)
+                    section("Numbers", tokens: KeyName.digits.map { ActionToken.key($0) })
+                    section("Editing & Punctuation", tokens: KeyName.editing.map { ActionToken.key($0) })
+                    section("Navigation", tokens: KeyName.navigation.map { ActionToken.key($0) })
+                    section("Modifiers", tokens: ModifierName.allCases.map { ActionToken.modifier($0) })
+                    layerSection
+                    section("Special", tokens: [.transparent, .none, .toggleConnection])
+                }
+                .padding(10)
             }
-            .padding(10)
+            .frame(height: editor.drawerHeight)
         }
-        .frame(height: 260)
         .background(editor.activeTheme.background.color)
+    }
+
+    private var resizeControl: some View {
+        HStack(spacing: 8) {
+            Text("Drawer size")
+                .font(.system(size: 11))
+                .foregroundColor(.gray)
+            Slider(value: drawerHeightBinding, in: EditorState.drawerHeightRange)
+            Text("\(Int(editor.drawerHeight))")
+                .font(.system(size: 11))
+                .foregroundColor(.gray)
+        }
+        .padding(EdgeInsets(top: 6, bottom: 0, leading: 10, trailing: 10))
+    }
+
+    private var drawerHeightBinding: Binding<Double> {
+        Binding(get: { editor.drawerHeight }, set: { editor.drawerHeight = $0 })
     }
 
     private func section(_ title: String, tokens: [ActionToken], rows: Int = 1) -> some View {
