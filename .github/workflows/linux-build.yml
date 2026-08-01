@@ -1,0 +1,28 @@
+name: Linux Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: "6.1.0"
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libgtk-4-dev libgtk-3-dev clang libhidapi-dev
+
+      - name: Build
+        run: swift build
