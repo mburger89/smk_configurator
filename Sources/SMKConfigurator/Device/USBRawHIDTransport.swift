@@ -57,6 +57,8 @@ final class USBRawHIDTransport: DeviceTransport {
     }
 
     deinit {
+        IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         reportBuffer.deallocate()
     }
 
