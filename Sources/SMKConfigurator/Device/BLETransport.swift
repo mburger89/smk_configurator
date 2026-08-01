@@ -1,3 +1,4 @@
+#if canImport(CoreBluetooth)
 import CoreBluetooth
 import Foundation
 
@@ -140,3 +141,4 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
         }
     }
 }
+#endif

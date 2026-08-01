@@ -24,7 +24,7 @@ let package = Package(
                 "CHidapi",
             ],
             linkerSettings: [
-                .linkedFramework("CoreBluetooth"),
+                .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),
             ]
         ),
         .testTarget(

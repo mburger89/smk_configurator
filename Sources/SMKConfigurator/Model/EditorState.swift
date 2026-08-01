@@ -127,9 +127,13 @@ class EditorState {
                 if let usb = try? USBRawHIDTransport() {
                     try await KeymapUploader.upload(json: json, using: usb)
                 } else {
+                    #if canImport(CoreBluetooth)
                     let ble = BLETransport()
                     try await ble.connect()
                     try await KeymapUploader.upload(json: json, using: ble)
+                    #else
+                    throw DeviceTransportError.noDeviceFound
+                    #endif
                 }
             } catch {
                 loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
