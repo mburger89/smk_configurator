@@ -13,6 +13,9 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftCrossUI", package: "swift-cross-ui"),
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
+            ],
+            linkerSettings: [
+                .linkedFramework("IOKit"),
             ]
         ),
         .testTarget(
