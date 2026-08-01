@@ -12,10 +12,14 @@ final class USBRawHIDTransport: DeviceTransport {
     private static let usagePage: UInt16 = 0xFF00
     private static let usage: UInt16 = 0x01
 
-    // hidapi's `hid_device*` handle (OpaquePointer) isn't Sendable, but all
-    // access to it is serialized through `queue` below, so it's safe to
-    // share across the async closure boundary in `send(_:)`. This box just
-    // asserts that to the compiler; it adds no behavior of its own.
+    // hidapi's `hid_device*` handle (OpaquePointer) isn't Sendable. `send(_:)`
+    // only ever touches it inside `queue.async`, and `deinit` (which touches
+    // it directly, not via `queue`) can only run once every in-flight
+    // `send()` call has completed and returned — Swift retains `self` across
+    // the `await` suspension in `send(_:)`, so the last reference to `self`
+    // can't drop, and `deinit` can't fire, while a `queue.async` closure is
+    // still using `device`. This box just asserts the pointer's safety to
+    // the compiler; it adds no behavior of its own.
     private struct DeviceBox: @unchecked Sendable {
         let device: OpaquePointer
     }
