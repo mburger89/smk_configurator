@@ -54,10 +54,20 @@ jobs:
           key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
 
       - name: Build
-        env:
-          PKG_CONFIG_PATH: ${{ github.workspace }}/vcpkg_installed/${{ steps.triplet.outputs.lowercase }}/lib/pkgconfig
         # Scoped to SMKConfigurator's own target, not a bare `swift build` —
         # see linux-build.yml's comment for why (avoids building
         # swift-cross-ui's platform-specific sibling backends/dependencies
         # that aren't part of this target's actual dependency closure).
-        run: swift build --target SMKConfigurator
+        #
+        # PKG_CONFIG_PATH doesn't help here: confirmed via the first real
+        # Windows CI run that vcpkg's hidapi port has no .pc file at all, so
+        # SPM's systemLibrary pkgConfig resolution silently finds nothing
+        # (same failure mode as Ubuntu, different root cause). Set INCLUDE/
+        # LIB instead — the standard MSVC-toolchain search-path variables
+        # that Swift's Windows clang importer also respects — pointing
+        # directly at vcpkg's installed headers/libs.
+        run: |
+          $triplet = "${{ steps.triplet.outputs.lowercase }}"
+          $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
+          $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
+          swift build --target SMKConfigurator
