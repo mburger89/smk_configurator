@@ -16,6 +16,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("IOKit"),
+                .linkedFramework("CoreBluetooth"),
             ]
         ),
         .testTarget(

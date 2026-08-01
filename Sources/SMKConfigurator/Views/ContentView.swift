@@ -187,6 +187,10 @@ struct ContentView: View {
             Button("Save As…") {
                 Task { await saveAs() }
             }
+            Button(editor.isSendingToDevice ? "Sending…" : "Send to Device") {
+                editor.sendToDevice()
+            }
+            .disabled(editor.isSendingToDevice)
             Text(editor.fileURL?.path ?? "(unsaved)")
                 .foregroundColor(.gray)
             if editor.isDirty {

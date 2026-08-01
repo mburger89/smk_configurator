@@ -22,6 +22,7 @@ let themeStore = JSONFileStore<KeyboardTheme>(
 
 private let drawerHeightDefaultsKey = "drawerHeight"
 
+@MainActor
 @ObservableObject
 class EditorState {
     static let drawerHeightRange: ClosedRange<Double> = 120...480
@@ -107,6 +108,42 @@ class EditorState {
         fileURL = nil
         currentLayer = 0
         isDirty = false
+    }
+
+    // MARK: - Device upload
+
+    var isSendingToDevice: Bool = false
+
+    /// Tries USB (RP2040) first, then BLE (ESP32-C6), and pushes
+    /// document.layers to whichever responds. Matrix data isn't sent — the
+    /// firmware's matrix stays compiled-in (see the design spec).
+    func sendToDevice() {
+        guard !isSendingToDevice else { return }
+        isSendingToDevice = true
+        Task {
+            defer { isSendingToDevice = false }
+            do {
+                let json = try encodeLayersJSON(document.layers)
+                if let usb = try? USBRawHIDTransport() {
+                    try await KeymapUploader.upload(json: json, using: usb)
+                } else {
+                    let ble = BLETransport()
+                    try await ble.connect()
+                    try await KeymapUploader.upload(json: json, using: ble)
+                }
+            } catch {
+                loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func encodeLayersJSON(_ layers: [[[String]]]) throws -> String {
+        struct LayersPayload: Encodable { let layers: [[[String]]] }
+        let data = try JSONEncoder().encode(LayersPayload(layers: layers))
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw DeviceTransportError.encodingFailed
+        }
+        return json
     }
 
     // MARK: - Keymap editing
