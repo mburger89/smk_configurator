@@ -25,6 +25,15 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),
+                // pkgConfig: "hidapi" above resolves fully on macOS (Homebrew
+                // ships a unified hidapi.pc with both Cflags and Libs), but
+                // Ubuntu's libhidapi-dev has no plain hidapi.pc — only
+                // hidapi-hidraw.pc/hidapi-libusb.pc — so pkgConfig silently
+                // finds nothing there and no -l flag gets added. Link
+                // explicitly per platform instead of relying on pkgConfig's
+                // Libs: output for Linux.
+                .linkedLibrary("hidapi", .when(platforms: [.macOS])),
+                .linkedLibrary("hidapi-hidraw", .when(platforms: [.linux])),
             ]
         ),
         .testTarget(
