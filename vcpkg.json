@@ -1,0 +1,5 @@
+{
+    "name": "smk-configurator",
+    "version-string": "main",
+    "dependencies": ["hidapi"]
+}

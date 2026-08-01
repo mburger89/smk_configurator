@@ -1,0 +1,63 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run: # bash isn't supported by the Swift setup action on Windows
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup VS Dev Environment
+        uses: seanmiddleditch/gha-setup-vsdevenv@v5
+
+      - name: Setup Swift
+        uses: compnerd/gha-setup-swift@v0.3.0
+        with:
+          branch: swift-6.1-release
+          tag: 6.1-RELEASE
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Compute vcpkg Triplet
+        id: triplet
+        uses: ASzc/change-string-case-action@v5
+        with:
+          string: ${{ runner.arch }}-${{ runner.os }}
+
+      - name: Restore Dependency Cache
+        id: cache
+        uses: actions/cache/restore@v3
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install hidapi via vcpkg
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ steps.triplet.outputs.lowercase }}
+        run: vcpkg install
+
+      - name: Save Dependency Cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v3
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/vcpkg_installed/${{ steps.triplet.outputs.lowercase }}/lib/pkgconfig
+        # Scoped to SMKConfigurator's own target, not a bare `swift build` —
+        # see linux-build.yml's comment for why (avoids building
+        # swift-cross-ui's platform-specific sibling backends/dependencies
+        # that aren't part of this target's actual dependency closure).
+        run: swift build --target SMKConfigurator

@@ -34,6 +34,11 @@ let package = Package(
                 // Libs: output for Linux.
                 .linkedLibrary("hidapi", .when(platforms: [.macOS])),
                 .linkedLibrary("hidapi-hidraw", .when(platforms: [.linux])),
+                // vcpkg's hidapi port on Windows produces hidapi.lib, no
+                // per-backend split like Linux — unverified until CI runs,
+                // per this repo's established pattern of iterating against
+                // real CI output rather than guessing further.
+                .linkedLibrary("hidapi", .when(platforms: [.windows])),
             ]
         ),
         .testTarget(
