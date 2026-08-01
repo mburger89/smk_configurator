@@ -25,4 +25,12 @@ jobs:
           sudo apt install -y libgtk-4-dev libgtk-3-dev clang libhidapi-dev
 
       - name: Build
-        run: swift build
+        # Scoped to the app's own target, not a bare `swift build` — the
+        # latter builds every target in the full dependency graph,
+        # including swift-cross-ui's swift-winui dependency (Windows-only,
+        # needs Windows SDK headers like wtypesbase.h that don't exist on
+        # Linux/macOS). swift-cross-ui's own CI never runs a bare
+        # `swift build` for exactly this reason — it always scopes to
+        # specific targets (see .build/checkouts/swift-cross-ui/.github/
+        # workflows/build-test-and-docs.yml's `linux` job).
+        run: swift build --target SMKConfigurator
