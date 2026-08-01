@@ -12,6 +12,7 @@ enum DeviceTransportError: Error, Equatable {
     case nak
     case payloadTooLarge
     case encodingFailed
+    case transportFailure(String)
 }
 
 /// Drives a full keymap upload (BEGIN, N x CHUNK, COMMIT) over any

@@ -135,7 +135,7 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
-            pendingContinuation?.resume(throwing: error)
+            pendingContinuation?.resume(throwing: DeviceTransportError.transportFailure(error.localizedDescription))
             pendingContinuation = nil
         }
     }
