@@ -8,14 +8,22 @@ let package = Package(
         .package(url: "https://github.com/stackotter/swift-cross-ui", .upToNextMinor(from: "0.8.0"))
     ],
     targets: [
+        .systemLibrary(
+            name: "CHidapi",
+            pkgConfig: "hidapi",
+            providers: [
+                .brew(["hidapi"]),
+                .apt(["libhidapi-dev"]),
+            ]
+        ),
         .executableTarget(
             name: "SMKConfigurator",
             dependencies: [
                 .product(name: "SwiftCrossUI", package: "swift-cross-ui"),
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
+                "CHidapi",
             ],
             linkerSettings: [
-                .linkedFramework("IOKit"),
                 .linkedFramework("CoreBluetooth"),
             ]
         ),
