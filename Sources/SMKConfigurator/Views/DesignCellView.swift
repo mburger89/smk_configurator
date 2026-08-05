@@ -7,6 +7,9 @@ struct DesignCellView: View {
     var isSelected: Bool
     var action: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     static let unit: Double = 52
     static let height: Double = 44
     static let spacing: Double = 4
@@ -16,16 +19,16 @@ struct DesignCellView: View {
 
         ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(cell.isGap ? Color.black : Color.white)
+                .fill(cell.isGap ? Color.black : chrome.surface)
             Text(cell.isGap ? "×" : formatWidth(cell.width))
                 .font(.system(size: 12))
-                .foregroundColor(cell.isGap ? Chrome.textTertiary : Chrome.textPrimary)
+                .foregroundColor(cell.isGap ? chrome.textTertiary : chrome.textPrimary)
         }
         .frame(width: width, height: Self.height)
         .overlay {
             if isSelected {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Chrome.accent, style: StrokeStyle(width: 2))
+                    .stroke(chrome.accent, style: StrokeStyle(width: 2))
             }
         }
         .onTapGesture {

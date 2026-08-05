@@ -4,37 +4,39 @@ import SwiftCrossUI
 /// `design_handoff_1c_power_grouped_list/README.md`, section "Design
 /// Tokens") -- centralized here so every pane pulls from the same palette
 /// instead of re-deriving hex values.
-enum Chrome {
+struct Chrome {
+    var scheme: ColorScheme
+
     /// Titlebar / icon rail / status bar background.
-    static let bar = Color.hex("#F6F6F7")
+    var bar: Color { scheme == .dark ? .hex("#2B2B2D") : .hex("#F6F6F7") }
     /// Main content canvas background.
-    static let canvas = Color.hex("#ECECEE")
+    var canvas: Color { scheme == .dark ? .hex("#1E1E20") : .hex("#ECECEE") }
     /// List / inspector column background.
-    static let column = Color.hex("#FBFBFC")
-    static let divider = Color.hex("#E3E3E5")
-    static let dividerLight = Color.hex("#DDDDDD")
-    static let surface = Color.white
+    var column: Color { scheme == .dark ? .hex("#252527") : .hex("#FBFBFC") }
+    var divider: Color { scheme == .dark ? .hex("#3A3A3C") : .hex("#E3E3E5") }
+    var dividerLight: Color { scheme == .dark ? .hex("#333335") : .hex("#DDDDDD") }
+    var surface: Color { scheme == .dark ? .hex("#2C2C2E") : .white }
 
-    static let accent = Color.hex("#007AFF")
-    static let accentWash = Color.hex("#007AFF", opacity: 0.12)
+    var accent: Color { scheme == .dark ? .hex("#0A84FF") : .hex("#007AFF") }
+    var accentWash: Color { accent.opacity(scheme == .dark ? 0.18 : 0.12) }
 
-    static let textPrimary = Color.black.opacity(0.85)
-    static let textSecondary = Color.black.opacity(0.6)
-    static let textTertiary = Color.black.opacity(0.45)
+    var textPrimary: Color { (scheme == .dark ? Color.white : .black).opacity(0.85) }
+    var textSecondary: Color { (scheme == .dark ? Color.white : .black).opacity(0.6) }
+    var textTertiary: Color { (scheme == .dark ? Color.white : .black).opacity(0.45) }
 
-    static let pillBackground = Color.hex("#ECEEF0")
-    static let chipBackground = Color.hex("#F2F2F4")
-    static let chipBorder = Color.hex("#E0E0E2")
+    var pillBackground: Color { scheme == .dark ? .hex("#3A3A3C") : .hex("#ECEEF0") }
+    var chipBackground: Color { scheme == .dark ? .hex("#323234") : .hex("#F2F2F4") }
+    var chipBorder: Color { scheme == .dark ? .hex("#48484A") : .hex("#E0E0E2") }
 
-    static let railActiveBackground = Color.hex("#007AFF")
-    static let railInactiveBackground = Color.hex("#ECEEF0")
+    var railActiveBackground: Color { accent }
+    var railInactiveBackground: Color { pillBackground }
 
-    static let toggleOn = Color.hex("#34C759")
-    static let toggleOff = Color.hex("#E2E2E5")
+    var toggleOn: Color { scheme == .dark ? .hex("#30D158") : .hex("#34C759") }
+    var toggleOff: Color { scheme == .dark ? .hex("#48484A") : .hex("#E2E2E5") }
 
-    static let dangerText = Color.hex("#D92C2C")
-    static let connectedDot = Color.hex("#34C759")
-    static let disconnectedDot = Color.hex("#B0B0B4")
+    var dangerText: Color { scheme == .dark ? .hex("#FF453A") : .hex("#D92C2C") }
+    var connectedDot: Color { toggleOn }
+    var disconnectedDot: Color { scheme == .dark ? .hex("#6E6E73") : .hex("#B0B0B4") }
 }
 
 extension Color {
@@ -58,10 +60,13 @@ extension Color {
 struct SectionHeader: View {
     var title: String
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
         Text(title.uppercased())
             .font(.system(size: 11, weight: .bold))
-            .foregroundColor(Chrome.textTertiary)
+            .foregroundColor(chrome.textTertiary)
     }
 }
 
@@ -91,11 +96,14 @@ struct ToolbarPill: View {
     var label: String
     var action: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
-        TapTarget(background: Chrome.pillBackground, cornerRadius: 6, action: action) {
+        TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: action) {
             Text(label)
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
         }
         .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
         .fixedSize()
@@ -108,15 +116,18 @@ struct RailButton: View {
     var isActive: Bool
     var action: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
         TapTarget(
-            background: isActive ? Chrome.railActiveBackground : Chrome.railInactiveBackground,
+            background: isActive ? chrome.railActiveBackground : chrome.railInactiveBackground,
             cornerRadius: 9,
             action: action
         ) {
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(isActive ? .white : Chrome.textSecondary)
+                .foregroundColor(isActive ? .white : chrome.textSecondary)
         }
         .frame(width: 40, height: 40)
     }
@@ -132,17 +143,20 @@ struct InspectorButton: View {
     var isEnabled: Bool = true
     var action: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
         let fade = isEnabled ? 1.0 : 0.4
         TapTarget(
-            background: (isPrimary ? Chrome.accent : Chrome.pillBackground).opacity(fade),
+            background: (isPrimary ? chrome.accent : chrome.pillBackground).opacity(fade),
             cornerRadius: 7,
             action: { if isEnabled { action() } }
         ) {
             Text(label)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(
-                    (isPrimary ? .white : (isDestructive ? Chrome.dangerText : Chrome.textPrimary))
+                    (isPrimary ? .white : (isDestructive ? chrome.dangerText : chrome.textPrimary))
                         .opacity(fade)
                 )
         }

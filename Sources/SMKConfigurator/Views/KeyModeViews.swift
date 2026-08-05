@@ -7,6 +7,8 @@ import SwiftCrossUI
 /// here too.
 struct KeyListColumnView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
     var selectDesign: (KeyboardDesign) -> Void
     var selectTheme: (KeyboardTheme) -> Void
 
@@ -36,22 +38,22 @@ struct KeyListColumnView: View {
         }
         .frame(width: 260)
         .frame(maxHeight: .infinity)
-        .background(Chrome.column)
+        .background(chrome.column)
     }
 
     private func designRow(_ design: KeyboardDesign) -> some View {
         let isSelected = editor.activeDesign.id == design.id
         return ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Chrome.accentWash : Color.clear)
+                .fill(isSelected ? chrome.accentWash : Color.clear)
             HStack(spacing: 6) {
                 Text(design.name)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
+                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
                 Spacer()
                 Text("\(design.rowCount)×\(design.colCount)")
                     .font(.system(size: 11))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
             }
             .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
         }
@@ -62,12 +64,12 @@ struct KeyListColumnView: View {
         let isSelected = editor.activeTheme.id == theme.id
         return ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Chrome.accentWash : Color.clear)
+                .fill(isSelected ? chrome.accentWash : Color.clear)
             HStack(spacing: 8) {
                 Circle().fill(theme.accent.color).frame(width: 10, height: 10)
                 Text(theme.name)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
+                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
                 Spacer()
             }
             .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
@@ -79,14 +81,14 @@ struct KeyListColumnView: View {
         let isSelected = editor.currentLayer == index
         return ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Chrome.accentWash : Color.clear)
+                .fill(isSelected ? chrome.accentWash : Color.clear)
             HStack(spacing: 8) {
                 Text("⋮⋮")
                     .font(.system(size: 11))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
                 Text("Layer \(index)" + (index == 0 ? " — Base" : ""))
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
+                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
                 Spacer()
             }
             .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
@@ -99,6 +101,8 @@ struct KeyListColumnView: View {
 /// active theme, with the dense action palette below it.
 struct KeyMainContentView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -113,7 +117,7 @@ struct KeyMainContentView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Chrome.canvas)
+        .background(chrome.canvas)
     }
 }
 
@@ -123,6 +127,8 @@ struct KeyMainContentView: View {
 /// axis), plus Reassign/Clear actions.
 struct KeyInspectorView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
     @State var tab: InspectorTab = .key
 
     enum InspectorTab: String, CaseIterable {
@@ -142,20 +148,20 @@ struct KeyInspectorView: View {
         .padding(14)
         .frame(width: 300)
         .frame(maxHeight: .infinity)
-        .background(Chrome.column)
+        .background(chrome.column)
     }
 
     private var tabRow: some View {
         HStack(spacing: 4) {
             ForEach(InspectorTab.allCases, id: \.self) { candidate in
                 TapTarget(
-                    background: tab == candidate ? Chrome.accent : Chrome.pillBackground,
+                    background: tab == candidate ? chrome.accent : chrome.pillBackground,
                     cornerRadius: 6,
                     action: { tab = candidate }
                 ) {
                     Text(candidate.rawValue)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(tab == candidate ? .white : Chrome.textPrimary)
+                        .foregroundColor(tab == candidate ? .white : chrome.textPrimary)
                 }
                 .frame(height: 26)
             }
@@ -180,10 +186,10 @@ struct KeyInspectorView: View {
             if hasValidKeySelection, let position = editor.selectedKeyPosition {
                 Text(selectedToken.displayLabel.isEmpty ? "—" : selectedToken.displayLabel)
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Chrome.textPrimary)
+                    .foregroundColor(chrome.textPrimary)
                 Text("\(selectedToken.canonicalString) · layer \(editor.currentLayer)")
                     .font(.system(size: 12))
-                    .foregroundColor(Chrome.textSecondary)
+                    .foregroundColor(chrome.textSecondary)
 
                 if editor.showAdvanced {
                     Divider()
@@ -215,7 +221,7 @@ struct KeyInspectorView: View {
             } else {
                 Text("No key selected")
                     .font(.system(size: 12))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
             }
         }
     }
@@ -224,11 +230,11 @@ struct KeyInspectorView: View {
         HStack {
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
             Spacer()
             Text(value)
                 .font(.system(size: 11, design: monospaced ? .monospaced : nil))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
         }
     }
 
@@ -239,20 +245,20 @@ struct KeyInspectorView: View {
         return VStack(alignment: .leading, spacing: 8) {
             Text(design.name)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
             Text("\(design.rowCount) rows · \(design.colCount) cols")
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             Divider()
             Text("Rows: " + design.matrix.rows.map(String.init).joined(separator: ", "))
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             Text("Cols: " + design.matrix.cols.map(String.init).joined(separator: ", "))
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             Text(design.matrix.colsAreDriven != 0 ? "Columns are driven" : "Rows are driven")
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
         }
     }
 
@@ -263,7 +269,7 @@ struct KeyInspectorView: View {
         return VStack(alignment: .leading, spacing: 8) {
             Text(theme.name)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
             Divider()
             themeSwatchRow("Background", theme.background)
             themeSwatchRow("Key background", theme.keyBackground)
@@ -282,15 +288,15 @@ struct KeyInspectorView: View {
                 .fill(color.color)
                 .frame(width: 14, height: 14)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 4).stroke(Chrome.dividerLight, style: StrokeStyle(width: 1))
+                    RoundedRectangle(cornerRadius: 4).stroke(chrome.dividerLight, style: StrokeStyle(width: 1))
                 }
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
             Spacer()
             Text(color.hex)
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
         }
     }
 }

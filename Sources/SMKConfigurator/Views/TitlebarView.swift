@@ -7,6 +7,8 @@ struct TitlebarView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.chooseFile) var chooseFile
     @Environment(\.chooseFileSaveDestination) var chooseFileSaveDestination
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -61,14 +63,14 @@ struct TitlebarView: View {
             Spacer()
             Text("Advanced Mode")
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
             Toggle("", isOn: advancedBinding)
                 .toggleStyle(.switch)
                 .fixedSize()
         }
         .padding(EdgeInsets(top: 0, bottom: 0, leading: 12, trailing: 12))
         .frame(height: 44)
-        .background(Chrome.bar)
+        .background(chrome.bar)
     }
 
     private var advancedBinding: Binding<Bool> {

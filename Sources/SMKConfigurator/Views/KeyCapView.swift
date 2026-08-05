@@ -12,6 +12,8 @@ import SwiftCrossUI
 /// board, so both modes render pixel-identically.
 struct KeyCapView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var row: Int
     var col: Int
@@ -40,7 +42,7 @@ struct KeyCapView: View {
         .overlay {
             if isArmed || isInspected {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Chrome.accent, style: StrokeStyle(width: 2))
+                    .stroke(chrome.accent, style: StrokeStyle(width: 2))
             }
         }
         .onTapGesture {

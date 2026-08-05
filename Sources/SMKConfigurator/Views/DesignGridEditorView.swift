@@ -19,6 +19,9 @@ struct DesignGridEditorView: View {
     @Binding var draft: KeyboardDesign
     @Binding var selectedCell: DesignGridPosition?
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     static let widthPresets: [Double] = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.75]
 
     var body: some View {
@@ -39,7 +42,7 @@ struct DesignGridEditorView: View {
         HStack(spacing: 10) {
             Text("Name:")
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             TextField("Design name", text: nameBinding)
                 .font(.system(size: 13))
             Spacer()
@@ -49,7 +52,7 @@ struct DesignGridEditorView: View {
             ToolbarPill(label: "− Col", action: removeCol)
         }
         .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
-        .background(Color.white)
+        .background(chrome.surface)
     }
 
     private var grid: some View {
@@ -74,7 +77,7 @@ struct DesignGridEditorView: View {
             if let selectedCell {
                 Text("Selected (\(selectedCell.row), \(selectedCell.col)):")
                     .font(.system(size: 12))
-                    .foregroundColor(Chrome.textSecondary)
+                    .foregroundColor(chrome.textSecondary)
                 ForEach(Self.widthPresets, id: \.self) { preset in
                     ToolbarPill(label: presetLabel(preset)) {
                         draft.grid[selectedCell.row][selectedCell.col].width = preset
@@ -86,12 +89,12 @@ struct DesignGridEditorView: View {
             } else {
                 Text("Select a cell to edit its width")
                     .font(.system(size: 12))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
                 Spacer()
             }
         }
         .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
-        .background(Color.white)
+        .background(chrome.surface)
     }
 
     // MARK: - Row/col mutation

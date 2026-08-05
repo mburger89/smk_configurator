@@ -6,6 +6,8 @@ import SwiftCrossUI
 /// only probes USB), so it's always shown as not connected.
 struct DeviceListColumnView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
         ScrollView {
@@ -20,27 +22,27 @@ struct DeviceListColumnView: View {
         }
         .frame(width: 260)
         .frame(maxHeight: .infinity)
-        .background(Chrome.column)
+        .background(chrome.column)
     }
 
     private func transportCard(name: String, isConnected: Bool) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white)
+                .fill(chrome.surface)
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Chrome.dividerLight, style: StrokeStyle(width: 1))
+                        .stroke(chrome.dividerLight, style: StrokeStyle(width: 1))
                 }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    StatusDot(color: isConnected ? Chrome.connectedDot : Chrome.disconnectedDot, diameter: 8)
+                    StatusDot(color: isConnected ? chrome.connectedDot : chrome.disconnectedDot, diameter: 8)
                     Text(name)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Chrome.textPrimary)
+                        .foregroundColor(chrome.textPrimary)
                 }
                 Text(isConnected ? "Connected" : "Not connected")
                     .font(.system(size: 11))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
             }
             .padding(10)
         }
@@ -51,17 +53,19 @@ struct DeviceListColumnView: View {
 /// Send to Device action.
 struct DeviceMainContentView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
         VStack(spacing: 10) {
             Spacer(minLength: 0)
-            StatusDot(color: editor.usbConnected ? Chrome.connectedDot : Chrome.disconnectedDot, diameter: 14)
+            StatusDot(color: editor.usbConnected ? chrome.connectedDot : chrome.disconnectedDot, diameter: 14)
             Text(editor.usbConnected ? "Connected via USB" : "Not connected")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
             Text("\(editor.activeDesign.name) · RP2040 · fw \(firmwareVersionLabel)")
                 .font(.system(size: 13))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             InspectorButton(
                 label: editor.isSendingToDevice ? "Sending…" : "Send to Device",
                 isPrimary: true,
@@ -73,13 +77,13 @@ struct DeviceMainContentView: View {
             if let lastSentAt = editor.lastSentAt {
                 Text("Last sent \(relativeTimeString(from: lastSentAt))")
                     .font(.system(size: 12))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
             }
             Spacer(minLength: 0)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Chrome.canvas)
+        .background(chrome.canvas)
         .onAppear {
             editor.refreshDeviceStatus()
         }
@@ -100,12 +104,14 @@ struct DeviceMainContentView: View {
 /// currently active design/connection.
 struct DeviceInspectorView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Device info")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 infoLine("Board", editor.activeDesign.name)
@@ -119,18 +125,18 @@ struct DeviceInspectorView: View {
         .padding(14)
         .frame(width: 300)
         .frame(maxHeight: .infinity)
-        .background(Chrome.column)
+        .background(chrome.column)
     }
 
     private func infoLine(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
             Spacer()
             Text(value)
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
         }
     }
 }

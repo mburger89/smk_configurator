@@ -5,6 +5,8 @@ import SwiftCrossUI
 /// GPIO wiring.
 struct DesignListColumnView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
     @Binding var draft: KeyboardDesign
     var selectDesign: (KeyboardDesign) -> Void
     var newDesign: () -> Void
@@ -19,7 +21,7 @@ struct DesignListColumnView: View {
                     }
                     Text("+ New Design…")
                         .font(.system(size: 13))
-                        .foregroundColor(Chrome.accent)
+                        .foregroundColor(chrome.accent)
                         .padding(EdgeInsets(top: 4, bottom: 0, leading: 8, trailing: 0))
                         .onTapGesture { newDesign() }
                 }
@@ -29,22 +31,22 @@ struct DesignListColumnView: View {
         }
         .frame(width: 260)
         .frame(maxHeight: .infinity)
-        .background(Chrome.column)
+        .background(chrome.column)
     }
 
     private func designRow(_ design: KeyboardDesign) -> some View {
         let isSelected = editor.activeDesign.id == design.id
         return ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Chrome.accentWash : Color.clear)
+                .fill(isSelected ? chrome.accentWash : Color.clear)
             HStack(spacing: 6) {
                 Text(design.name)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
+                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
                 Spacer()
                 Text("\(design.rowCount)×\(design.colCount)")
                     .font(.system(size: 11))
-                    .foregroundColor(Chrome.textTertiary)
+                    .foregroundColor(chrome.textTertiary)
             }
             .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
         }
@@ -56,10 +58,10 @@ struct DesignListColumnView: View {
             SectionHeader(title: "Matrix GPIO")
             Text("Rows: " + draft.matrix.rows.map(String.init).joined(separator: ", "))
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             Text("Cols: " + draft.matrix.cols.map(String.init).joined(separator: ", "))
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             Toggle("Columns are driven", isOn: colsAreDrivenBinding)
                 .toggleStyle(.checkbox)
         }
@@ -82,14 +84,17 @@ struct DesignInspectorView: View {
     var duplicate: () -> Void
     var delete: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Design actions")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
             Text("\(draft.rowCount) rows · \(draft.colCount) cols · \(draft.name) matrix")
                 .font(.system(size: 12))
-                .foregroundColor(Chrome.textSecondary)
+                .foregroundColor(chrome.textSecondary)
             Divider()
             InspectorButton(label: "Save Design", isPrimary: true, action: save)
             InspectorButton(label: "Duplicate…", action: duplicate)
@@ -99,6 +104,6 @@ struct DesignInspectorView: View {
         .padding(14)
         .frame(width: 300)
         .frame(maxHeight: .infinity)
-        .background(Chrome.column)
+        .background(chrome.column)
     }
 }

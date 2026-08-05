@@ -6,6 +6,9 @@ import SwiftCrossUI
 struct IconRailView: View {
     @Binding var mode: RailMode
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
         VStack(spacing: 16) {
             RailButton(label: "KEY", isActive: mode == .key) { mode = .key }
@@ -17,6 +20,6 @@ struct IconRailView: View {
         .padding(EdgeInsets(top: 16, bottom: 16, leading: 0, trailing: 0))
         .frame(width: 64)
         .frame(maxHeight: .infinity)
-        .background(Chrome.bar)
+        .background(chrome.bar)
     }
 }

@@ -8,6 +8,8 @@ import SwiftCrossUI
 /// it.
 struct PaletteDrawerView: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     static let maxHeight: Double = 220
 
@@ -24,7 +26,7 @@ struct PaletteDrawerView: View {
             .padding(10)
         }
         .frame(height: Self.maxHeight)
-        .background(Color.white)
+        .background(chrome.surface)
     }
 
     private func section(_ title: String, tokens: [ActionToken], rows: Int = 1) -> some View {
@@ -32,7 +34,7 @@ struct PaletteDrawerView: View {
         return VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
             ScrollView(.horizontal) {
                 VStack(spacing: 4) {
                     ForEach(chunks.indices, id: \.self) { i in
@@ -62,21 +64,21 @@ struct PaletteDrawerView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("LAYERS & SPECIAL")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Chrome.textTertiary)
+                .foregroundColor(chrome.textTertiary)
             HStack(spacing: 4) {
-                TapTarget(background: Chrome.chipBackground, cornerRadius: 4, action: {
+                TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
                     editor.pendingLayerIndex = max(0, editor.pendingLayerIndex - 1)
                 }) {
-                    Text("–").font(.system(size: 11)).foregroundColor(Chrome.textPrimary)
+                    Text("–").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
                 }
                 .frame(width: 20, height: 20)
                 Text("\(editor.pendingLayerIndex)")
                     .font(.system(size: 11))
-                    .foregroundColor(Chrome.textPrimary)
-                TapTarget(background: Chrome.chipBackground, cornerRadius: 4, action: {
+                    .foregroundColor(chrome.textPrimary)
+                TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
                     editor.pendingLayerIndex = min(15, editor.pendingLayerIndex + 1)
                 }) {
-                    Text("+").font(.system(size: 11)).foregroundColor(Chrome.textPrimary)
+                    Text("+").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
                 }
                 .frame(width: 20, height: 20)
                 PaletteChip(token: .momentaryLayer(editor.pendingLayerIndex))
@@ -93,6 +95,8 @@ struct PaletteDrawerView: View {
 /// border, 4px radius.
 private struct PaletteChip: View {
     @Environment(EditorState.self) var editor
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
     var token: ActionToken
 
     var body: some View {
@@ -100,15 +104,15 @@ private struct PaletteChip: View {
 
         ZStack {
             RoundedRectangle(cornerRadius: 4)
-                .fill(Chrome.chipBackground)
+                .fill(chrome.chipBackground)
             Text(token.displayLabel)
                 .font(.system(size: 11))
-                .foregroundColor(Chrome.textPrimary)
+                .foregroundColor(chrome.textPrimary)
         }
         .frame(width: 44, height: 26)
         .overlay {
             RoundedRectangle(cornerRadius: 4)
-                .stroke(isSelected ? Chrome.accent : Chrome.chipBorder, style: StrokeStyle(width: isSelected ? 2 : 1))
+                .stroke(isSelected ? chrome.accent : chrome.chipBorder, style: StrokeStyle(width: isSelected ? 2 : 1))
         }
         .onTapGesture {
             editor.toggleSelection(token)
