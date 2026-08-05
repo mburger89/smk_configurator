@@ -22,6 +22,7 @@ let themeStore = JSONFileStore<KeyboardTheme>(
 
 private let drawerHeightDefaultsKey = "drawerHeight"
 private let showAdvancedDefaultsKey = "showAdvanced"
+private let appearanceModeDefaultsKey = "appearanceMode"
 
 /// Mirrors the firmware build this app was written against (see
 /// `KeymapUploader.maxPayloadLength`'s doc comment) — shown as a static
@@ -36,6 +37,22 @@ let firmwareVersionLabel = "v0.8.0"
 enum RailMode: String, CaseIterable, Identifiable {
     case key, designs, themes, device
     var id: String { rawValue }
+}
+
+/// Light/Dark/System, set via the `View ▸ Appearance` menu (see `App.swift`)
+/// and persisted across launches on `EditorState`.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case light, dark, system
+    var id: String { rawValue }
+
+    /// `nil` means "defer to the OS" — passed straight to `.preferredColorScheme`.
+    var colorScheme: ColorScheme? {
+        switch self {
+            case .light: .light
+            case .dark: .dark
+            case .system: nil
+        }
+    }
 }
 
 /// A single physical key on the board, identified by its matrix position --
@@ -69,6 +86,12 @@ class EditorState {
     /// The physical key the Key inspector is currently showing, if any.
     var selectedKeyPosition: KeyPosition? = KeyPosition(row: 0, col: 0)
 
+    /// Light/Dark/System override for the whole app, applied via
+    /// `.preferredColorScheme` at the app root (`App.swift`). Plain stored
+    /// property (no `didSet`, same reason as `drawerHeight` below) — use
+    /// `setAppearanceMode(_:)` to change it.
+    var appearanceMode: AppearanceMode
+
     /// Whether a USB (RP2040) transport was reachable last time it was
     /// checked -- see `refreshDeviceStatus()`.
     var usbConnected: Bool = false
@@ -92,6 +115,8 @@ class EditorState {
         let range = Self.drawerHeightRange
         self.drawerHeight = min(max(storedHeight, range.lowerBound), range.upperBound)
         self.showAdvanced = UserDefaults.standard.object(forKey: showAdvancedDefaultsKey) as? Bool ?? false
+        let storedAppearanceMode = UserDefaults.standard.string(forKey: appearanceModeDefaultsKey)
+        self.appearanceMode = storedAppearanceMode.flatMap(AppearanceMode.init(rawValue:)) ?? .system
 
         designStore.ensureSeeded(with: [.gateronLPKBD])
         themeStore.ensureSeeded(with: KeyboardTheme.allBuiltIns)
@@ -251,6 +276,11 @@ class EditorState {
     func setShowAdvanced(_ value: Bool) {
         showAdvanced = value
         UserDefaults.standard.set(value, forKey: showAdvancedDefaultsKey)
+    }
+
+    func setAppearanceMode(_ mode: AppearanceMode) {
+        appearanceMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: appearanceModeDefaultsKey)
     }
 
     // MARK: - Key inspector
