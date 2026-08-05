@@ -31,7 +31,8 @@ struct KeyboardDesign: Codable, Equatable, Identifiable {
     }
 
     /// The non-gap slots in row `r`, left to right. Shared by every board
-    /// renderer (`KeyboardBoardView`, `ThemePreviewBoardView`) so gaps are
+    /// renderer (`KeyboardBoardView`, used for both the KEY board and the
+    /// THM live preview via its `theme`/`interactive` parameters) so gaps are
     /// skipped consistently -- a placeholder child there would get `HStack`
     /// spacing on both sides and double the gap.
     func visibleSlots(row r: Int) -> [Slot] {

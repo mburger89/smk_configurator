@@ -1,39 +1,55 @@
 import Foundation
 import SwiftCrossUI
 
+/// The app's root view: titlebar -> 4-pane body (icon rail / list / main /
+/// inspector, driven by `editor.railMode`) -> status bar. See
+/// `design_handoff_1c_power_grouped_list/README.md` for the full layout
+/// spec this recreates.
+///
+/// Design/theme editing used to happen in modal sheets (`DesignBuilderView`/
+/// `ThemeBuilderView`); this redesign moves that editing inline into the
+/// DSN/THM panes instead, so `ContentView` now owns a small "draft"
+/// workspace for each -- a scratch copy that mirrors whatever design/theme
+/// is selected until explicitly saved, mirroring the old sheets'
+/// edit-then-Save/Cancel flow without the modal.
 struct ContentView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.chooseFile) var chooseFile
     @Environment(\.chooseFileSaveDestination) var chooseFileSaveDestination
     @Environment(\.presentAlert) var presentAlert
 
-    @State var isEditingDesign = false
-    @State var designBuilderSeed = KeyboardDesign.blank()
-    @State var designBeingEdited: KeyboardDesign? = nil
+    @State var designDraft: KeyboardDesign = .blank()
+    /// `nil` while the draft is an unsaved "+ New Design…"; the design
+    /// being replaced otherwise (needed so Delete doesn't leave old files
+    /// behind, and so a fresh draft can't be deleted).
+    @State var editingDesignOriginal: KeyboardDesign? = nil
+    @State var selectedDesignCell: DesignGridPosition? = nil
 
-    @State var isEditingTheme = false
-    @State var themeBuilderSeed = KeyboardTheme.blank()
-    @State var themeBeingEdited: KeyboardTheme? = nil
+    @State var themeDraft: KeyboardTheme = .blank()
+    @State var editingThemeOriginal: KeyboardTheme? = nil
 
     var body: some View {
-        VStack(spacing: 10) {
-            toolbar
-            designBar
-            themeBar
-            Divider()
-            HStack(spacing: 10) {
-                LayerTabsView()
+        VStack(spacing: 0) {
+            TitlebarView()
+            HStack(spacing: 0) {
+                IconRailView(mode: railModeBinding)
                 Divider()
-                VStack(spacing: 10) {
-                    ScrollView {
-                        KeyboardBoardView()
-                    }
-                    PaletteDrawerView()
-                }
+                listColumn
+                Divider()
+                mainContent
+                Divider()
+                inspectorColumn
             }
-            .background(editor.activeTheme.background.color)
+            Divider()
+            StatusBarView()
         }
-        .padding(10)
+        .frame(minWidth: 1440, minHeight: 900)
+        .onAppear {
+            designDraft = editor.activeDesign
+            editingDesignOriginal = editor.activeDesign
+            themeDraft = editor.activeTheme
+            editingThemeOriginal = editor.activeTheme
+        }
         .onChange(of: editor.loadError) {
             guard let message = editor.loadError else { return }
             Task {
@@ -41,180 +57,146 @@ struct ContentView: View {
                 editor.loadError = nil
             }
         }
-        .sheet(isPresented: $isEditingDesign) {
-            DesignBuilderView(
-                isPresented: $isEditingDesign,
-                draft: designBuilderSeed,
-                editingExisting: designBeingEdited
+    }
+
+    private var railModeBinding: Binding<RailMode> {
+        Binding(get: { editor.railMode }, set: { editor.railMode = $0 })
+    }
+
+    @ViewBuilder
+    private var listColumn: some View {
+        switch editor.railMode {
+        case .key:
+            KeyListColumnView(selectDesign: loadDesignDraft, selectTheme: loadThemeDraft)
+        case .designs:
+            DesignListColumnView(draft: $designDraft, selectDesign: loadDesignDraft, newDesign: newDesignDraft)
+        case .themes:
+            ThemeListColumnView(draft: $themeDraft, selectTheme: loadThemeDraft, newTheme: newThemeDraft)
+        case .device:
+            DeviceListColumnView()
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        switch editor.railMode {
+        case .key:
+            KeyMainContentView()
+        case .designs:
+            DesignGridEditorView(draft: $designDraft, selectedCell: $selectedDesignCell)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .themes:
+            ThemeMainContentView(draft: themeDraft)
+        case .device:
+            DeviceMainContentView()
+        }
+    }
+
+    @ViewBuilder
+    private var inspectorColumn: some View {
+        switch editor.railMode {
+        case .key:
+            KeyInspectorView()
+        case .designs:
+            DesignInspectorView(
+                draft: designDraft,
+                isExistingDesign: editingDesignOriginal != nil,
+                save: saveDesignDraft,
+                duplicate: duplicateDesignDraft,
+                delete: deleteDesignDraft
             )
-        }
-        .sheet(isPresented: $isEditingTheme) {
-            ThemeBuilderView(
-                isPresented: $isEditingTheme,
-                draft: themeBuilderSeed,
-                editingExisting: themeBeingEdited
+        case .themes:
+            ThemeInspectorView(
+                draft: themeDraft,
+                save: saveThemeDraft,
+                duplicate: duplicateThemeDraft,
+                importTheme: importThemeDraft,
+                exportTheme: exportThemeDraft
             )
+        case .device:
+            DeviceInspectorView()
         }
     }
 
-    private var themeBar: some View {
-        HStack(spacing: 10) {
-            Menu("Theme: \(editor.activeTheme.name)") {
-                ForEach(editor.availableThemes) { theme in
-                    Button(theme.name) {
-                        editor.selectTheme(theme)
-                    }
-                }
-            }
-            Button("New Theme…") {
-                themeBuilderSeed = .blank()
-                themeBeingEdited = nil
-                isEditingTheme = true
-            }
-            Button("Edit Theme…") {
-                themeBuilderSeed = editor.activeTheme
-                themeBeingEdited = editor.activeTheme
-                isEditingTheme = true
-            }
-            Button("Duplicate…") {
-                var copy = editor.activeTheme
-                copy.name = "\(editor.activeTheme.name) copy"
-                themeBuilderSeed = copy
-                themeBeingEdited = nil
-                isEditingTheme = true
-            }
-            Button("Import…") {
-                Task {
-                    guard
-                        let url = await chooseFile(
-                            title: "Import theme JSON",
-                            allowSelectingFiles: true
-                        )
-                    else { return }
-                    editor.importTheme(from: url)
-                }
-            }
-            Button("Export…") {
-                Task {
-                    guard
-                        let url = await chooseFileSaveDestination(
-                            title: "Export theme",
-                            defaultFileName: "\(editor.activeTheme.name).json"
-                        )
-                    else { return }
-                    editor.exportTheme(editor.activeTheme, to: url)
-                }
-            }
+    // MARK: - Design workspace
+
+    private func loadDesignDraft(_ design: KeyboardDesign) {
+        editor.selectDesign(design)
+        designDraft = design
+        editingDesignOriginal = design
+        selectedDesignCell = nil
+    }
+
+    private func newDesignDraft() {
+        designDraft = .blank()
+        editingDesignOriginal = nil
+        selectedDesignCell = nil
+    }
+
+    private func saveDesignDraft() {
+        editor.saveDesign(designDraft)
+        editingDesignOriginal = designDraft
+    }
+
+    private func duplicateDesignDraft() {
+        editor.duplicateDesign(designDraft, as: "\(designDraft.name) copy")
+        designDraft = editor.activeDesign
+        editingDesignOriginal = editor.activeDesign
+    }
+
+    private func deleteDesignDraft() {
+        if let editingDesignOriginal {
+            editor.deleteDesign(editingDesignOriginal)
+        }
+        designDraft = editor.activeDesign
+        editingDesignOriginal = editor.activeDesign
+        selectedDesignCell = nil
+    }
+
+    // MARK: - Theme workspace
+
+    private func loadThemeDraft(_ theme: KeyboardTheme) {
+        editor.selectTheme(theme)
+        themeDraft = theme
+        editingThemeOriginal = theme
+    }
+
+    private func newThemeDraft() {
+        themeDraft = .blank()
+        editingThemeOriginal = nil
+    }
+
+    private func saveThemeDraft() {
+        editor.saveTheme(themeDraft)
+        editingThemeOriginal = themeDraft
+    }
+
+    private func duplicateThemeDraft() {
+        editor.duplicateTheme(themeDraft, as: "\(themeDraft.name) copy")
+        themeDraft = editor.activeTheme
+        editingThemeOriginal = editor.activeTheme
+    }
+
+    private func importThemeDraft() {
+        Task {
+            guard
+                let url = await chooseFile(title: "Import theme JSON", allowSelectingFiles: true)
+            else { return }
+            editor.importTheme(from: url)
+            themeDraft = editor.activeTheme
+            editingThemeOriginal = editor.activeTheme
         }
     }
 
-    private var designBar: some View {
-        HStack(spacing: 10) {
-            Menu("Design: \(editor.activeDesign.name)") {
-                ForEach(editor.availableDesigns) { design in
-                    Button(design.name) {
-                        editor.selectDesign(design)
-                    }
-                }
-            }
-            Button("New Design…") {
-                designBuilderSeed = .blank()
-                designBeingEdited = nil
-                isEditingDesign = true
-            }
-            Button("Edit Design…") {
-                designBuilderSeed = editor.activeDesign
-                designBeingEdited = editor.activeDesign
-                isEditingDesign = true
-            }
-            Button("Duplicate…") {
-                var copy = editor.activeDesign
-                copy.name = "\(editor.activeDesign.name) copy"
-                designBuilderSeed = copy
-                designBeingEdited = nil
-                isEditingDesign = true
-            }
-            Button("Import…") {
-                Task {
-                    guard
-                        let url = await chooseFile(
-                            title: "Import design JSON",
-                            allowSelectingFiles: true
-                        )
-                    else { return }
-                    editor.importDesign(from: url)
-                }
-            }
-            Button("Export…") {
-                Task {
-                    guard
-                        let url = await chooseFileSaveDestination(
-                            title: "Export design",
-                            defaultFileName: "\(editor.activeDesign.name).json"
-                        )
-                    else { return }
-                    editor.exportDesign(editor.activeDesign, to: url)
-                }
-            }
+    private func exportThemeDraft() {
+        Task {
+            guard
+                let url = await chooseFileSaveDestination(
+                    title: "Export theme",
+                    defaultFileName: "\(themeDraft.name).json"
+                )
+            else { return }
+            editor.exportTheme(themeDraft, to: url)
         }
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 10) {
-            Button("New") {
-                editor.newDocument()
-            }
-            Button("Open…") {
-                Task {
-                    guard
-                        let url = await chooseFile(
-                            title: "Open keymap.json",
-                            initialDirectory: defaultKeymapURL.deletingLastPathComponent()
-                        )
-                    else { return }
-                    editor.load(from: url)
-                }
-            }
-            Button("Save") {
-                Task {
-                    if let url = editor.fileURL {
-                        editor.save(to: url)
-                    } else {
-                        await saveAs()
-                    }
-                }
-            }
-            Button("Save As…") {
-                Task { await saveAs() }
-            }
-            Button(editor.isSendingToDevice ? "Sending…" : "Send to Device") {
-                editor.sendToDevice()
-            }
-            .disabled(editor.isSendingToDevice)
-            Text(editor.fileURL?.path ?? "(unsaved)")
-                .foregroundColor(.gray)
-            if editor.isDirty {
-                Text("•").foregroundColor(.orange)
-            }
-            Spacer()
-            if editor.selectedToken != nil {
-                Text("Selected: \(editor.selectedToken?.displayLabel ?? "")")
-                    .foregroundColor(.blue)
-                Button("Clear") {
-                    editor.selectedToken = nil
-                }
-            }
-        }
-    }
-
-    private func saveAs() async {
-        guard
-            let url = await chooseFileSaveDestination(
-                title: "Save keymap.json",
-                initialDirectory: defaultKeymapURL.deletingLastPathComponent(),
-                defaultFileName: "keymap.json"
-            )
-        else { return }
-        editor.save(to: url)
     }
 }

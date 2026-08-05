@@ -1,30 +1,31 @@
 import SwiftCrossUI
 
-/// One cell in the `DesignBuilderView` grid editor: shows its width (or "x"
-/// for a gap), tap to select it for editing in the inspector below.
+/// One cell in the DSN grid editor: shows its width (or "×" for a gap), tap
+/// to select it for editing in the footer strip below.
 struct DesignCellView: View {
     var cell: KeyboardDesign.Cell
     var isSelected: Bool
     var action: () -> Void
 
-    static let unit: Double = 40
+    static let unit: Double = 52
+    static let height: Double = 44
     static let spacing: Double = 4
 
     var body: some View {
         let width = cell.isGap ? Self.unit : cell.width * Self.unit + (cell.width - 1) * Self.spacing
 
         ZStack {
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 6)
                 .fill(cell.isGap ? Color.black : Color.white)
             Text(cell.isGap ? "×" : formatWidth(cell.width))
-                .font(.system(size: 11))
-                .foregroundColor(cell.isGap ? .gray : .black)
+                .font(.system(size: 12))
+                .foregroundColor(cell.isGap ? Chrome.textTertiary : Chrome.textPrimary)
         }
-        .frame(width: width, height: Self.unit)
+        .frame(width: width, height: Self.height)
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: 5)
-                    .stroke(Color.blue, style: StrokeStyle(width: 2))
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Chrome.accent, style: StrokeStyle(width: 2))
             }
         }
         .onTapGesture {

@@ -10,6 +10,6 @@ struct SMKConfiguratorApp: App {
             ContentView()
                 .environment(editor)
         }
-        .defaultSize(width: 1100, height: 780)
+        .defaultSize(width: 1440, height: 900)
     }
 }

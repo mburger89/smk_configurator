@@ -21,6 +21,31 @@ let themeStore = JSONFileStore<KeyboardTheme>(
 )
 
 private let drawerHeightDefaultsKey = "drawerHeight"
+private let showAdvancedDefaultsKey = "showAdvanced"
+
+/// Mirrors the firmware build this app was written against (see
+/// `KeymapUploader.maxPayloadLength`'s doc comment) — shown as a static
+/// label in the status bar / Device pane, since the app has no way to read
+/// a running firmware's version yet.
+let firmwareVersionLabel = "v0.8.0"
+
+/// Which of the four top-level workspaces the icon rail has selected. Drives
+/// what the list/main/inspector columns render; everything else (selected
+/// design/theme/layer/key, matrix values, theme role hex values) still lives
+/// on `EditorState` exactly as before -- this only changes navigation.
+enum RailMode: String, CaseIterable, Identifiable {
+    case key, designs, themes, device
+    var id: String { rawValue }
+}
+
+/// A single physical key on the board, identified by its matrix position --
+/// distinct from `selectedToken` (an action "armed" from the palette for
+/// placement). This is "which keycap is the Inspector currently showing
+/// details for".
+struct KeyPosition: Equatable {
+    var row: Int
+    var col: Int
+}
 
 @MainActor
 @ObservableObject
@@ -35,6 +60,19 @@ class EditorState {
     /// Layer index used by the momentary/toggle layer palette tiles.
     var pendingLayerIndex: Int = 1
     var loadError: String? = nil
+
+    /// Which rail mode (KEY/DSN/THM/DEV) the workspace is showing.
+    var railMode: RailMode = .key
+    /// Global "power detail" switch in the titlebar; hides matrix/GPIO/
+    /// canonical-string detail in the Key inspector when off.
+    var showAdvanced: Bool
+    /// The physical key the Key inspector is currently showing, if any.
+    var selectedKeyPosition: KeyPosition? = KeyPosition(row: 0, col: 0)
+
+    /// Whether a USB (RP2040) transport was reachable last time it was
+    /// checked -- see `refreshDeviceStatus()`.
+    var usbConnected: Bool = false
+    var lastSentAt: Date? = nil
 
     /// Persisted across launches so the drawer stays the size you left it.
     /// Plain stored property (no `didSet`) -- the `@ObservableObject` macro
@@ -53,6 +91,7 @@ class EditorState {
         let storedHeight = UserDefaults.standard.object(forKey: drawerHeightDefaultsKey) as? Double ?? 260
         let range = Self.drawerHeightRange
         self.drawerHeight = min(max(storedHeight, range.lowerBound), range.upperBound)
+        self.showAdvanced = UserDefaults.standard.object(forKey: showAdvancedDefaultsKey) as? Bool ?? false
 
         designStore.ensureSeeded(with: [.gateronLPKBD])
         themeStore.ensureSeeded(with: KeyboardTheme.allBuiltIns)
@@ -103,6 +142,13 @@ class EditorState {
         return true
     }
 
+    /// Writes the current document to `url` without changing `fileURL` or
+    /// `isDirty` -- a "save a copy elsewhere" operation, distinct from
+    /// `save(to:)`/Save As, for the titlebar's Export pill.
+    func exportKeymap(to url: URL) {
+        _ = writeJSON(document, to: url, errorContext: "export keymap")
+    }
+
     func newDocument() {
         document = .blank(for: activeDesign)
         fileURL = nil
@@ -121,7 +167,10 @@ class EditorState {
         guard !isSendingToDevice else { return }
         isSendingToDevice = true
         Task {
-            defer { isSendingToDevice = false }
+            defer {
+                isSendingToDevice = false
+                refreshDeviceStatus()
+            }
             do {
                 let json = try encodeLayersJSON(document.layers)
                 if let usb = try? USBRawHIDTransport() {
@@ -135,10 +184,18 @@ class EditorState {
                     throw DeviceTransportError.noDeviceFound
                     #endif
                 }
+                lastSentAt = Date()
             } catch {
                 loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Cheap presence check (open + immediately allow to deinit/close) used
+    /// by the Device pane/status bar to show a live connected/not-connected
+    /// dot without holding a transport open across the whole app lifetime.
+    func refreshDeviceStatus() {
+        usbConnected = (try? USBRawHIDTransport()) != nil
     }
 
     private func encodeLayersJSON(_ layers: [[[String]]]) throws -> String {
@@ -189,6 +246,36 @@ class EditorState {
     func setDrawerHeight(_ height: Double) {
         drawerHeight = height
         UserDefaults.standard.set(drawerHeight, forKey: drawerHeightDefaultsKey)
+    }
+
+    func setShowAdvanced(_ value: Bool) {
+        showAdvanced = value
+        UserDefaults.standard.set(value, forKey: showAdvancedDefaultsKey)
+    }
+
+    // MARK: - Key inspector
+
+    /// Focuses the Key inspector on `(row, col)` -- called whenever a keycap
+    /// is tapped, independent of the click-to-arm/click-to-place palette
+    /// selection (`selectedToken`).
+    func selectKey(row: Int, col: Int) {
+        selectedKeyPosition = KeyPosition(row: row, col: col)
+    }
+
+    /// The Key inspector's "Reassign" button: commits whatever's currently
+    /// armed from the palette onto the inspected key, then disarms it. A
+    /// button-driven alternative to tapping the keycap directly.
+    func reassignSelectedKey() {
+        guard let position = selectedKeyPosition, let armed = selectedToken else { return }
+        assign(armed, row: position.row, col: position.col)
+        selectedToken = nil
+    }
+
+    /// The Key inspector's "Clear" button: sets the inspected key back to
+    /// `.none`.
+    func clearSelectedKey() {
+        guard let position = selectedKeyPosition else { return }
+        assign(.none, row: position.row, col: position.col)
     }
 
     // MARK: - Design management

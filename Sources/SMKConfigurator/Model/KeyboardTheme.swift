@@ -47,7 +47,7 @@ struct KeyboardTheme: Codable, Equatable, Identifiable {
     var id: String { name }
 
     /// The fill color for a keycap/palette-tile showing `token`, shared by
-    /// `KeyCapView` and the drawer's `PaletteTile` so both always agree.
+    /// `KeyCapView` and the drawer's `PaletteChip` so both always agree.
     func background(for token: ActionToken) -> Color {
         switch token {
         case .none: return emptyBackground.color

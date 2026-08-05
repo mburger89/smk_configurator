@@ -1,16 +1,23 @@
 import SwiftCrossUI
 
-/// One physical key. Tapping it either "picks up" its current action (if
-/// nothing is selected from the drawer) or places the currently-selected
-/// action onto it -- the click-to-select/click-to-place substitute for
-/// drag-and-drop described in the plan (SwiftCrossUI has no drag gesture as
-/// of v0.8.0).
+/// One physical key. Tapping it always focuses the Key inspector on this
+/// position (`EditorState.selectKey`); if something's armed from the
+/// palette drawer (`editor.selectedToken`) the tap also places it here first
+/// -- the click-to-select/click-to-place substitute for drag-and-drop
+/// described in the plan (SwiftCrossUI has no drag gesture as of v0.8.0).
+///
+/// `theme`/`interactive` let this same view render the read-only, live
+/// preview board in THM mode (`theme` overrides `editor.activeTheme`,
+/// `interactive: false` disables tap handling) as well as the editable KEY
+/// board, so both modes render pixel-identically.
 struct KeyCapView: View {
     @Environment(EditorState.self) var editor
 
     var row: Int
     var col: Int
     var widthUnits: Double
+    var theme: KeyboardTheme? = nil
+    var interactive: Bool = true
 
     static let unit: Double = 46
     static let spacing: Double = 4
@@ -18,29 +25,31 @@ struct KeyCapView: View {
     var body: some View {
         let token = editor.action(row: row, col: col)
         let width = widthUnits * Self.unit + (widthUnits - 1) * Self.spacing
-        let isSelected = editor.selectedToken == token && token != .none
-        let theme = editor.activeTheme
+        let activeTheme = theme ?? editor.activeTheme
+        let isArmed = interactive && editor.selectedToken == token && token != .none
+        let isInspected = interactive && editor.selectedKeyPosition == KeyPosition(row: row, col: col)
 
         ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(theme.background(for: token))
+                .fill(activeTheme.background(for: token))
             Text(token.displayLabel)
                 .font(.system(size: 12))
-                .foregroundColor(theme.keyText.color)
+                .foregroundColor(activeTheme.keyText.color)
         }
         .frame(width: width, height: Self.unit)
         .overlay {
-            if isSelected {
+            if isArmed || isInspected {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(theme.accent.color, style: StrokeStyle(width: 2))
+                    .stroke(Chrome.accent, style: StrokeStyle(width: 2))
             }
         }
         .onTapGesture {
+            guard interactive else { return }
             if let selected = editor.selectedToken {
                 editor.assign(selected, row: row, col: col)
-            } else {
-                editor.selectedToken = token
+                editor.selectedToken = nil
             }
+            editor.selectKey(row: row, col: col)
         }
     }
 }

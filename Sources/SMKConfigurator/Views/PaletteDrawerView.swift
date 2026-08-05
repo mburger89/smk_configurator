@@ -1,60 +1,44 @@
 import SwiftCrossUI
 
-/// The bottom drawer: every action the firmware understands, grouped into
-/// sections. Tapping a tile selects it (see `KeyCapView`); tapping the
-/// selected tile again deselects it.
+/// The dense action palette below the board in KEY mode: every action the
+/// firmware understands, grouped into sections and shown simultaneously
+/// (not tabbed), white background, capped at 220px tall and scrollable --
+/// see the handoff's "List column"/"Main content" KEY description. Tapping
+/// a chip arms it (see `KeyCapView`); tapping the armed chip again disarms
+/// it.
 struct PaletteDrawerView: View {
     @Environment(EditorState.self) var editor
 
+    static let maxHeight: Double = 220
+
     var body: some View {
-        VStack(spacing: 0) {
-            resizeControl
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 14) {
-                    section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) }, rows: 2)
-                    section("Numbers", tokens: KeyName.digits.map { ActionToken.key($0) })
-                    section("Editing & Punctuation", tokens: KeyName.editing.map { ActionToken.key($0) })
-                    section("Navigation", tokens: KeyName.navigation.map { ActionToken.key($0) })
-                    section("Modifiers", tokens: ModifierName.allCases.map { ActionToken.modifier($0) })
-                    layerSection
-                    section("Special", tokens: [.transparent, .none, .toggleConnection])
-                }
-                .padding(10)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) }, rows: 2)
+                section("Numbers", tokens: KeyName.digits.map { ActionToken.key($0) })
+                section("Editing & Punctuation", tokens: KeyName.editing.map { ActionToken.key($0) })
+                section("Navigation", tokens: KeyName.navigation.map { ActionToken.key($0) })
+                section("Modifiers", tokens: ModifierName.allCases.map { ActionToken.modifier($0) })
+                layersAndSpecialSection
             }
-            .frame(height: editor.drawerHeight)
+            .padding(10)
         }
-        .background(editor.activeTheme.background.color)
-    }
-
-    private var resizeControl: some View {
-        HStack(spacing: 8) {
-            Text("Drawer size")
-                .font(.system(size: 11))
-                .foregroundColor(.gray)
-            Slider(value: drawerHeightBinding, in: EditorState.drawerHeightRange)
-            Text("\(Int(editor.drawerHeight))")
-                .font(.system(size: 11))
-                .foregroundColor(.gray)
-        }
-        .padding(EdgeInsets(top: 6, bottom: 0, leading: 10, trailing: 10))
-    }
-
-    private var drawerHeightBinding: Binding<Double> {
-        Binding(get: { editor.drawerHeight }, set: { editor.setDrawerHeight($0) })
+        .frame(height: Self.maxHeight)
+        .background(Color.white)
     }
 
     private func section(_ title: String, tokens: [ActionToken], rows: Int = 1) -> some View {
         let chunks = chunk(tokens, into: rows)
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 11))
-                .foregroundColor(.gray)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Chrome.textTertiary)
             ScrollView(.horizontal) {
-                VStack(spacing: 6) {
+                VStack(spacing: 4) {
                     ForEach(chunks.indices, id: \.self) { i in
-                        HStack(spacing: 6) {
+                        HStack(spacing: 4) {
                             ForEach(chunks[i]) { token in
-                                PaletteTile(token: token)
+                                PaletteChip(token: token)
                             }
                         }
                     }
@@ -74,49 +58,57 @@ struct PaletteDrawerView: View {
         }
     }
 
-    private var layerSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Layers")
-                .font(.system(size: 11))
-                .foregroundColor(.gray)
-            HStack(spacing: 6) {
-                Button("-") {
+    private var layersAndSpecialSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("LAYERS & SPECIAL")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Chrome.textTertiary)
+            HStack(spacing: 4) {
+                TapTarget(background: Chrome.chipBackground, cornerRadius: 4, action: {
                     editor.pendingLayerIndex = max(0, editor.pendingLayerIndex - 1)
+                }) {
+                    Text("–").font(.system(size: 11)).foregroundColor(Chrome.textPrimary)
                 }
+                .frame(width: 20, height: 20)
                 Text("\(editor.pendingLayerIndex)")
-                    .font(.system(size: 12))
-                    .foregroundColor(.white)
-                Button("+") {
+                    .font(.system(size: 11))
+                    .foregroundColor(Chrome.textPrimary)
+                TapTarget(background: Chrome.chipBackground, cornerRadius: 4, action: {
                     editor.pendingLayerIndex = min(15, editor.pendingLayerIndex + 1)
+                }) {
+                    Text("+").font(.system(size: 11)).foregroundColor(Chrome.textPrimary)
                 }
-                PaletteTile(token: .momentaryLayer(editor.pendingLayerIndex))
-                PaletteTile(token: .toggleLayer(editor.pendingLayerIndex))
+                .frame(width: 20, height: 20)
+                PaletteChip(token: .momentaryLayer(editor.pendingLayerIndex))
+                PaletteChip(token: .toggleLayer(editor.pendingLayerIndex))
+                PaletteChip(token: .transparent)
+                PaletteChip(token: .none)
+                PaletteChip(token: .toggleConnection)
             }
         }
     }
 }
 
-private struct PaletteTile: View {
+/// One 11px chip in the palette drawer: `#f2f2f4` fill, hairline `#e0e0e2`
+/// border, 4px radius.
+private struct PaletteChip: View {
     @Environment(EditorState.self) var editor
     var token: ActionToken
 
     var body: some View {
         let isSelected = editor.selectedToken == token
-        let theme = editor.activeTheme
 
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.background(for: token))
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Chrome.chipBackground)
             Text(token.displayLabel)
-                .font(.system(size: 12))
-                .foregroundColor(theme.keyText.color)
+                .font(.system(size: 11))
+                .foregroundColor(Chrome.textPrimary)
         }
-        .frame(width: 44, height: 34)
+        .frame(width: 44, height: 26)
         .overlay {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(theme.accent.color, style: StrokeStyle(width: 2))
-            }
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isSelected ? Chrome.accent : Chrome.chipBorder, style: StrokeStyle(width: isSelected ? 2 : 1))
         }
         .onTapGesture {
             editor.toggleSelection(token)
