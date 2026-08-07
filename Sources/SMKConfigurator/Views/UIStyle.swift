@@ -125,9 +125,12 @@ struct ToolbarIconButton: View {
 
     var body: some View {
         TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: action) {
-            if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
-                Image(url).resizable().frame(width: 16, height: 16)
+            ZStack {
+                if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
+                    Image(url).resizable().frame(width: 16, height: 16)
+                }
             }
+            .frame(width: 16, height: 16)
         }
         .padding(EdgeInsets(top: 5, bottom: 5, leading: 8, trailing: 8))
         .fixedSize()
