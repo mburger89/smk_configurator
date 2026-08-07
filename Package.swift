@@ -1,6 +1,29 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+// SF Symbols are only ever bundled into the macOS build (see the
+// platform-native-icons design spec's Global Constraint). `Resource.copy()`
+// has no `.when(platforms:)` overload, and Swift doesn't allow `#if` inside
+// an array literal, so the platform subtree is selected here via a
+// top-level `#if os(...)`-gated variable instead -- this file is a Swift
+// script evaluated at build time on the host, and each platform builds
+// natively (macOS builds compile on macOS, Windows on Windows, Linux on
+// Linux), so this picks only that platform's icons.
+//
+// Each platform's icons live under `Resources/<Platform>/Icons/` (rather
+// than `Resources/Icons/<Platform>/`) so that `.copy()` -- which preserves
+// only the resource's basename ("Icons") as the top-level folder in the
+// built resource bundle -- lands every platform's assets at the same
+// in-bundle path, `Icons/<light|dark>/<icon>.png`. See `IconLoader` in
+// `Views/AppIcon.swift`.
+#if os(macOS)
+let iconResources: [Resource] = [.copy("Resources/macOS/Icons")]
+#elseif os(Windows)
+let iconResources: [Resource] = [.copy("Resources/Windows/Icons")]
+#else
+let iconResources: [Resource] = [.copy("Resources/Linux/Icons")]
+#endif
+
 let package = Package(
     name: "SMKConfigurator",
     platforms: [.macOS(.v13)],
@@ -23,9 +46,7 @@ let package = Package(
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
                 "CHidapi",
             ],
-            resources: [
-                .copy("Resources/Icons")
-            ],
+            resources: iconResources,
             linkerSettings: [
                 .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),
                 // pkgConfig: "hidapi" above resolves fully on macOS (Homebrew
