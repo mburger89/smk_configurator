@@ -11,10 +11,10 @@ struct IconRailView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            RailButton(label: "KEY", isActive: mode == .key) { mode = .key }
-            RailButton(label: "DSN", isActive: mode == .designs) { mode = .designs }
-            RailButton(label: "THM", isActive: mode == .themes) { mode = .themes }
-            RailButton(label: "DEV", isActive: mode == .device) { mode = .device }
+            RailButton(icon: .key, tooltip: "Keymap", isActive: mode == .key) { mode = .key }
+            RailButton(icon: .designs, tooltip: "Designs", isActive: mode == .designs) { mode = .designs }
+            RailButton(icon: .themes, tooltip: "Themes", isActive: mode == .themes) { mode = .themes }
+            RailButton(icon: .device, tooltip: "Device", isActive: mode == .device) { mode = .device }
             Spacer()
         }
         .padding(EdgeInsets(top: 16, bottom: 16, leading: 0, trailing: 0))

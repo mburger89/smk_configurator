@@ -110,9 +110,36 @@ struct ToolbarPill: View {
     }
 }
 
-/// One of the four icon-rail buttons (`KEY`/`DSN`/`THM`/`DEV`).
+/// An icon-only pill in the titlebar toolbar group (`New`, `Open`, `Save`,
+/// `Save As`, `Import`, `Export`) with a `.help()` tooltip carrying the
+/// action name. Distinct from `ToolbarPill` (used elsewhere for dynamic
+/// text pills, e.g. DSN's `+ Row`/width presets) since those have no
+/// natural icon and must keep showing text.
+struct ToolbarIconButton: View {
+    var icon: AppIcon
+    var tooltip: String
+    var action: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
+    var body: some View {
+        TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: action) {
+            if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
+                Image(url).resizable().frame(width: 16, height: 16)
+            }
+        }
+        .padding(EdgeInsets(top: 5, bottom: 5, leading: 8, trailing: 8))
+        .fixedSize()
+        .help(tooltip)
+    }
+}
+
+/// One of the four icon-rail buttons (KEY/DSN/THM/DEV) -- a platform-native
+/// icon with a `.help()` tooltip carrying the full name.
 struct RailButton: View {
-    var label: String
+    var icon: AppIcon
+    var tooltip: String
     var isActive: Bool
     var action: () -> Void
 
@@ -125,11 +152,23 @@ struct RailButton: View {
             cornerRadius: 9,
             action: action
         ) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(isActive ? .white : chrome.textSecondary)
+            iconImage
         }
         .frame(width: 40, height: 40)
+        .help(tooltip)
+    }
+
+    /// Active buttons sit on the blue accent background (`chrome.railActiveBackground`,
+    /// saturated in both color schemes) -- same as the old text label's
+    /// `isActive ? .white : chrome.textSecondary`, this always uses the
+    /// white-tinted ("dark" folder) icon variant when active, regardless
+    /// of the app's actual color scheme, since it needs to read against
+    /// that blue background either way.
+    @ViewBuilder
+    private var iconImage: some View {
+        if let url = IconLoader.url(for: icon, colorScheme: isActive ? .dark : colorScheme) {
+            Image(url).resizable().frame(width: 22, height: 22)
+        }
     }
 }
 

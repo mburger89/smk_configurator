@@ -23,6 +23,9 @@ let package = Package(
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
                 "CHidapi",
             ],
+            resources: [
+                .copy("Resources/Icons")
+            ],
             linkerSettings: [
                 .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),
                 // pkgConfig: "hidapi" above resolves fully on macOS (Homebrew

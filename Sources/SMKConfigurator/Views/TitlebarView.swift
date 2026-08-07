@@ -12,10 +12,10 @@ struct TitlebarView: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ToolbarPill(label: "New") {
+            ToolbarIconButton(icon: .newDoc, tooltip: "New") {
                 editor.newDocument()
             }
-            ToolbarPill(label: "Open") {
+            ToolbarIconButton(icon: .open, tooltip: "Open") {
                 Task {
                     guard
                         let url = await chooseFile(
@@ -26,7 +26,7 @@ struct TitlebarView: View {
                     editor.load(from: url)
                 }
             }
-            ToolbarPill(label: "Save") {
+            ToolbarIconButton(icon: .save, tooltip: "Save") {
                 Task {
                     if let url = editor.fileURL {
                         editor.save(to: url)
@@ -35,10 +35,10 @@ struct TitlebarView: View {
                     }
                 }
             }
-            ToolbarPill(label: "Save As") {
+            ToolbarIconButton(icon: .saveAs, tooltip: "Save As") {
                 Task { await saveAs() }
             }
-            ToolbarPill(label: "Import") {
+            ToolbarIconButton(icon: .importFile, tooltip: "Import") {
                 Task {
                     guard
                         let url = await chooseFile(
@@ -49,7 +49,7 @@ struct TitlebarView: View {
                     editor.load(from: url)
                 }
             }
-            ToolbarPill(label: "Export") {
+            ToolbarIconButton(icon: .exportFile, tooltip: "Export") {
                 Task {
                     guard
                         let url = await chooseFileSaveDestination(
