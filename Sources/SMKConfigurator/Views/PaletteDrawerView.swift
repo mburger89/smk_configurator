@@ -65,28 +65,49 @@ struct PaletteDrawerView: View {
             Text("LAYERS & SPECIAL")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(chrome.textTertiary)
-            HStack(spacing: 4) {
-                TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
-                    editor.pendingLayerIndex = max(0, editor.pendingLayerIndex - 1)
-                }) {
-                    Text("–").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
+            HStack(spacing: 12) {
+                layerPickerGroup
+                HStack(spacing: 4) {
+                    PaletteChip(token: .transparent)
+                    PaletteChip(token: .none)
+                    PaletteChip(token: .toggleConnection)
                 }
-                .frame(width: 20, height: 20)
-                Text("\(editor.pendingLayerIndex)")
-                    .font(.system(size: 11))
-                    .foregroundColor(chrome.textPrimary)
-                TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
-                    editor.pendingLayerIndex = min(15, editor.pendingLayerIndex + 1)
-                }) {
-                    Text("+").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
-                }
-                .frame(width: 20, height: 20)
-                PaletteChip(token: .momentaryLayer(editor.pendingLayerIndex))
-                PaletteChip(token: .toggleLayer(editor.pendingLayerIndex))
-                PaletteChip(token: .transparent)
-                PaletteChip(token: .none)
-                PaletteChip(token: .toggleConnection)
             }
+        }
+    }
+
+    /// The layer-index stepper plus the MO/TG chips it feeds, boxed
+    /// together with a shared background/border and a "→" connector so
+    /// it reads as one control ("this number is which layer MO/TG jump
+    /// to") rather than a run of unrelated chips like the rest of the row.
+    private var layerPickerGroup: some View {
+        HStack(spacing: 4) {
+            TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
+                editor.pendingLayerIndex = max(0, editor.pendingLayerIndex - 1)
+            }) {
+                Text("–").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
+            }
+            .frame(width: 20, height: 20)
+            Text("\(editor.pendingLayerIndex)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(chrome.textPrimary)
+                .frame(width: 16)
+            TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
+                editor.pendingLayerIndex = min(15, editor.pendingLayerIndex + 1)
+            }) {
+                Text("+").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
+            }
+            .frame(width: 20, height: 20)
+            Text("→")
+                .font(.system(size: 11))
+                .foregroundColor(chrome.textTertiary)
+            PaletteChip(token: .momentaryLayer(editor.pendingLayerIndex))
+            PaletteChip(token: .toggleLayer(editor.pendingLayerIndex))
+        }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(chrome.chipBackground.opacity(0.5)))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6).stroke(chrome.chipBorder, style: StrokeStyle(width: 1))
         }
     }
 }
