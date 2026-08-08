@@ -17,6 +17,8 @@ struct ContentView: View {
     @Environment(\.chooseFile) var chooseFile
     @Environment(\.chooseFileSaveDestination) var chooseFileSaveDestination
     @Environment(\.presentAlert) var presentAlert
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     @State var designDraft: KeyboardDesign = .blank()
     /// `nil` while the draft is an unsaved "+ New Design…"; the design
@@ -31,7 +33,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             TitlebarView()
-            Divider()
+            chrome.divider.frame(height: 2)
             HStack(spacing: 0) {
                 IconRailView(mode: railModeBinding)
                 Divider()
