@@ -33,10 +33,10 @@ struct Chrome {
     /// backdrop-blur material isn't available (see `GlassIconTile`'s doc
     /// comment). Light mode needs a higher alpha than dark to stay visible
     /// against `bar`'s near-white background.
-    var glassFill: Color { pillBackground.opacity(scheme == .dark ? 0.65 : 0.85) }
+    var glassFill: Color { pillBackground.opacity(scheme == .dark ? 0.9 : 0.97) }
     /// Same idea as `glassFill` but accent-tinted, for the icon rail's
     /// active tab -- reads as "selected" without going fully opaque.
-    var glassActiveFill: Color { accent.opacity(scheme == .dark ? 0.55 : 0.5) }
+    var glassActiveFill: Color { accent.opacity(scheme == .dark ? 0.8 : 0.75) }
 
     var toggleOn: Color { scheme == .dark ? .hex("#30D158") : .hex("#34C759") }
     var toggleOff: Color { scheme == .dark ? .hex("#48484A") : .hex("#E2E2E5") }
