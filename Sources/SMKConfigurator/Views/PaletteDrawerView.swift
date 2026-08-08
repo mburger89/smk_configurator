@@ -42,7 +42,18 @@ struct PaletteDrawerView: View {
     private static let rowSpacing: Int = 8
 
     var body: some View {
-        ScrollView(.vertical) {
+        // Scrolling both axes (not just `.vertical`) matters even though
+        // there's nothing to horizontally scroll in steady state: it's what
+        // makes SwiftCrossUI report this view's own width as whatever's
+        // *proposed* to it rather than its wrapped content's natural width
+        // (see `ScrollView.computeLayout`'s `outerSize.width = proposedSize
+        // .width ?? ...`). Without that decoupling, the window-sizing pass
+        // that probes the whole app with `proposedSize = .zero` to work out
+        // the window's minimum size would see this drawer's *current* wide
+        // content width as its structural minimum, permanently pinning the
+        // window's minimum (and therefore resize handle) to roughly its
+        // current width.
+        ScrollView([.horizontal, .vertical]) {
             VStack(alignment: .leading, spacing: 12) {
                 widthProbe
                 section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) })
