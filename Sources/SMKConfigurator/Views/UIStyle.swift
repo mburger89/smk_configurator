@@ -1,4 +1,3 @@
-import Foundation  // for cos, used by GlassRim's gradient-angle math
 import SwiftCrossUI
 
 /// Design tokens for the "Power / Grouped List" redesign (see
@@ -118,79 +117,12 @@ struct ToolbarPill: View {
     }
 }
 
-/// One thin arc slice of `GlassRim`'s ring. SwiftCrossUI's `Shape.stroke(_:)`
-/// only takes a solid `Color` -- there's no gradient-stroke overload and no
-/// `.clipShape()` to mask a gradient `View` into a ring -- so a gradient rim
-/// has to be approximated as many solid-colored arc segments instead of one
-/// stroked circle.
-private struct RingArc: Shape {
-    var startAngle: Double
-    var endAngle: Double
-
-    func path(in bounds: Path.Rect) -> Path {
-        let radius = min(bounds.width, bounds.height) / 2
-        return Path().addArc(
-            center: bounds.center,
-            radius: radius,
-            startAngle: startAngle,
-            endAngle: endAngle,
-            clockwise: true
-        )
-    }
-
-    func size(fitting proposal: ProposedViewSize) -> ViewSize {
-        let diameter: Double
-        if let width = proposal.width, let height = proposal.height {
-            diameter = min(width, height)
-        } else {
-            diameter = proposal.width ?? proposal.height ?? 10.0
-        }
-        return ViewSize(diameter, diameter)
-    }
-}
-
-/// `GlassIconTile`'s rim: a ring traced in `RingArc` slices, each colored by
-/// projecting its angular position onto a top-leading-to-bottom-trailing
-/// (-45°) axis -- lightest where the ring is top-leading, darkest directly
-/// opposite, approximating a stroke with a linear gradient along that axis.
-private struct GlassRim: View {
-    private static let segmentCount = 24
-    /// `addArc`'s angle is measured clockwise from the trailing (+x) edge;
-    /// top-leading is 3/4 of a turn further round, i.e. -45°.
-    private static let lightPoleAngle = 5 * Double.pi / 4
-
-    var body: some View {
-        ZStack {
-            ForEach(0..<Self.segmentCount, id: \.self) { index in
-                let start = Double(index) / Double(Self.segmentCount) * (2 * Double.pi)
-                let end = Double(index + 1) / Double(Self.segmentCount) * (2 * Double.pi)
-                RingArc(startAngle: start, endAngle: end)
-                    .stroke(
-                        Self.color(atMidAngle: (start + end) / 2),
-                        style: StrokeStyle(width: 2.25)
-                    )
-            }
-        }
-    }
-
-    /// `t` is 0 at the light pole (top-leading) and 1 at the dark pole
-    /// (bottom-trailing, directly opposite) -- both the grayscale tone and
-    /// the opacity move with `t`, so each pole is as strong as possible
-    /// (bright + opaque white at one end, dark + opaque black at the
-    /// other) instead of fading toward transparent and washing out.
-    private static func color(atMidAngle angle: Double) -> Color {
-        let t = (1 - cos(angle - lightPoleAngle)) / 2
-        let tone = 1 - t
-        return Color(red: tone, green: tone, blue: tone, opacity: 0.9 - 0.6 * t)
-    }
-}
-
-/// A circular faux-glass tile behind an icon-only tap target
-/// (`ToolbarIconButton`, `RailButton`). SwiftCrossUI has no backdrop-blur/
-/// Material API -- its one `NSVisualEffectView` usage is internal, wired
-/// only to a sidebar split view, not exposed as a general-purpose `View`
-/// -- so this fakes glass with a translucent tinted circle plus `GlassRim`'s
-/// gradient edge. See `docs/superpowers/specs/2026-08-07-glass-icon-buttons-design.md`.
+/// A circular tile behind an icon-only tap target (`ToolbarIconButton`,
+/// `RailButton`), filled with a translucent tint. SwiftCrossUI has no
+/// backdrop-blur/Material API -- its one `NSVisualEffectView` usage is
+/// internal, wired only to a sidebar split view, not exposed as a
+/// general-purpose `View` -- so a plain translucent fill is the closest
+/// approximation available; there's no real system material to reach for.
 struct GlassIconTile<Content: View>: View {
     var tint: Color
     var diameter: Double
@@ -200,7 +132,6 @@ struct GlassIconTile<Content: View>: View {
     var body: some View {
         ZStack {
             Circle().fill(tint)
-            GlassRim()
             content()
         }
         .frame(width: diameter, height: diameter)
