@@ -2,16 +2,28 @@ import SwiftCrossUI
 
 /// The dense action palette below the board in KEY mode: every action the
 /// firmware understands, grouped into sections and shown simultaneously
-/// (not tabbed), white background, capped at 413px tall and scrollable --
-/// see the handoff's "List column"/"Main content" KEY description. Tapping
-/// a chip arms it (see `KeyCapView`); tapping the armed chip again disarms
-/// it.
+/// (not tabbed), white background, tall enough to fit every section
+/// (see `maxHeight`'s comment) -- see the handoff's "List column"/"Main
+/// content" KEY description. Tapping a chip arms it (see `KeyCapView`);
+/// tapping the armed chip again disarms it.
 struct PaletteDrawerView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
-    static let maxHeight: Double = 413
+    /// Fixed (not max) height for the drawer's outer frame -- tall enough
+    /// to fit all 8 sections (Letters through Layers & Special) without
+    /// the drawer's own internal `ScrollView(.vertical)` needing to
+    /// scroll/clip. 413 (this constant's old value) predates the
+    /// Function Keys/System sections and was no longer tall enough,
+    /// silently clipping "Layers & Special" out of view with no visible
+    /// scroll affordance. A *fixed* height (rather than
+    /// `.frame(maxHeight:)`) is deliberate: `KeyMainContentView`'s
+    /// containing `VStack` will happily shrink a flexible/max-height
+    /// drawer to make room for the board above it when the window is
+    /// short, which reintroduces the same clipping problem -- a strict
+    /// height always reserves this much space instead.
+    static let maxHeight: Double = 600
 
     /// One `PaletteChip`'s fixed height (see `PaletteChip.body`'s
     /// `.frame(width: 44, height: 26)`) and the spacing between wrapped
