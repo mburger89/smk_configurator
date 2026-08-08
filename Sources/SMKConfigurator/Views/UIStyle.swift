@@ -118,20 +118,26 @@ struct ToolbarPill: View {
 }
 
 /// A circular tile behind an icon-only tap target (`ToolbarIconButton`,
-/// `RailButton`), filled with a translucent tint. SwiftCrossUI has no
-/// backdrop-blur/Material API -- its one `NSVisualEffectView` usage is
-/// internal, wired only to a sidebar split view, not exposed as a
-/// general-purpose `View` -- so a plain translucent fill is the closest
-/// approximation available; there's no real system material to reach for.
+/// `RailButton`), filled with a translucent tint and traced with a thin
+/// flat border (`chrome.chipBorder`) so it reads as a distinct button
+/// against the toolbar background. SwiftCrossUI has no backdrop-blur/
+/// Material API -- its one `NSVisualEffectView` usage is internal, wired
+/// only to a sidebar split view, not exposed as a general-purpose `View`
+/// -- so a plain translucent fill is the closest approximation available;
+/// there's no real system material to reach for.
 struct GlassIconTile<Content: View>: View {
     var tint: Color
     var diameter: Double
     var action: () -> Void
     @ViewBuilder var content: () -> Content
 
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
     var body: some View {
         ZStack {
             Circle().fill(tint)
+            Circle().stroke(chrome.chipBorder, style: StrokeStyle(width: 1))
             content()
         }
         .frame(width: diameter, height: diameter)
@@ -153,9 +159,9 @@ struct ToolbarIconButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        GlassIconTile(tint: chrome.glassFill, diameter: 48, action: action) {
+        GlassIconTile(tint: chrome.glassFill, diameter: 24, action: action) {
             if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
-                Image(url).resizable().frame(width: 20, height: 20)
+                Image(url).resizable().frame(width: 10, height: 10)
             }
         }
         .help(tooltip)

@@ -11,7 +11,7 @@ struct TitlebarView: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 8) {
             ToolbarIconButton(icon: .newDoc, tooltip: "New") {
                 editor.newDocument()
             }
@@ -68,8 +68,8 @@ struct TitlebarView: View {
                 .toggleStyle(.switch)
                 .fixedSize()
         }
-        .padding(14)
-        .frame(height: 68)
+        .padding(8)
+        .frame(height: 40)
         .background(chrome.bar)
     }
 
