@@ -1,3 +1,4 @@
+import Foundation  // for cos, used by GlassRim's gradient-angle math
 import SwiftCrossUI
 
 /// Design tokens for the "Power / Grouped List" redesign (see
@@ -37,12 +38,6 @@ struct Chrome {
     /// Same idea as `glassFill` but accent-tinted, for the icon rail's
     /// active tab -- reads as "selected" without going fully opaque.
     var glassActiveFill: Color { accent.opacity(scheme == .dark ? 0.55 : 0.5) }
-    /// Thin rim stroke tracing a glass tile's edge. Scheme-flipped (unlike
-    /// most other glass tokens) so it stays visible against both a
-    /// near-black and a near-white `bar`.
-    var glassRim: Color { scheme == .dark ? .white.opacity(0.28) : .black.opacity(0.12) }
-    /// Specular highlight blob in the tile's top-leading corner.
-    var glassSheen: Color { .white.opacity(scheme == .dark ? 0.22 : 0.55) }
 
     var toggleOn: Color { scheme == .dark ? .hex("#30D158") : .hex("#34C759") }
     var toggleOff: Color { scheme == .dark ? .hex("#48484A") : .hex("#E2E2E5") }
@@ -123,31 +118,88 @@ struct ToolbarPill: View {
     }
 }
 
+/// One thin arc slice of `GlassRim`'s ring. SwiftCrossUI's `Shape.stroke(_:)`
+/// only takes a solid `Color` -- there's no gradient-stroke overload and no
+/// `.clipShape()` to mask a gradient `View` into a ring -- so a gradient rim
+/// has to be approximated as many solid-colored arc segments instead of one
+/// stroked circle.
+private struct RingArc: Shape {
+    var startAngle: Double
+    var endAngle: Double
+
+    func path(in bounds: Path.Rect) -> Path {
+        let radius = min(bounds.width, bounds.height) / 2
+        return Path().addArc(
+            center: bounds.center,
+            radius: radius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: true
+        )
+    }
+
+    func size(fitting proposal: ProposedViewSize) -> ViewSize {
+        let diameter: Double
+        if let width = proposal.width, let height = proposal.height {
+            diameter = min(width, height)
+        } else {
+            diameter = proposal.width ?? proposal.height ?? 10.0
+        }
+        return ViewSize(diameter, diameter)
+    }
+}
+
+/// `GlassIconTile`'s rim: a ring traced in `RingArc` slices, each colored by
+/// projecting its angular position onto a top-leading-to-bottom-trailing
+/// (-45°) axis -- lightest where the ring is top-leading, darkest directly
+/// opposite, approximating a stroke with a linear gradient along that axis.
+private struct GlassRim: View {
+    private static let segmentCount = 24
+    /// `addArc`'s angle is measured clockwise from the trailing (+x) edge;
+    /// top-leading is 3/4 of a turn further round, i.e. -45°.
+    private static let lightPoleAngle = 5 * Double.pi / 4
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<Self.segmentCount, id: \.self) { index in
+                let start = Double(index) / Double(Self.segmentCount) * (2 * Double.pi)
+                let end = Double(index + 1) / Double(Self.segmentCount) * (2 * Double.pi)
+                RingArc(startAngle: start, endAngle: end)
+                    .stroke(
+                        Self.color(atMidAngle: (start + end) / 2),
+                        style: StrokeStyle(width: 1)
+                    )
+            }
+        }
+    }
+
+    /// `t` is 0 at the light pole (top-leading) and 1 at the dark pole
+    /// (bottom-trailing, directly opposite) -- a light-to-dark grayscale
+    /// fade rather than an opacity fade, so it reads the same regardless of
+    /// what's behind the tile.
+    private static func color(atMidAngle angle: Double) -> Color {
+        let t = (1 - cos(angle - lightPoleAngle)) / 2
+        let tone = 1 - t
+        return Color(red: tone, green: tone, blue: tone, opacity: 0.6 - 0.25 * t)
+    }
+}
+
 /// A circular faux-glass tile behind an icon-only tap target
 /// (`ToolbarIconButton`, `RailButton`). SwiftCrossUI has no backdrop-blur/
 /// Material API -- its one `NSVisualEffectView` usage is internal, wired
 /// only to a sidebar split view, not exposed as a general-purpose `View`
-/// -- so this fakes glass with stacked translucent shapes instead: a
-/// tinted base circle, a small offset highlight blob (specular sheen), and
-/// a thin rim stroke. See `docs/superpowers/specs/2026-08-07-glass-icon-buttons-design.md`.
+/// -- so this fakes glass with a translucent tinted circle plus `GlassRim`'s
+/// gradient edge. See `docs/superpowers/specs/2026-08-07-glass-icon-buttons-design.md`.
 struct GlassIconTile<Content: View>: View {
     var tint: Color
     var diameter: Double
     var action: () -> Void
     @ViewBuilder var content: () -> Content
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
     var body: some View {
         ZStack {
             Circle().fill(tint)
-            Circle()
-                .fill(chrome.glassSheen)
-                .frame(width: diameter * 0.42, height: diameter * 0.42)
-                .padding(EdgeInsets(top: Int(diameter * 0.1), bottom: 0, leading: Int(diameter * 0.12), trailing: 0))
-                .frame(width: diameter, height: diameter, alignment: .topLeading)
-            Circle().stroke(chrome.glassRim, style: StrokeStyle(width: 1))
+            GlassRim()
             content()
         }
         .frame(width: diameter, height: diameter)
