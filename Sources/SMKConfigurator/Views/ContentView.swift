@@ -31,6 +31,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             TitlebarView()
+            Divider()
             HStack(spacing: 0) {
                 IconRailView(mode: railModeBinding)
                 Divider()
