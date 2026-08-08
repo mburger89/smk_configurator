@@ -11,7 +11,7 @@ struct PaletteDrawerView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
-    static let maxHeight: Double = 220
+    static let maxHeight: Double = 275
 
     var body: some View {
         ScrollView(.vertical) {
@@ -26,7 +26,7 @@ struct PaletteDrawerView: View {
             .padding(10)
         }
         .frame(height: Self.maxHeight)
-        .background(chrome.surface)
+        .background(RoundedRectangle(cornerRadius: 10).fill(chrome.surface))
     }
 
     private func section(_ title: String, tokens: [ActionToken], rows: Int = 1) -> some View {
