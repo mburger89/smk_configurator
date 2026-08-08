@@ -18,10 +18,13 @@ import PackageDescription
 // `Views/AppIcon.swift`.
 #if os(macOS)
 let iconResources: [Resource] = [.copy("Resources/macOS/Icons")]
+let unusedIconPaths = ["Resources/Windows/Icons", "Resources/Linux/Icons"]
 #elseif os(Windows)
 let iconResources: [Resource] = [.copy("Resources/Windows/Icons")]
+let unusedIconPaths = ["Resources/macOS/Icons", "Resources/Linux/Icons"]
 #else
 let iconResources: [Resource] = [.copy("Resources/Linux/Icons")]
+let unusedIconPaths = ["Resources/macOS/Icons", "Resources/Windows/Icons"]
 #endif
 
 let package = Package(
@@ -46,6 +49,7 @@ let package = Package(
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
                 "CHidapi",
             ],
+            exclude: unusedIconPaths,
             resources: iconResources,
             linkerSettings: [
                 .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),
