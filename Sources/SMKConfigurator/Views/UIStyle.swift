@@ -163,7 +163,9 @@ struct ToolbarIconButton: View {
 }
 
 /// One of the four icon-rail buttons (KEY/DSN/THM/DEV) -- a platform-native
-/// icon with a `.help()` tooltip carrying the full name.
+/// icon with a `.help()` tooltip carrying the full name. Rounded-rect
+/// (unlike the titlebar's circular `ToolbarIconButton`/`GlassIconTile`),
+/// but keeps the same translucent glass tint colors.
 struct RailButton: View {
     var icon: AppIcon
     var tooltip: String
@@ -174,13 +176,14 @@ struct RailButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        GlassIconTile(
-            tint: isActive ? chrome.glassActiveFill : chrome.glassFill,
-            diameter: 40,
+        TapTarget(
+            background: isActive ? chrome.glassActiveFill : chrome.glassFill,
+            cornerRadius: 9,
             action: action
         ) {
             iconImage
         }
+        .frame(width: 40, height: 40)
         .help(tooltip)
     }
 
