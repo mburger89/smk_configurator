@@ -72,14 +72,19 @@ enum KeyName: String, CaseIterable, Hashable {
     case a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z
     case n1 = "1", n2 = "2", n3 = "3", n4 = "4", n5 = "5"
     case n6 = "6", n7 = "7", n8 = "8", n9 = "9", n0 = "0"
-    case enter, escape, backspace, tab, space, minus, backslash, semicolon, quote, comma, period, slash
+    case enter, escape, backspace, tab, space
+    case minus, equal, leftBracket, rightBracket, backslash, semicolon, quote, grave, comma, period, slash
     case left, right, up, down
 
     static let letters: [KeyName] = [.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m,
                                       .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z]
     static let digits: [KeyName] = [.n1, .n2, .n3, .n4, .n5, .n6, .n7, .n8, .n9, .n0]
+    /// All symbol/punctuation keys on a standard US ANSI keyboard, in HID
+    /// usage order -- matches `KeyCode`'s case order in the firmware's
+    /// `LayerEngine.swift` exactly (`minus` 0x2D through `slash` 0x38).
     static let editing: [KeyName] = [.enter, .escape, .backspace, .tab, .space,
-                                      .minus, .backslash, .semicolon, .quote, .comma, .period, .slash]
+                                      .minus, .equal, .leftBracket, .rightBracket, .backslash,
+                                      .semicolon, .quote, .grave, .comma, .period, .slash]
     static let navigation: [KeyName] = [.left, .right, .up, .down]
 
     var displayLabel: String {
@@ -90,9 +95,13 @@ enum KeyName: String, CaseIterable, Hashable {
         case .tab: return "⇥"
         case .space: return "␣"
         case .minus: return "-"
+        case .equal: return "="
+        case .leftBracket: return "["
+        case .rightBracket: return "]"
         case .backslash: return "\\"
         case .semicolon: return ";"
         case .quote: return "'"
+        case .grave: return "`"
         case .comma: return ","
         case .period: return "."
         case .slash: return "/"
