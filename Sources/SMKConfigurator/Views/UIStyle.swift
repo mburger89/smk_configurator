@@ -167,20 +167,21 @@ private struct GlassRim: View {
                 RingArc(startAngle: start, endAngle: end)
                     .stroke(
                         Self.color(atMidAngle: (start + end) / 2),
-                        style: StrokeStyle(width: 1)
+                        style: StrokeStyle(width: 1.5)
                     )
             }
         }
     }
 
     /// `t` is 0 at the light pole (top-leading) and 1 at the dark pole
-    /// (bottom-trailing, directly opposite) -- a light-to-dark grayscale
-    /// fade rather than an opacity fade, so it reads the same regardless of
-    /// what's behind the tile.
+    /// (bottom-trailing, directly opposite) -- both the grayscale tone and
+    /// the opacity move with `t`, so each pole is as strong as possible
+    /// (bright + opaque white at one end, dark + opaque black at the
+    /// other) instead of fading toward transparent and washing out.
     private static func color(atMidAngle angle: Double) -> Color {
         let t = (1 - cos(angle - lightPoleAngle)) / 2
         let tone = 1 - t
-        return Color(red: tone, green: tone, blue: tone, opacity: 0.6 - 0.25 * t)
+        return Color(red: tone, green: tone, blue: tone, opacity: 0.9 - 0.35 * t)
     }
 }
 
