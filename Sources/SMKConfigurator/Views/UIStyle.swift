@@ -181,7 +181,7 @@ private struct GlassRim: View {
     private static func color(atMidAngle angle: Double) -> Color {
         let t = (1 - cos(angle - lightPoleAngle)) / 2
         let tone = 1 - t
-        return Color(red: tone, green: tone, blue: tone, opacity: 0.9 - 0.35 * t)
+        return Color(red: tone, green: tone, blue: tone, opacity: 0.9 - 0.6 * t)
     }
 }
 
