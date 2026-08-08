@@ -18,7 +18,7 @@ struct KeyboardBoardView: View {
         let design = editor.activeDesign
         VStack(spacing: 6) {
             ForEach(0..<design.rowCount, id: \.self) { r in
-                HStack(spacing: 6) {
+                HStack(spacing: 10) {
                     ForEach(design.visibleSlots(row: r)) { slot in
                         KeyCapView(
                             row: slot.row,
