@@ -13,6 +13,23 @@ struct PaletteDrawerView: View {
 
     static let maxHeight: Double = 413
 
+    /// One `PaletteChip`'s fixed height (see `PaletteChip.body`'s
+    /// `.frame(width: 44, height: 26)`) and the spacing between wrapped
+    /// chip rows within a section (e.g. the two `Letters` rows).
+    private static let chipRowHeight: Double = 26
+    private static let chipRowSpacing: Double = 8
+    /// Headroom reserved below each section's chip row for a horizontal
+    /// scrollbar. SwiftCrossUI's `ScrollView(.horizontal)` only grows its
+    /// own layout height to make room for the scrollbar when its content
+    /// actually overflows the available width (see swift-cross-ui's
+    /// `ScrollView.computeLayout`), so without a fixed frame here,
+    /// sections whose chips happen to overflow render taller than ones
+    /// that don't -- an inconsistent gap/border-like artifact between
+    /// sections. Giving every section the same fixed height (content +
+    /// this reserve) makes them uniform regardless of whether that
+    /// section's row overflows.
+    private static let scrollBarReserve: Double = 15
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 12) {
@@ -33,6 +50,8 @@ struct PaletteDrawerView: View {
 
     private func section(_ title: String, tokens: [ActionToken], rows: Int = 1) -> some View {
         let chunks = chunk(tokens, into: rows)
+        let contentHeight =
+            Double(rows) * Self.chipRowHeight + Double(rows - 1) * Self.chipRowSpacing
         return VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .bold))
@@ -48,6 +67,7 @@ struct PaletteDrawerView: View {
                     }
                 }
             }
+            .frame(height: contentHeight + Self.scrollBarReserve)
         }
     }
 
