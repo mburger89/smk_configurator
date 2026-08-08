@@ -1,3 +1,4 @@
+import Foundation
 import SwiftCrossUI
 
 /// The dense action palette below the board in KEY mode: every action the
@@ -70,15 +71,25 @@ struct PaletteDrawerView: View {
             .frame(height: 1)
             .background {
                 GeometryReader { proxy in
-                    // `proxy.size.width` swings to 0 or .infinity whenever an
-                    // ancestor `HStack` (e.g. `ContentView`'s column layout)
-                    // is probing this pane's flexibility -- only the finite,
-                    // "real" proposals reflect the column's actual width, so
-                    // non-finite readings are ignored rather than stored.
+                    // `proxy.size.width` swings between 0 and .infinity
+                    // whenever an ancestor `HStack` (e.g. `ContentView`'s
+                    // column layout) is probing this pane's flexibility to
+                    // work out the *window's* resizable bounds -- only the
+                    // finite readings reflect the column's actual width.
+                    // Writing `contentWidth` synchronously here (as
+                    // `computeLayout` runs) would recursively kick off a
+                    // re-render in the middle of that ancestor's still-in-
+                    // progress probe, corrupting it into reporting a fixed
+                    // min==max width and locking the window's width resize
+                    // handle -- deferring the write to the next run loop
+                    // turn lets the probe finish first.
+                    let width = proxy.size.width
                     Color.clear
-                        .onChange(of: proxy.size.width, initial: true) {
-                            guard proxy.size.width.isFinite else { return }
-                            contentWidth = proxy.size.width
+                        .onChange(of: width, initial: true) {
+                            guard width.isFinite else { return }
+                            DispatchQueue.main.async {
+                                contentWidth = width
+                            }
                         }
                 }
             }
