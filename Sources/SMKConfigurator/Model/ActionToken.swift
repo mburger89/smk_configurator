@@ -74,18 +74,30 @@ enum KeyName: String, CaseIterable, Hashable {
     case n6 = "6", n7 = "7", n8 = "8", n9 = "9", n0 = "0"
     case enter, escape, backspace, tab, space
     case minus, equal, leftBracket, rightBracket, backslash, semicolon, quote, grave, comma, period, slash
-    case left, right, up, down
+    case capsLock, delete
+    case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
+    case printScreen, scrollLock, pause, application
+    case left, right, up, down, home, pageUp, pageDown, end
 
     static let letters: [KeyName] = [.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m,
                                       .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z]
     static let digits: [KeyName] = [.n1, .n2, .n3, .n4, .n5, .n6, .n7, .n8, .n9, .n0]
     /// All symbol/punctuation keys on a standard US ANSI keyboard, in HID
     /// usage order -- matches `KeyCode`'s case order in the firmware's
-    /// `LayerEngine.swift` exactly (`minus` 0x2D through `slash` 0x38).
+    /// `LayerEngine.swift` exactly (`minus` 0x2D through `slash` 0x38), plus
+    /// the two other common single-purpose editing keys (`capsLock`,
+    /// `delete` -- forward delete, distinct from `backspace`).
     static let editing: [KeyName] = [.enter, .escape, .backspace, .tab, .space,
                                       .minus, .equal, .leftBracket, .rightBracket, .backslash,
-                                      .semicolon, .quote, .grave, .comma, .period, .slash]
-    static let navigation: [KeyName] = [.left, .right, .up, .down]
+                                      .semicolon, .quote, .grave, .comma, .period, .slash,
+                                      .capsLock, .delete]
+    static let functionKeys: [KeyName] = [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12]
+    /// Keys that don't move the cursor/selection but round out the standard
+    /// HID keyboard usage table (0x46-0x48, 0x65) -- grouped separately from
+    /// `editing` since they're rarer/system-facing rather than everyday
+    /// editing actions.
+    static let system: [KeyName] = [.printScreen, .scrollLock, .pause, .application]
+    static let navigation: [KeyName] = [.left, .right, .up, .down, .home, .pageUp, .pageDown, .end]
 
     var displayLabel: String {
         switch self {
@@ -105,10 +117,20 @@ enum KeyName: String, CaseIterable, Hashable {
         case .comma: return ","
         case .period: return "."
         case .slash: return "/"
+        case .capsLock: return "Caps"
+        case .delete: return "⌦"
+        case .printScreen: return "PrtSc"
+        case .scrollLock: return "ScrLk"
+        case .pause: return "Pause"
+        case .application: return "Menu"
         case .left: return "←"
         case .right: return "→"
         case .up: return "↑"
         case .down: return "↓"
+        case .home: return "Home"
+        case .pageUp: return "PgUp"
+        case .pageDown: return "PgDn"
+        case .end: return "End"
         default: return rawValue.uppercased()
         }
     }

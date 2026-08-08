@@ -19,7 +19,9 @@ struct PaletteDrawerView: View {
                 section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) }, rows: 2)
                 section("Numbers", tokens: KeyName.digits.map { ActionToken.key($0) })
                 section("Editing & Punctuation", tokens: KeyName.editing.map { ActionToken.key($0) })
+                section("Function Keys", tokens: KeyName.functionKeys.map { ActionToken.key($0) })
                 section("Navigation", tokens: KeyName.navigation.map { ActionToken.key($0) })
+                section("System", tokens: KeyName.system.map { ActionToken.key($0) })
                 section("Modifiers", tokens: ModifierName.allCases.map { ActionToken.modifier($0) })
                 layersAndSpecialSection
             }
