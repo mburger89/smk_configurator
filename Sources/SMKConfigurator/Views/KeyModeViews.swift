@@ -8,9 +8,20 @@ import SwiftCrossUI
 struct KeyListColumnView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.presentAlert) var presentAlert
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
     var selectDesign: (KeyboardDesign) -> Void
     var selectTheme: (KeyboardTheme) -> Void
+
+    /// Which layer row the pointer is over, if any -- drives the delete
+    /// trash glyph. Lives here (not on a per-row view) because the trash
+    /// glyph has to sit outside `layerRow`'s own onTapGesture-wrapped
+    /// subtree: SwiftCrossUI's onTapGesture requires being the outermost
+    /// gesture on its subtree to reliably receive clicks, so a second,
+    /// independent tap target (delete) can't be nested inside a first
+    /// (select) at all -- they have to be siblings under a shared,
+    /// gesture-free parent, which is what the ForEach below builds.
+    @State private var hoveredLayerIndex: Int? = nil
 
     var body: some View {
         ScrollView {
@@ -28,9 +39,39 @@ struct KeyListColumnView: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    SectionHeader(title: "Layers")
+                    HStack {
+                        SectionHeader(title: "Layers")
+                        Spacer()
+                        addLayerChip
+                    }
                     ForEach(editor.document.layers.indices, id: \.self) { index in
-                        layerRow(index)
+                        // No gesture modifiers on this outer ZStack itself --
+                        // just a plain layout container. layerRow(index)
+                        // carries its own onHover+onTapGesture (in that
+                        // order, matching designRow/themeRow), which is the
+                        // only ordering that reliably receives clicks; the
+                        // trash glyph is a true sibling with its own
+                        // independent onTapGesture.
+                        ZStack(alignment: .trailing) {
+                            layerRow(index)
+                            // Layer 0 ("Base") is never deletable -- the
+                            // firmware always treats it as the
+                            // present-by-default layer.
+                            if hoveredLayerIndex == index && index != 0 {
+                                Text("🗑")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(chrome.dangerText)
+                                    .padding(.trailing, 8)
+                                    .onTapGesture {
+                                        Task {
+                                            await presentAlert("Delete Layer \(index)?") {
+                                                Button("Delete") { editor.removeLayer(at: index) }
+                                                Button("Cancel") {}
+                                            }
+                                        }
+                                    }
+                            }
+                        }
                     }
                 }
             }
@@ -77,6 +118,32 @@ struct KeyListColumnView: View {
         .onTapGesture { selectTheme(theme) }
     }
 
+    /// The "LAYERS" header's trailing "+" -- adds a new blank-transparent
+    /// layer (`EditorState.addLayer()`), dimmed and inert once
+    /// `EditorState.maxLayerCount` is reached.
+    private var addLayerChip: some View {
+        let isEnabled = editor.document.layers.count < EditorState.maxLayerCount
+        let fade = isEnabled ? 1.0 : 0.4
+        return TapTarget(
+            background: chrome.chipBackground.opacity(fade),
+            cornerRadius: 4,
+            action: { if isEnabled { editor.addLayer() } }
+        ) {
+            Text("+")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(chrome.textPrimary.opacity(fade))
+        }
+        .frame(width: 20, height: 20)
+    }
+
+    /// The selectable content of one Layers-list row -- background, drag
+    /// dots, label. Deliberately doesn't include the delete trash glyph:
+    /// see `hoveredLayerIndex`'s doc comment for why that has to live as a
+    /// sibling at the call site instead of nested in here. `.onHover` is
+    /// chained directly onto this same view, in front of `.onTapGesture`
+    /// (matching `designRow`/`themeRow`) -- putting hover on a *different*,
+    /// outer-wrapping view broke click delivery to this row's tap gesture
+    /// entirely, not just the nested trash glyph's.
     private func layerRow(_ index: Int) -> some View {
         let isSelected = editor.currentLayer == index
         return ZStack {
@@ -92,6 +159,9 @@ struct KeyListColumnView: View {
                 Spacer()
             }
             .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
+        }
+        .onHover { hovering in
+            hoveredLayerIndex = hovering ? index : (hoveredLayerIndex == index ? nil : hoveredLayerIndex)
         }
         .onTapGesture { editor.currentLayer = index }
     }

@@ -251,7 +251,13 @@ class EditorState {
         return ActionToken.parse(document.layers[currentLayer][row][col])
     }
 
+    /// Layers beyond this point would outrun what the palette's layer
+    /// stepper (`PaletteDrawerView`, 0...15) and a reasonable keymap size
+    /// can sensibly manage -- an arbitrary but generous cap.
+    static let maxLayerCount = 10
+
     func addLayer() {
+        guard document.layers.count < Self.maxLayerCount else { return }
         document.layers.append(KeymapDocument.blankTransparentLayer(for: activeDesign))
         currentLayer = document.layers.count - 1
         isDirty = true
@@ -260,6 +266,26 @@ class EditorState {
     func removeCurrentLayer() {
         guard document.layers.count > 1 else { return }
         document.layers.remove(at: currentLayer)
+        currentLayer = min(currentLayer, document.layers.count - 1)
+        isDirty = true
+    }
+
+    /// The Layers list's per-row delete (hover trash glyph, confirmed via
+    /// alert) -- unlike `removeCurrentLayer()`, this can remove a layer
+    /// that isn't the one currently being edited. Layer 0 ("Base") is never
+    /// deletable: the firmware always treats it as the present-by-default
+    /// layer.
+    func removeLayer(at index: Int) {
+        guard document.layers.count > 1, index != 0, index < document.layers.count else { return }
+        document.layers.remove(at: index)
+        // Layers after `index` shifted down by one -- follow the same
+        // physical layer rather than silently landing on whatever now
+        // occupies the old `currentLayer` slot. If `currentLayer` was the
+        // one just removed, it's left pointing at whatever shifted into
+        // that index (or clamped below if it was the last layer).
+        if currentLayer > index {
+            currentLayer -= 1
+        }
         currentLayer = min(currentLayer, document.layers.count - 1)
         isDirty = true
     }
