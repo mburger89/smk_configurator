@@ -2,7 +2,7 @@ import SwiftCrossUI
 
 /// The dense action palette below the board in KEY mode: every action the
 /// firmware understands, grouped into sections and shown simultaneously
-/// (not tabbed), white background, capped at 220px tall and scrollable --
+/// (not tabbed), white background, capped at 413px tall and scrollable --
 /// see the handoff's "List column"/"Main content" KEY description. Tapping
 /// a chip arms it (see `KeyCapView`); tapping the armed chip again disarms
 /// it.
@@ -11,7 +11,7 @@ struct PaletteDrawerView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
-    static let maxHeight: Double = 275
+    static let maxHeight: Double = 413
 
     var body: some View {
         ScrollView(.vertical) {
