@@ -159,9 +159,9 @@ struct ToolbarIconButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        GlassIconTile(tint: chrome.glassFill, diameter: 24, action: action) {
+        GlassIconTile(tint: chrome.glassFill, diameter: 30, action: action) {
             if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
-                Image(url).resizable().frame(width: 10, height: 10)
+                Image(url).resizable().frame(width: 12, height: 12)
             }
         }
         .help(tooltip)
