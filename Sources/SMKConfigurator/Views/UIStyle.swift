@@ -28,8 +28,21 @@ struct Chrome {
     var chipBackground: Color { scheme == .dark ? .hex("#323234") : .hex("#F2F2F4") }
     var chipBorder: Color { scheme == .dark ? .hex("#48484A") : .hex("#E0E0E2") }
 
-    var railActiveBackground: Color { accent }
-    var railInactiveBackground: Color { pillBackground }
+    /// Faux-glass tile fill for icon-only buttons (`GlassIconTile`) --
+    /// translucent rather than opaque like `pillBackground`, since a real
+    /// backdrop-blur material isn't available (see `GlassIconTile`'s doc
+    /// comment). Light mode needs a higher alpha than dark to stay visible
+    /// against `bar`'s near-white background.
+    var glassFill: Color { pillBackground.opacity(scheme == .dark ? 0.65 : 0.85) }
+    /// Same idea as `glassFill` but accent-tinted, for the icon rail's
+    /// active tab -- reads as "selected" without going fully opaque.
+    var glassActiveFill: Color { accent.opacity(scheme == .dark ? 0.55 : 0.5) }
+    /// Thin rim stroke tracing a glass tile's edge. Scheme-flipped (unlike
+    /// most other glass tokens) so it stays visible against both a
+    /// near-black and a near-white `bar`.
+    var glassRim: Color { scheme == .dark ? .white.opacity(0.28) : .black.opacity(0.12) }
+    /// Specular highlight blob in the tile's top-leading corner.
+    var glassSheen: Color { .white.opacity(scheme == .dark ? 0.22 : 0.55) }
 
     var toggleOn: Color { scheme == .dark ? .hex("#30D158") : .hex("#34C759") }
     var toggleOff: Color { scheme == .dark ? .hex("#48484A") : .hex("#E2E2E5") }
@@ -110,11 +123,43 @@ struct ToolbarPill: View {
     }
 }
 
-/// An icon-only pill in the titlebar toolbar group (`New`, `Open`, `Save`,
-/// `Save As`, `Import`, `Export`) with a `.help()` tooltip carrying the
-/// action name. Distinct from `ToolbarPill` (used elsewhere for dynamic
-/// text pills, e.g. DSN's `+ Row`/width presets) since those have no
-/// natural icon and must keep showing text.
+/// A circular faux-glass tile behind an icon-only tap target
+/// (`ToolbarIconButton`, `RailButton`). SwiftCrossUI has no backdrop-blur/
+/// Material API -- its one `NSVisualEffectView` usage is internal, wired
+/// only to a sidebar split view, not exposed as a general-purpose `View`
+/// -- so this fakes glass with stacked translucent shapes instead: a
+/// tinted base circle, a small offset highlight blob (specular sheen), and
+/// a thin rim stroke. See `docs/superpowers/specs/2026-08-07-glass-icon-buttons-design.md`.
+struct GlassIconTile<Content: View>: View {
+    var tint: Color
+    var diameter: Double
+    var action: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
+    var body: some View {
+        ZStack {
+            Circle().fill(tint)
+            Circle()
+                .fill(chrome.glassSheen)
+                .frame(width: diameter * 0.42, height: diameter * 0.42)
+                .padding(EdgeInsets(top: Int(diameter * 0.1), bottom: 0, leading: Int(diameter * 0.12), trailing: 0))
+                .frame(width: diameter, height: diameter, alignment: .topLeading)
+            Circle().stroke(chrome.glassRim, style: StrokeStyle(width: 1))
+            content()
+        }
+        .frame(width: diameter, height: diameter)
+        .onTapGesture(perform: action)
+    }
+}
+
+/// An icon-only glass tile in the titlebar toolbar group (`New`, `Open`,
+/// `Save`, `Save As`, `Import`, `Export`) with a `.help()` tooltip carrying
+/// the action name. Distinct from `ToolbarPill` (used elsewhere for
+/// dynamic text pills, e.g. DSN's `+ Row`/width presets) since those have
+/// no natural icon and must keep showing text.
 struct ToolbarIconButton: View {
     var icon: AppIcon
     var tooltip: String
@@ -124,16 +169,11 @@ struct ToolbarIconButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: action) {
-            ZStack {
-                if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
-                    Image(url).resizable().frame(width: 16, height: 16)
-                }
+        GlassIconTile(tint: chrome.glassFill, diameter: 32, action: action) {
+            if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
+                Image(url).resizable().frame(width: 16, height: 16)
             }
-            .frame(width: 16, height: 16)
         }
-        .padding(EdgeInsets(top: 5, bottom: 5, leading: 8, trailing: 8))
-        .fixedSize()
         .help(tooltip)
     }
 }
@@ -150,23 +190,20 @@ struct RailButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        TapTarget(
-            background: isActive ? chrome.railActiveBackground : chrome.railInactiveBackground,
-            cornerRadius: 9,
+        GlassIconTile(
+            tint: isActive ? chrome.glassActiveFill : chrome.glassFill,
+            diameter: 40,
             action: action
         ) {
             iconImage
         }
-        .frame(width: 40, height: 40)
         .help(tooltip)
     }
 
-    /// Active buttons sit on the blue accent background (`chrome.railActiveBackground`,
-    /// saturated in both color schemes) -- same as the old text label's
-    /// `isActive ? .white : chrome.textSecondary`, this always uses the
-    /// white-tinted ("dark" folder) icon variant when active, regardless
-    /// of the app's actual color scheme, since it needs to read against
-    /// that blue background either way.
+    /// Active tabs sit on the accent-tinted glass fill (`chrome.glassActiveFill`)
+    /// -- this always uses the white-tinted ("dark" folder) icon variant
+    /// when active, regardless of the app's actual color scheme, since it
+    /// needs to read against that blue tint either way.
     @ViewBuilder
     private var iconImage: some View {
         if let url = IconLoader.url(for: icon, colorScheme: isActive ? .dark : colorScheme) {
