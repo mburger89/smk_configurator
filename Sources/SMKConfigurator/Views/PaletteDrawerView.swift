@@ -114,7 +114,7 @@ struct PaletteDrawerView: View {
             VStack(alignment: .leading, spacing: Self.rowSpacing) {
                 let chunks = wrap(tokens, toWidth: contentWidth)
                 ForEach(chunks.indices, id: \.self) { i in
-                    HStack(spacing: Self.chipSpacing) {
+                    HStack(spacing: justifiedSpacing(forCount: chunks[i].count)) {
                         ForEach(chunks[i]) { token in
                             PaletteChip(token: token)
                         }
@@ -122,6 +122,18 @@ struct PaletteDrawerView: View {
                 }
             }
         }
+    }
+
+    /// The gap to put between `count` chips so the row spans `contentWidth`
+    /// edge-to-edge instead of leaving whatever's left over from `wrap`'s
+    /// floor-based chip count sitting as unused trailing space -- widens
+    /// `chipSpacing` just enough to absorb that remainder. Left at the base
+    /// spacing for single-chip rows (nothing to stretch) or before
+    /// `contentWidth` has been measured.
+    private func justifiedSpacing(forCount count: Int) -> Int {
+        guard count > 1, contentWidth > 0, contentWidth.isFinite else { return Self.chipSpacing }
+        let gap = (contentWidth - Double(count) * Self.chipWidth) / Double(count - 1)
+        return max(Self.chipSpacing, Int(gap))
     }
 
     /// Splits `tokens` into left-to-right rows that each fit within
