@@ -167,7 +167,7 @@ private struct GlassRim: View {
                 RingArc(startAngle: start, endAngle: end)
                     .stroke(
                         Self.color(atMidAngle: (start + end) / 2),
-                        style: StrokeStyle(width: 1.5)
+                        style: StrokeStyle(width: 2.25)
                     )
             }
         }
