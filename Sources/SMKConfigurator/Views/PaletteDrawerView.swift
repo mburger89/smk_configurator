@@ -36,9 +36,9 @@ struct PaletteDrawerView: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(chrome.textTertiary)
             ScrollView(.horizontal) {
-                VStack(spacing: 4) {
+                VStack(spacing: 8) {
                     ForEach(chunks.indices, id: \.self) { i in
-                        HStack(spacing: 4) {
+                        HStack(spacing: 8) {
                             ForEach(chunks[i]) { token in
                                 PaletteChip(token: token)
                             }
@@ -67,7 +67,7 @@ struct PaletteDrawerView: View {
                 .foregroundColor(chrome.textTertiary)
             HStack(spacing: 12) {
                 layerPickerGroup
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
                     PaletteChip(token: .transparent)
                     PaletteChip(token: .none)
                     PaletteChip(token: .toggleConnection)
