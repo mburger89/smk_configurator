@@ -183,7 +183,6 @@ struct KeyMainContentView: View {
                     .cornerRadius(10)
             }
             PaletteDrawerView()
-            Spacer(minLength: 0)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
