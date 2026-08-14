@@ -8,6 +8,27 @@ import SwiftCrossUI
 enum AppIcon: String, CaseIterable {
     case key, designs, themes, device
     case newDoc, open, save, saveAs, importFile, exportFile
+
+    /// Short text shown instead of the icon if `IconLoader.url` can't
+    /// resolve a bundled PNG for this platform (e.g. a filename mismatch
+    /// between `AppIcon`'s cases and `Scripts/generate-icons.sh`'s output)
+    /// -- keeps the button legible instead of rendering blank. Matches the
+    /// abbreviations these buttons showed before icons replaced text
+    /// labels.
+    var fallbackLabel: String {
+        switch self {
+        case .key: return "KEY"
+        case .designs: return "DSN"
+        case .themes: return "THM"
+        case .device: return "DEV"
+        case .newDoc: return "N"
+        case .open: return "O"
+        case .save: return "S"
+        case .saveAs: return "S+"
+        case .importFile: return "I"
+        case .exportFile: return "E"
+        }
+    }
 }
 
 /// Resolves an `AppIcon` to the bundled PNG for the current platform and

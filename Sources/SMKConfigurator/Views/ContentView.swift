@@ -46,7 +46,15 @@ struct ContentView: View {
             Divider()
             StatusBarView()
         }
-        .frame(minWidth: 1440, minHeight: 900)
+        // minHeight must fit KEY mode's Main content column even at the
+        // window floor: titlebar (50) + top/bottom dividers (~3) + status
+        // bar (26) + KeyMainContentView's own padding (40) + its VStack
+        // spacing (32) + PaletteDrawerView.maxHeight (fixed, can't shrink)
+        // + KeyMainContentView.boardMinHeight (the board's own guaranteed
+        // minimum) -- with headroom, since a too-small minHeight lets the
+        // board's ScrollView get squeezed to near-nothing instead of
+        // actually enforcing `boardMinHeight`.
+        .frame(minWidth: 1440, minHeight: 1080)
         .onAppear {
             designDraft = editor.activeDesign
             editingDesignOriginal = editor.activeDesign

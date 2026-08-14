@@ -11,7 +11,9 @@ struct SMKConfiguratorApp: App {
                 .environment(editor)
                 .preferredColorScheme(editor.appearanceMode.colorScheme)
         }
-        .defaultSize(width: 1440, height: 900)
+        // Must be >= ContentView's minHeight (1080) -- a smaller default
+        // would just get silently clamped up to the floor at launch.
+        .defaultSize(width: 1440, height: 1080)
         .commands {
             CommandMenu("View") {
                 Menu("Appearance") {

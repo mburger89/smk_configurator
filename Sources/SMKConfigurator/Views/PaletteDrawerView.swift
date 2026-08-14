@@ -11,20 +11,6 @@ struct PaletteDrawerView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
-    /// Fixed (not max) height for the drawer's outer frame -- tall enough
-    /// to fit all 8 sections (Letters through Layers & Special) without
-    /// the drawer's own internal `ScrollView(.vertical)` needing to
-    /// scroll/clip. 413 (this constant's old value) predates the
-    /// Function Keys/System sections and was no longer tall enough,
-    /// silently clipping "Layers & Special" out of view with no visible
-    /// scroll affordance. A *fixed* height (rather than
-    /// `.frame(maxHeight:)`) is deliberate: `KeyMainContentView`'s
-    /// containing `VStack` will happily shrink a flexible/max-height
-    /// drawer to make room for the board above it when the window is
-    /// short, which reintroduces the same clipping problem -- a strict
-    /// height always reserves this much space instead.
-    static let maxHeight: Double = 600
-
     /// One `PaletteChip`'s fixed height (see `PaletteChip.body`'s
     /// `.frame(width: 44, height: 26)`) and the spacing between wrapped
     /// chip rows within a section (e.g. the two `Letters` rows).
@@ -41,6 +27,57 @@ struct PaletteDrawerView: View {
     /// this reserve) makes them uniform regardless of whether that
     /// section's row overflows.
     private static let scrollBarReserve: Double = 15
+    /// `layersAndSpecialSection`'s row height: `layerPickerGroup`'s tallest
+    /// child (`PaletteChip`, 26) plus its own `.padding(4)` on both sides.
+    private static let layersRowHeight: Double = chipRowHeight + 8
+    /// Each section's 10pt bold title line plus the 4pt spacing down to its
+    /// chip row (`section`'s and `layersAndSpecialSection`'s own
+    /// `VStack(spacing: 4)`).
+    private static let sectionTitleHeight: Double = 12
+    private static let sectionTitleSpacing: Double = 4
+    /// Spacing between the 8 sections in `body`'s outer `VStack`.
+    private static let sectionSpacing: Double = 12
+    /// `body`'s outer `.padding(10)`, top and bottom.
+    private static let outerPadding: Double = 10
+
+    private static func sectionHeight(rows: Int) -> Double {
+        sectionTitleHeight + sectionTitleSpacing
+            + Double(rows) * chipRowHeight + Double(rows - 1) * chipRowSpacing
+            + scrollBarReserve
+    }
+
+    /// Sum of every section's actual rendered height: the 7 `section(...)`
+    /// calls in `body` (Letters is 2 rows, the rest are 1) plus
+    /// `layersAndSpecialSection`, their spacing, and the outer padding.
+    private static var contentHeight: Double {
+        let letters = sectionHeight(rows: 2)
+        let oneRowSections = 6 * sectionHeight(rows: 1)
+        let layersAndSpecial = sectionTitleHeight + sectionTitleSpacing + layersRowHeight + scrollBarReserve
+        let sectionGaps = 7 * sectionSpacing
+        return letters + oneRowSections + layersAndSpecial + sectionGaps + 2 * outerPadding
+    }
+
+    /// Safety margin over `contentHeight` covering font-metric variance on
+    /// platforms this can't be run/verified on locally (Windows/Linux CI is
+    /// build-only, no test step -- see the repo's CLAUDE.md).
+    private static let heightSafetyMargin: Double = 60
+
+    /// Fixed (not max) height for the drawer's outer frame -- tall enough
+    /// to fit all 8 sections (Letters through Layers & Special) without
+    /// the drawer's own internal `ScrollView(.vertical)` needing to
+    /// scroll/clip. Derived from `contentHeight` (rather than a hand-picked
+    /// constant) plus `heightSafetyMargin` so it can't quietly fall behind
+    /// again the way the old flat `413` did once the Function Keys/System
+    /// sections were added, silently clipping "Layers & Special" out of
+    /// view with no visible scroll affordance. A *fixed* height (rather
+    /// than `.frame(maxHeight:)`) is deliberate: `KeyMainContentView`'s
+    /// containing `VStack` will happily shrink a flexible/max-height
+    /// drawer to make room for the board above it when the window is
+    /// short, which reintroduces the same clipping problem -- a strict
+    /// height always reserves this much space instead. See
+    /// `KeyMainContentView`/`ContentView`'s window `minHeight` for how that
+    /// space is guaranteed to exist.
+    static let maxHeight: Double = contentHeight + heightSafetyMargin
 
     var body: some View {
         ScrollView(.vertical) {
@@ -99,14 +136,17 @@ struct PaletteDrawerView: View {
             Text("LAYERS & SPECIAL")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(chrome.textTertiary)
-            HStack(spacing: 12) {
-                layerPickerGroup
-                HStack(spacing: 8) {
-                    PaletteChip(token: .transparent)
-                    PaletteChip(token: .none)
-                    PaletteChip(token: .toggleConnection)
+            ScrollView(.horizontal) {
+                HStack(spacing: 12) {
+                    layerPickerGroup
+                    HStack(spacing: 8) {
+                        PaletteChip(token: .transparent)
+                        PaletteChip(token: .none)
+                        PaletteChip(token: .toggleConnection)
+                    }
                 }
             }
+            .frame(height: Self.layersRowHeight + Self.scrollBarReserve)
         }
     }
 
@@ -127,7 +167,7 @@ struct PaletteDrawerView: View {
                 .foregroundColor(chrome.textPrimary)
                 .frame(width: 16)
             TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
-                editor.pendingLayerIndex = min(15, editor.pendingLayerIndex + 1)
+                editor.pendingLayerIndex = min(EditorState.maxLayerCount - 1, editor.pendingLayerIndex + 1)
             }) {
                 Text("+").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
             }

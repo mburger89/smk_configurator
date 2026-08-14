@@ -19,4 +19,15 @@ struct IconLoaderTests {
         let url = IconLoader.url(for: icon, colorScheme: colorScheme)
         #expect(url != nil, "no bundled PNG for \(icon.rawValue) (\(colorScheme))")
     }
+
+    /// Doesn't touch `Bundle.module`, so unlike `resolvesBundledIcon` this
+    /// actually exercises on every platform, including the Windows/Linux CI
+    /// this project can't run `swift test` on locally -- guards the
+    /// nil-icon fallback (`RailButton`/`ToolbarIconButton`) actually has
+    /// legible text for every case, not just the ones this test host
+    /// happens to bundle a PNG for.
+    @Test("every AppIcon case has a non-empty fallbackLabel", arguments: AppIcon.allCases)
+    func fallbackLabelIsNonEmpty(icon: AppIcon) {
+        #expect(!icon.fallbackLabel.isEmpty, "\(icon.rawValue) has no fallbackLabel")
+    }
 }

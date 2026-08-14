@@ -251,9 +251,10 @@ class EditorState {
         return ActionToken.parse(document.layers[currentLayer][row][col])
     }
 
-    /// Layers beyond this point would outrun what the palette's layer
-    /// stepper (`PaletteDrawerView`, 0...15) and a reasonable keymap size
-    /// can sensibly manage -- an arbitrary but generous cap.
+    /// Layers beyond this point would outrun what a reasonable keymap size
+    /// can sensibly manage -- an arbitrary but generous cap. The palette's
+    /// layer stepper (`PaletteDrawerView.layerPickerGroup`) clamps to
+    /// `0...(maxLayerCount - 1)` to match.
     static let maxLayerCount = 10
 
     func addLayer() {

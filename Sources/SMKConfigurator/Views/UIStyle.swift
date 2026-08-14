@@ -84,14 +84,58 @@ struct SectionHeader: View {
 /// re-skinned per-platform.
 struct TapTarget<Content: View>: View {
     var background: Color
-    var cornerRadius: Double
+    /// `nil` selects a `Circle` (see the `circleBackground:` initializer)
+    /// instead of a `RoundedRectangle`.
+    var cornerRadius: Double?
+    /// Optional hairline stroke traced around the shape -- used by the
+    /// icon-only glass tiles (`ToolbarIconButton`) to read as a distinct
+    /// button against a translucent background; omitted everywhere else.
+    var border: Color?
     var action: () -> Void
     @ViewBuilder var content: () -> Content
 
+    init(
+        background: Color,
+        cornerRadius: Double,
+        action: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.background = background
+        self.cornerRadius = cornerRadius
+        self.border = nil
+        self.action = action
+        self.content = content
+    }
+
+    /// A circular tap target, optionally bordered -- the "glass tile"
+    /// look shared by icon-only buttons.
+    init(
+        circleBackground background: Color,
+        border: Color? = nil,
+        action: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.background = background
+        self.cornerRadius = nil
+        self.border = border
+        self.action = action
+        self.content = content
+    }
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(background)
+            if let cornerRadius {
+                RoundedRectangle(cornerRadius: cornerRadius).fill(background)
+                if let border {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(border, style: StrokeStyle(width: 1))
+                }
+            } else {
+                Circle().fill(background)
+                if let border {
+                    Circle().stroke(border, style: StrokeStyle(width: 1))
+                }
+            }
             content()
         }
         .onTapGesture(perform: action)
@@ -117,39 +161,14 @@ struct ToolbarPill: View {
     }
 }
 
-/// A circular tile behind an icon-only tap target (`ToolbarIconButton`,
-/// `RailButton`), filled with a translucent tint and traced with a thin
-/// flat border (`chrome.chipBorder`) so it reads as a distinct button
-/// against the toolbar background. SwiftCrossUI has no backdrop-blur/
-/// Material API -- its one `NSVisualEffectView` usage is internal, wired
-/// only to a sidebar split view, not exposed as a general-purpose `View`
-/// -- so a plain translucent fill is the closest approximation available;
-/// there's no real system material to reach for.
-struct GlassIconTile<Content: View>: View {
-    var tint: Color
-    var diameter: Double
-    var action: () -> Void
-    @ViewBuilder var content: () -> Content
-
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        ZStack {
-            Circle().fill(tint)
-            Circle().stroke(chrome.chipBorder, style: StrokeStyle(width: 1))
-            content()
-        }
-        .frame(width: diameter, height: diameter)
-        .onTapGesture(perform: action)
-    }
-}
-
 /// An icon-only glass tile in the titlebar toolbar group (`New`, `Open`,
 /// `Save`, `Save As`, `Import`, `Export`) with a `.help()` tooltip carrying
 /// the action name. Distinct from `ToolbarPill` (used elsewhere for
 /// dynamic text pills, e.g. DSN's `+ Row`/width presets) since those have
-/// no natural icon and must keep showing text.
+/// no natural icon and must keep showing text. A circular `TapTarget`
+/// (`chrome.glassFill` translucent tint, `chrome.chipBorder` hairline
+/// stroke) -- SwiftCrossUI has no backdrop-blur/Material API, so a plain
+/// translucent fill is the closest approximation to a real glass material.
 struct ToolbarIconButton: View {
     var icon: AppIcon
     var tooltip: String
@@ -159,19 +178,24 @@ struct ToolbarIconButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        GlassIconTile(tint: chrome.glassFill, diameter: 30, action: action) {
+        TapTarget(circleBackground: chrome.glassFill, border: chrome.chipBorder, action: action) {
             if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
                 Image(url).resizable().frame(width: 15, height: 15)
+            } else {
+                Text(icon.fallbackLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(chrome.textPrimary)
             }
         }
+        .frame(width: 30, height: 30)
         .help(tooltip)
     }
 }
 
 /// One of the four icon-rail buttons (KEY/DSN/THM/DEV) -- a platform-native
 /// icon with a `.help()` tooltip carrying the full name. Rounded-rect
-/// (unlike the titlebar's circular `ToolbarIconButton`/`GlassIconTile`),
-/// but keeps the same translucent glass tint colors.
+/// (unlike the titlebar's circular `ToolbarIconButton`), but keeps the
+/// same translucent glass tint colors.
 struct RailButton: View {
     var icon: AppIcon
     var tooltip: String
@@ -201,6 +225,10 @@ struct RailButton: View {
     private var iconImage: some View {
         if let url = IconLoader.url(for: icon, colorScheme: isActive ? .dark : colorScheme) {
             Image(url).resizable().frame(width: 22, height: 22)
+        } else {
+            Text(icon.fallbackLabel)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(isActive ? .white : chrome.textSecondary)
         }
     }
 }

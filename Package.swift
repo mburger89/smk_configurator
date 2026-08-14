@@ -16,16 +16,27 @@ import PackageDescription
 // built resource bundle -- lands every platform's assets at the same
 // in-bundle path, `Icons/<light|dark>/<icon>.png`. See `IconLoader` in
 // `Views/AppIcon.swift`.
+// Single source of truth for every platform's icon subtree, so adding a
+// platform means updating this one list instead of two hand-enumerated,
+// parallel #if branches that have to be kept in lockstep by hand.
+let allPlatformIconPaths = [
+    "Resources/macOS/Icons",
+    "Resources/Windows/Icons",
+    "Resources/Linux/Icons",
+]
+
 #if os(macOS)
-let iconResources: [Resource] = [.copy("Resources/macOS/Icons")]
-let unusedIconPaths = ["Resources/Windows/Icons", "Resources/Linux/Icons"]
+let currentPlatformIconPath = "Resources/macOS/Icons"
 #elseif os(Windows)
-let iconResources: [Resource] = [.copy("Resources/Windows/Icons")]
-let unusedIconPaths = ["Resources/macOS/Icons", "Resources/Linux/Icons"]
+let currentPlatformIconPath = "Resources/Windows/Icons"
 #else
-let iconResources: [Resource] = [.copy("Resources/Linux/Icons")]
-let unusedIconPaths = ["Resources/macOS/Icons", "Resources/Windows/Icons"]
+let currentPlatformIconPath = "Resources/Linux/Icons"
 #endif
+
+let iconResources: [Resource] = [.copy(currentPlatformIconPath)]
+// Fed to `exclude:` below -- every OTHER platform's icon subtree must be
+// excluded from the target or SwiftPM errors on the un-.copy()'d files.
+let excludedIconPaths = allPlatformIconPaths.filter { $0 != currentPlatformIconPath }
 
 let package = Package(
     name: "SMKConfigurator",
@@ -49,7 +60,7 @@ let package = Package(
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
                 "CHidapi",
             ],
-            exclude: unusedIconPaths,
+            exclude: excludedIconPaths,
             resources: iconResources,
             linkerSettings: [
                 .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),

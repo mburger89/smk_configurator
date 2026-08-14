@@ -174,6 +174,13 @@ struct KeyMainContentView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
+    /// Guaranteed minimum for the board's own scroll area -- without this,
+    /// `PaletteDrawerView`'s fixed `maxHeight` (which can't shrink; see its
+    /// doc comment) plus the surrounding chrome can squeeze this
+    /// `ScrollView` down to near nothing at the window's minimum size.
+    /// `ContentView`'s `minHeight` is sized to guarantee this much room.
+    private static let boardMinHeight: Double = 240
+
     var body: some View {
         VStack(spacing: 16) {
             Spacer(minLength: 0)
@@ -182,6 +189,7 @@ struct KeyMainContentView: View {
                     .background(editor.activeTheme.background.color)
                     .cornerRadius(10)
             }
+            .frame(minHeight: Self.boardMinHeight)
             PaletteDrawerView()
         }
         .padding(20)
