@@ -19,8 +19,9 @@ enum DeviceTransportError: Error, Equatable {
 /// DeviceTransport. Transport-agnostic — the same sequence works whether
 /// bytes travel over USB raw HID or a BLE GATT characteristic.
 enum KeymapUploader {
-    /// Must match the firmware's SMK_KEYMAP_MAX_LEN (Sources/componets/
-    /// smk_keymap_store.c / ports/rp2040/platform/smk_keymap_store.c).
+    /// Must match the firmware's `smkKeymapMaxLen` (Sources/SMKCore/
+    /// KeymapFrame.swift, shared by the ESP32-C6 NVS store and the RP2040
+    /// flash store).
     static let maxPayloadLength = 4085
 
     static func upload(json: String, using transport: DeviceTransport) async throws {

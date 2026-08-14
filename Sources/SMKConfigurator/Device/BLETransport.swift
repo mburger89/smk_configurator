@@ -3,8 +3,9 @@ import CoreBluetooth
 import Foundation
 
 /// Talks to the ESP32-C6 build's BLE HID Report ID 2 upload channel (see
-/// Sources/componets/ble_helper.c in the SMK firmware repo) via
-/// CoreBluetooth, using the standard HID-over-GATT service (0x1812) and the
+/// Sources/smk/BleHelper.swift and the trimmed Sources/components/
+/// ble_helper.c in the SMK firmware repo) via CoreBluetooth, using the
+/// standard HID-over-GATT service (0x1812) and the
 /// Report Reference descriptor (0x2908) to find the right Report
 /// characteristic among possibly several.
 @MainActor
