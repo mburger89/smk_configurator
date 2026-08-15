@@ -23,6 +23,8 @@ bash Scripts/generate-icons.sh          # regenerate bundled icon PNGs (see View
 
 `swift-bundler` shells out to `swift build` itself, so a bare `swift-bundler run`/`bundle` hits the exact same `android/log.h` failure — it needs the flag forwarded, one `--Xswiftpm` per token: `--Xswiftpm --build-system --Xswiftpm native`. There's nowhere to put that permanently (swift-bundler 3.0 has no Bundler.toml key or env var for default SwiftPM arguments, and SwiftPM has no `SWIFTPM_BUILD_SYSTEM`), hence the `Scripts/run.sh` wrapper — use it rather than calling `swift-bundler` directly.
 
+Installing the Android NDK does **not** fix any of this, so don't go down that path: with the header satisfied, `AndroidBackendShim` compiles for `arm64-apple-macos` and the macOS link then fails on `Undefined symbols: ___android_log_write` (it lives in Android's `liblog.so`, which has no macOS counterpart). The target has to not be planned at all, which is exactly what `--build-system native` achieves.
+
 macOS is the only platform actually runnable/verifiable from a normal dev machine here; Windows and Linux are compile-verified only, via GitHub Actions (`linux-build.yml`, `windows-build.yml` — both build-only, no test step, no local reproduction path for either).
 
 ## Architecture
