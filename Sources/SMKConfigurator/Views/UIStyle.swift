@@ -84,58 +84,36 @@ struct SectionHeader: View {
 /// re-skinned per-platform.
 struct TapTarget<Content: View>: View {
     var background: Color
-    /// `nil` selects a `Circle` (see the `circleBackground:` initializer)
-    /// instead of a `RoundedRectangle`.
-    var cornerRadius: Double?
-    /// Optional hairline stroke traced around the shape -- used by the
-    /// icon-only glass tiles (`ToolbarIconButton`) to read as a distinct
-    /// button against a translucent background; omitted everywhere else.
-    var border: Color?
+    /// Set this to half the frame's side length for a circular target --
+    /// there's deliberately no `Circle` branch here, see `body`.
+    var cornerRadius: Double
+    /// Hairline stroke traced around the shape -- used by the icon-only
+    /// glass tiles (`ToolbarIconButton`) to read as a distinct button
+    /// against a translucent background. `.clear` (the default) everywhere
+    /// else, rather than an optional, so `body` stays branch-free.
+    var border: Color = .clear
     var action: () -> Void
     @ViewBuilder var content: () -> Content
 
-    init(
-        background: Color,
-        cornerRadius: Double,
-        action: @escaping () -> Void,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.background = background
-        self.cornerRadius = cornerRadius
-        self.border = nil
-        self.action = action
-        self.content = content
-    }
-
-    /// A circular tap target, optionally bordered -- the "glass tile"
-    /// look shared by icon-only buttons.
-    init(
-        circleBackground background: Color,
-        border: Color? = nil,
-        action: @escaping () -> Void,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.background = background
-        self.cornerRadius = nil
-        self.border = border
-        self.action = action
-        self.content = content
-    }
-
+    /// The shape and the label must be the `ZStack`'s only two *direct*
+    /// children, and neither may come from an `if`/`else` branch.
+    /// SwiftCrossUI's `ZStack` overlays the children of its immediate
+    /// `TupleView` (it logs "ZStack will not function correctly with
+    /// non-TupleView content" otherwise); views grouped by a conditional
+    /// land in a nested container that stacks them *vertically* instead.
+    /// That's what turned the titlebar's icon buttons into a column of
+    /// fill-circle / glyph / border-ring, and squashed the icon rail's
+    /// 40x40 tiles to 40x30. So: no `if` in here, the border is always
+    /// stroked (`.clear` when unwanted), and a circle is expressed as a
+    /// `cornerRadius` of half the side rather than as a `Circle` branch.
     var body: some View {
         ZStack {
-            if let cornerRadius {
-                RoundedRectangle(cornerRadius: cornerRadius).fill(background)
-                if let border {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(background)
+                .overlay {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .stroke(border, style: StrokeStyle(width: 1))
                 }
-            } else {
-                Circle().fill(background)
-                if let border {
-                    Circle().stroke(border, style: StrokeStyle(width: 1))
-                }
-            }
             content()
         }
         .onTapGesture(perform: action)
@@ -178,7 +156,14 @@ struct ToolbarIconButton: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        TapTarget(circleBackground: chrome.glassFill, border: chrome.chipBorder, action: action) {
+        // cornerRadius is half of the 30x30 frame below, i.e. a circle --
+        // see `TapTarget.body` for why this isn't a `Circle`.
+        TapTarget(
+            background: chrome.glassFill,
+            cornerRadius: 15,
+            border: chrome.chipBorder,
+            action: action
+        ) {
             if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
                 Image(url).resizable().frame(width: 15, height: 15)
             } else {
