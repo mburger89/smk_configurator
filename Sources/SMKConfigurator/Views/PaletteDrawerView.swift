@@ -62,22 +62,29 @@ struct PaletteDrawerView: View {
     /// build-only, no test step -- see the repo's CLAUDE.md).
     private static let heightSafetyMargin: Double = 60
 
-    /// Fixed (not max) height for the drawer's outer frame -- tall enough
-    /// to fit all 8 sections (Letters through Layers & Special) without
-    /// the drawer's own internal `ScrollView(.vertical)` needing to
-    /// scroll/clip. Derived from `contentHeight` (rather than a hand-picked
-    /// constant) plus `heightSafetyMargin` so it can't quietly fall behind
-    /// again the way the old flat `413` did once the Function Keys/System
-    /// sections were added, silently clipping "Layers & Special" out of
-    /// view with no visible scroll affordance. A *fixed* height (rather
-    /// than `.frame(maxHeight:)`) is deliberate: `KeyMainContentView`'s
-    /// containing `VStack` will happily shrink a flexible/max-height
-    /// drawer to make room for the board above it when the window is
-    /// short, which reintroduces the same clipping problem -- a strict
-    /// height always reserves this much space instead. See
-    /// `KeyMainContentView`/`ContentView`'s window `minHeight` for how that
-    /// space is guaranteed to exist.
+    /// The height the drawer wants: tall enough to fit all 8 sections
+    /// (Letters through Layers & Special) without its own internal
+    /// `ScrollView(.vertical)` needing to scroll. Derived from
+    /// `contentHeight` (rather than a hand-picked constant) plus
+    /// `heightSafetyMargin` so it can't quietly fall behind again the way
+    /// the old flat `413` did once the Function Keys/System sections were
+    /// added, silently clipping "Layers & Special" out of view.
+    ///
+    /// It's a *maximum*, paired with `minHeight` and a `.layoutPriority(1)`
+    /// at the call site (see `KeyMainContentView`) rather than a strict
+    /// `.frame(height:)`: the priority makes the containing `VStack` hand
+    /// the drawer this full height before the board gets any of what's
+    /// left, so the no-scroll case still holds whenever the window has the
+    /// room -- but a short window can still squeeze the drawer down to
+    /// `minHeight` instead of forcing a window `minHeight` taller than a
+    /// 1366x768 or 1440x900 laptop screen.
     static let maxHeight: Double = contentHeight + heightSafetyMargin
+
+    /// Floor for the drawer when the window is too short to give it
+    /// `maxHeight` -- roughly three sections plus the vertical scrollbar
+    /// that appears once the rest overflows. This (not `maxHeight`) is what
+    /// `ContentView`'s window `minHeight` has to reserve.
+    static let minHeight: Double = 260
 
     var body: some View {
         ScrollView(.vertical) {
@@ -93,7 +100,7 @@ struct PaletteDrawerView: View {
             }
             .padding(10)
         }
-        .frame(height: Self.maxHeight)
+        .frame(minHeight: Self.minHeight, maxHeight: Self.maxHeight)
         .background(RoundedRectangle(cornerRadius: 10).fill(chrome.surface))
     }
 
@@ -167,7 +174,7 @@ struct PaletteDrawerView: View {
                 .foregroundColor(chrome.textPrimary)
                 .frame(width: 16)
             TapTarget(background: chrome.chipBackground, cornerRadius: 4, action: {
-                editor.pendingLayerIndex = min(EditorState.maxLayerCount - 1, editor.pendingLayerIndex + 1)
+                editor.pendingLayerIndex = min(editor.maxAssignableLayerIndex, editor.pendingLayerIndex + 1)
             }) {
                 Text("+").font(.system(size: 11)).foregroundColor(chrome.textPrimary)
             }

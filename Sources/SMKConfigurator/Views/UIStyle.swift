@@ -28,9 +28,9 @@ struct Chrome {
     var chipBackground: Color { scheme == .dark ? .hex("#323234") : .hex("#F2F2F4") }
     var chipBorder: Color { scheme == .dark ? .hex("#48484A") : .hex("#E0E0E2") }
 
-    /// Faux-glass tile fill for icon-only buttons (`GlassIconTile`) --
+    /// Faux-glass tile fill for icon-only buttons (`ToolbarIconButton`) --
     /// translucent rather than opaque like `pillBackground`, since a real
-    /// backdrop-blur material isn't available (see `GlassIconTile`'s doc
+    /// backdrop-blur material isn't available (see `ToolbarIconButton`'s doc
     /// comment). Light mode needs a higher alpha than dark to stay visible
     /// against `bar`'s near-white background.
     var glassFill: Color { pillBackground.opacity(scheme == .dark ? 0.9 : 0.97) }

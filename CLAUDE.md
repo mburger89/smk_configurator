@@ -45,6 +45,7 @@ This app is written against a specific version of `~/esp/SMK` and several places
 - `firmwareVersionLabel` in `EditorState.swift` — a static label, must be bumped by hand when targeting a new firmware build.
 - `KeymapUploader.maxPayloadLength` — must match firmware's `SMK_KEYMAP_MAX_LEN`.
 - `ActionToken`'s cases/raw strings — must match `KeyAction`/`KeyCode`/`Modifier.fromCString` in the firmware's `LayerEngine.swift`.
+- `EditorState.maxLayerCount` — the firmware's layer ceiling (16), not an editor preference: `LayerEngine`'s `toggledLayers`/`momentaryCounts` are sized `count: 16` and `isLayerActive` rejects anything `>= 16`.
 - `defaultKeymapURL` (`EditorState.swift`) points at `~/esp/SMK/keymap.json` — the reference file this app is pointed at by default.
 
 When editing model/device code, check whether the change needs a matching change on the firmware side (or vice versa) before assuming it's editor-only.

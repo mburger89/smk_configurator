@@ -34,6 +34,32 @@ struct KeymapDocumentTests {
         #expect(filled == design.rowCount * design.colCount)
     }
 
+    @Test("renumberLayerReferences shifts references above the removed layer down")
+    func renumberShiftsHigherReferences() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [0, 1, 2, 3], colsAreDriven: 0),
+            layers: [
+                [["mo:1", "tg:3", "mo:5", "key:a"]],
+                [["trans", "mo:2", "tg:2", "custom:thing"]],
+            ]
+        )
+        // Deleting layer 2: 1 stays, 2 dangles, 3 and 5 shift down.
+        doc.renumberLayerReferences(afterRemoving: 2)
+        #expect(doc.layers[0][0] == ["mo:1", "tg:2", "mo:4", "key:a"])
+        #expect(doc.layers[1][0] == ["trans", "none", "none", "custom:thing"])
+    }
+
+    @Test("renumberLayerReferences leaves everything below the removed layer alone")
+    func renumberLeavesLowerReferencesAlone() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [0, 1, 2], colsAreDriven: 0),
+            layers: [[["mo:0", "tg:1", "none"]]]
+        )
+        let before = doc.layers
+        doc.renumberLayerReferences(afterRemoving: 4)
+        #expect(doc.layers == before)
+    }
+
     @Test("reshaped(to:) preserves overlapping cells and pads new ones with none")
     func reshapeGrowsAndShrinks() {
         let small = KeyboardDesign.blank(name: "small")

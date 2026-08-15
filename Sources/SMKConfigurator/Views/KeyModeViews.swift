@@ -175,11 +175,24 @@ struct KeyMainContentView: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     /// Guaranteed minimum for the board's own scroll area -- without this,
-    /// `PaletteDrawerView`'s fixed `maxHeight` (which can't shrink; see its
-    /// doc comment) plus the surrounding chrome can squeeze this
+    /// the palette drawer below it can take everything and squeeze this
     /// `ScrollView` down to near nothing at the window's minimum size.
     /// `ContentView`'s `minHeight` is sized to guarantee this much room.
     private static let boardMinHeight: Double = 240
+    /// `body`'s `.padding(20)`, top and bottom.
+    private static let verticalPadding: Double = 40
+    /// The two gaps in `body`'s `VStack(spacing: 16)` (three children).
+    private static let stackSpacing: Double = 32
+
+    /// What this column needs at the window floor: the board's guaranteed
+    /// minimum plus the drawer squeezed to its own floor.
+    static let minContentHeight: Double =
+        verticalPadding + stackSpacing + boardMinHeight + PaletteDrawerView.minHeight
+    /// What it needs for the drawer to show every palette section without
+    /// scrolling, with the board still at its minimum -- the height the
+    /// window opens at (see `App.swift`'s `defaultSize`).
+    static let idealContentHeight: Double =
+        verticalPadding + stackSpacing + boardMinHeight + PaletteDrawerView.maxHeight
 
     var body: some View {
         VStack(spacing: 16) {
@@ -190,7 +203,14 @@ struct KeyMainContentView: View {
                     .cornerRadius(10)
             }
             .frame(minHeight: Self.boardMinHeight)
+            // The drawer is served first out of this VStack's available
+            // height, so it reaches its full no-scroll `maxHeight` before
+            // the (infinitely flexible) board scroll area takes the rest.
+            // Without the priority the stack splits the slack evenly and the
+            // drawer would scroll even in a tall window -- see
+            // `PaletteDrawerView.maxHeight`'s doc comment.
             PaletteDrawerView()
+                .layoutPriority(1)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

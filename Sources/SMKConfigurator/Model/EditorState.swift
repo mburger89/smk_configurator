@@ -150,6 +150,7 @@ class EditorState {
             document = doc
             fileURL = url
             currentLayer = 0
+            clampPendingLayerIndex()
             isDirty = false
             loadError = nil
             activeDesign = availableDesigns.first { $0.matrix == doc.matrix }
@@ -178,6 +179,7 @@ class EditorState {
         document = .blank(for: activeDesign)
         fileURL = nil
         currentLayer = 0
+        clampPendingLayerIndex()
         isDirty = false
     }
 
@@ -251,11 +253,21 @@ class EditorState {
         return ActionToken.parse(document.layers[currentLayer][row][col])
     }
 
-    /// Layers beyond this point would outrun what a reasonable keymap size
-    /// can sensibly manage -- an arbitrary but generous cap. The palette's
-    /// layer stepper (`PaletteDrawerView.layerPickerGroup`) clamps to
-    /// `0...(maxLayerCount - 1)` to match.
-    static let maxLayerCount = 10
+    /// The firmware's own ceiling, not an editor preference: `LayerEngine`'s
+    /// `toggledLayers`/`momentaryCounts` are sized `count: 16` and
+    /// `isLayerActive` rejects anything `>= 16`, so a device can only ever
+    /// activate layers 0-15. Part of the firmware coupling this app tracks
+    /// by hand (see CLAUDE.md) -- bump it only alongside the firmware.
+    static let maxLayerCount = 16
+
+    /// Highest layer index the palette's MO/TG chips may name: the last
+    /// layer the document actually has, capped by `maxLayerCount` (a loaded
+    /// file can legally hold more layers than the firmware can activate).
+    /// Anything above this would emit an `mo:`/`tg:` token that can never
+    /// fire, since the firmware's `getAction` only walks the layers it has.
+    var maxAssignableLayerIndex: Int {
+        min(document.layers.count, Self.maxLayerCount) - 1
+    }
 
     func addLayer() {
         guard document.layers.count < Self.maxLayerCount else { return }
@@ -264,11 +276,12 @@ class EditorState {
         isDirty = true
     }
 
+    /// Removes the layer currently being edited. Deliberately just the
+    /// selected-row case of `removeLayer(at:)` -- including its refusal to
+    /// delete layer 0 -- so both entry points renumber `mo:`/`tg:`
+    /// references identically instead of drifting apart.
     func removeCurrentLayer() {
-        guard document.layers.count > 1 else { return }
-        document.layers.remove(at: currentLayer)
-        currentLayer = min(currentLayer, document.layers.count - 1)
-        isDirty = true
+        removeLayer(at: currentLayer)
     }
 
     /// The Layers list's per-row delete (hover trash glyph, confirmed via
@@ -277,8 +290,11 @@ class EditorState {
     /// deletable: the firmware always treats it as the present-by-default
     /// layer.
     func removeLayer(at index: Int) {
-        guard document.layers.count > 1, index != 0, index < document.layers.count else { return }
+        guard document.layers.count > 1, index > 0, index < document.layers.count else { return }
         document.layers.remove(at: index)
+        // Every mo:/tg: cell above `index` now names the wrong layer -- fix
+        // the whole document before anything else looks at it.
+        document.renumberLayerReferences(afterRemoving: index)
         // Layers after `index` shifted down by one -- follow the same
         // physical layer rather than silently landing on whatever now
         // occupies the old `currentLayer` slot. If `currentLayer` was the
@@ -288,7 +304,20 @@ class EditorState {
             currentLayer -= 1
         }
         currentLayer = min(currentLayer, document.layers.count - 1)
+        // Same shift for the palette's MO/TG stepper, so it keeps naming the
+        // layer it named before rather than one that no longer exists.
+        if pendingLayerIndex > index {
+            pendingLayerIndex -= 1
+        }
+        clampPendingLayerIndex()
         isDirty = true
+    }
+
+    /// Pulls the palette's MO/TG stepper back into range whenever the
+    /// document's layer count shrinks (delete, load, New) -- otherwise it
+    /// keeps offering `mo:`/`tg:` chips for layers that aren't there.
+    private func clampPendingLayerIndex() {
+        pendingLayerIndex = max(0, min(pendingLayerIndex, maxAssignableLayerIndex))
     }
 
     func toggleSelection(_ token: ActionToken) {
