@@ -13,7 +13,7 @@ swift build --target SMKConfigurator --build-system native   # build (see notes 
 swift run --build-system native SMKConfigurator               # run the app
 swift test --build-system native                              # run all tests
 swift test --build-system native --filter <SuiteOrTestName>   # run one suite/test
-swift-bundler run --Xswiftpm --build-system --Xswiftpm native  # run as a real .app bundle (Bundler.toml)
+bash Scripts/run.sh                     # run as a real .app bundle (swift-bundler + Bundler.toml)
 bash Scripts/generate-icons.sh          # regenerate bundled icon PNGs (see Views/AppIcon.swift)
 ```
 
@@ -21,7 +21,7 @@ bash Scripts/generate-icons.sh          # regenerate bundled icon PNGs (see View
 
 **`--build-system native` is required on a toolchain resolved via Xcode(-beta)** (i.e. whenever `.swift-version` selects `xcode` or `xcode-select`/`DEVELOPER_DIR` points at an Xcode install, as this repo's `.swift-version`/`.vscode/settings.json` do) — SwiftPM's new default build system (`swiftbuild`) eagerly plans swift-cross-ui's full dependency graph even when scoped with `--target`, hitting its Android-only `AndroidBackendShim` target (`android/log.h` not found on macOS). swift-cross-ui's `Package.swift` already disables that target when it detects it's being driven by Xcode's build system, but its detection only checks for a parent process literally named `xcodebuild`/`Xcode` — `swiftbuild` invoked directly via the CLI slips past that check. `--build-system native` (deprecated but functional) routes around the same limitation the upstream check exists for. Not needed with a non-Xcode toolchain (e.g. swiftenv-managed, or CI's `SwiftyLab/setup-swift`/`compnerd/gha-setup-swift`, neither of which resolves through Xcode).
 
-`swift-bundler` shells out to `swift build` itself, so a bare `swift-bundler run`/`bundle` hits the exact same `android/log.h` failure — it needs the flag forwarded, one `--Xswiftpm` per token: `--Xswiftpm --build-system --Xswiftpm native`.
+`swift-bundler` shells out to `swift build` itself, so a bare `swift-bundler run`/`bundle` hits the exact same `android/log.h` failure — it needs the flag forwarded, one `--Xswiftpm` per token: `--Xswiftpm --build-system --Xswiftpm native`. There's nowhere to put that permanently (swift-bundler 3.0 has no Bundler.toml key or env var for default SwiftPM arguments, and SwiftPM has no `SWIFTPM_BUILD_SYSTEM`), hence the `Scripts/run.sh` wrapper — use it rather than calling `swift-bundler` directly.
 
 macOS is the only platform actually runnable/verifiable from a normal dev machine here; Windows and Linux are compile-verified only, via GitHub Actions (`linux-build.yml`, `windows-build.yml` — both build-only, no test step, no local reproduction path for either).
 
