@@ -93,6 +93,12 @@ pointers and bitfields — the same reason the advertising fields stayed in C
 rather than moving to Swift (see that file's header comment). No logic moves
 into C: the callback delegates immediately to existing Swift.
 
+This is the split the `embedded-swift` skill prescribes
+(`~/.claude/skills/embedded-swift/references/interop-patterns.md` §4): keep
+struct-by-pointer config APIs and descriptor tables in C and expose one flat
+function to Swift; move protocol and packet handling — the part worth unit
+testing — to Swift.
+
 - A single primary service with two characteristics: **packet**
   (`BLE_GATT_CHR_F_WRITE`, with `access_cb`) and **response**
   (`BLE_GATT_CHR_F_NOTIFY`, with its `val_handle` captured at registration
