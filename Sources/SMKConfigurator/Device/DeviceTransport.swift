@@ -35,14 +35,14 @@ enum KeymapUploader {
     static func upload(
         json: String,
         using transport: DeviceTransport,
-        progress: ((UploadPhase) -> Void)? = nil
+        progress: (@MainActor (UploadPhase) -> Void)? = nil
     ) async throws {
         let bytes = Array(json.utf8)
         guard bytes.count <= maxPayloadLength else {
             throw DeviceTransportError.payloadTooLarge
         }
 
-        progress?(.begin)
+        await progress?(.begin)
         let beginResponse = try await transport.send(
             KeymapUploadProtocol.begin(totalLen: UInt16(bytes.count))
         )
@@ -56,7 +56,7 @@ enum KeymapUploader {
         var offset = 0
         while offset < bytes.count {
             let end = min(offset + KeymapUploadProtocol.maxChunkDataLength, bytes.count)
-            progress?(.chunk(index: chunkIndex, of: chunkCount))
+            await progress?(.chunk(index: chunkIndex, of: chunkCount))
             let response = try await transport.send(
                 KeymapUploadProtocol.chunk(offset: UInt16(offset), data: bytes[offset..<end])
             )
@@ -67,7 +67,7 @@ enum KeymapUploader {
             offset = end
         }
 
-        progress?(.commit)
+        await progress?(.commit)
         let crc = KeymapUploadProtocol.crc32(bytes)
         let commitResponse = try await transport.send(KeymapUploadProtocol.commit(crc32: crc))
         guard KeymapUploadProtocol.isAck(commitResponse) else {

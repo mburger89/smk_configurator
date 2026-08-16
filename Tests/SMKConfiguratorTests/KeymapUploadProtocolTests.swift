@@ -98,6 +98,7 @@ struct KeymapUploaderTests {
     }
 
     @Test("reports begin, one chunk per packet, then commit")
+    @MainActor
     func progressSequence() async throws {
         // 60 bytes of payload -> 3 chunks at 28 bytes each.
         let json = #"{"layers":["# + String(repeating: "a", count: 47) + "]}"
