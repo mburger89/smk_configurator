@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 // SF Symbols are only ever bundled into the macOS build (see the
@@ -40,7 +40,7 @@ let excludedIconPaths = allPlatformIconPaths.filter { $0 != currentPlatformIconP
 
 let package = Package(
     name: "SMKConfigurator",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v26)],
     dependencies: [
         .package(url: "https://github.com/stackotter/swift-cross-ui", .upToNextMinor(from: "0.8.0"))
     ],
