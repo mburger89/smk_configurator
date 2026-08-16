@@ -1,9 +1,46 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
+
+// SF Symbols are only ever bundled into the macOS build (see the
+// platform-native-icons design spec's Global Constraint). `Resource.copy()`
+// has no `.when(platforms:)` overload, and Swift doesn't allow `#if` inside
+// an array literal, so the platform subtree is selected here via a
+// top-level `#if os(...)`-gated variable instead -- this file is a Swift
+// script evaluated at build time on the host, and each platform builds
+// natively (macOS builds compile on macOS, Windows on Windows, Linux on
+// Linux), so this picks only that platform's icons.
+//
+// Each platform's icons live under `Resources/<Platform>/Icons/` (rather
+// than `Resources/Icons/<Platform>/`) so that `.copy()` -- which preserves
+// only the resource's basename ("Icons") as the top-level folder in the
+// built resource bundle -- lands every platform's assets at the same
+// in-bundle path, `Icons/<light|dark>/<icon>.png`. See `IconLoader` in
+// `Views/AppIcon.swift`.
+// Single source of truth for every platform's icon subtree, so adding a
+// platform means updating this one list instead of two hand-enumerated,
+// parallel #if branches that have to be kept in lockstep by hand.
+let allPlatformIconPaths = [
+    "Resources/macOS/Icons",
+    "Resources/Windows/Icons",
+    "Resources/Linux/Icons",
+]
+
+#if os(macOS)
+let currentPlatformIconPath = "Resources/macOS/Icons"
+#elseif os(Windows)
+let currentPlatformIconPath = "Resources/Windows/Icons"
+#else
+let currentPlatformIconPath = "Resources/Linux/Icons"
+#endif
+
+let iconResources: [Resource] = [.copy(currentPlatformIconPath)]
+// Fed to `exclude:` below -- every OTHER platform's icon subtree must be
+// excluded from the target or SwiftPM errors on the un-.copy()'d files.
+let excludedIconPaths = allPlatformIconPaths.filter { $0 != currentPlatformIconPath }
 
 let package = Package(
     name: "SMKConfigurator",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v26)],
     dependencies: [
         .package(url: "https://github.com/stackotter/swift-cross-ui", .upToNextMinor(from: "0.8.0"))
     ],
@@ -23,6 +60,8 @@ let package = Package(
                 .product(name: "DefaultBackend", package: "swift-cross-ui"),
                 "CHidapi",
             ],
+            exclude: excludedIconPaths,
+            resources: iconResources,
             linkerSettings: [
                 .linkedFramework("CoreBluetooth", .when(platforms: [.macOS])),
                 // pkgConfig: "hidapi" above resolves fully on macOS (Homebrew

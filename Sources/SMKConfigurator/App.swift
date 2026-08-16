@@ -11,7 +11,10 @@ struct SMKConfiguratorApp: App {
                 .environment(editor)
                 .preferredColorScheme(editor.appearanceMode.colorScheme)
         }
-        .defaultSize(width: 1440, height: 900)
+        // Opens tall enough for the whole palette; the OS clamps this down
+        // to the display and `ContentView.minWindowHeight` (well under a
+        // 1366x768 screen) is what the window can be dragged down to.
+        .defaultSize(width: 1440, height: Int(ContentView.idealWindowHeight.rounded(.up)))
         .commands {
             CommandMenu("View") {
                 Menu("Appearance") {

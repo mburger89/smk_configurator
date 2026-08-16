@@ -95,6 +95,15 @@ class EditorState {
     /// Whether a USB (RP2040) transport was reachable last time it was
     /// checked -- see `refreshDeviceStatus()`.
     var usbConnected: Bool = false
+    #if canImport(CoreBluetooth)
+    var bleState: BLEConnectionState = .idle
+    var bleRSSI: Int?
+    var bleMTU: Int?
+    var blePeripheralName: String?
+    #endif
+    /// Non-nil only while an upload is in flight; drives the DEV pane's
+    /// progress line. ~146 round trips for a 4 KB keymap.
+    var uploadProgress: KeymapUploader.UploadPhase?
     var lastSentAt: Date? = nil
 
     /// Persisted across launches so the drawer stays the size you left it.
@@ -150,6 +159,7 @@ class EditorState {
             document = doc
             fileURL = url
             currentLayer = 0
+            clampPendingLayerIndex()
             isDirty = false
             loadError = nil
             activeDesign = availableDesigns.first { $0.matrix == doc.matrix }
@@ -178,6 +188,7 @@ class EditorState {
         document = .blank(for: activeDesign)
         fileURL = nil
         currentLayer = 0
+        clampPendingLayerIndex()
         isDirty = false
     }
 
@@ -191,20 +202,25 @@ class EditorState {
     func sendToDevice() {
         guard !isSendingToDevice else { return }
         isSendingToDevice = true
-        Task {
+        Task { [self] in
             defer {
                 isSendingToDevice = false
+                uploadProgress = nil
                 refreshDeviceStatus()
             }
             do {
                 let json = try encodeLayersJSON(document.layers)
                 if let usb = try? USBRawHIDTransport() {
-                    try await KeymapUploader.upload(json: json, using: usb)
+                    try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
+                        self?.uploadProgress = phase
+                    }
                 } else {
                     #if canImport(CoreBluetooth)
                     let ble = BLETransport()
                     try await ble.connect()
-                    try await KeymapUploader.upload(json: json, using: ble)
+                    try await KeymapUploader.upload(json: json, using: ble) { [weak self] phase in
+                        self?.uploadProgress = phase
+                    }
                     #else
                     throw DeviceTransportError.noDeviceFound
                     #endif
@@ -221,6 +237,23 @@ class EditorState {
     /// dot without holding a transport open across the whole app lifetime.
     func refreshDeviceStatus() {
         usbConnected = (try? USBRawHIDTransport()) != nil
+        #if canImport(CoreBluetooth)
+        bleState = BLECentral.shared.state
+        bleRSSI = BLECentral.shared.rssi
+        bleMTU = BLECentral.shared.mtu
+        blePeripheralName = BLECentral.shared.peripheralName
+        #endif
+    }
+
+    /// Non-destructive answer to "is the board reachable?" -- connects,
+    /// discovers, and reports, without uploading anything.
+    func testBLEConnection() {
+        #if canImport(CoreBluetooth)
+        Task {
+            try? await BLECentral.shared.connect()
+            refreshDeviceStatus()
+        }
+        #endif
     }
 
     private func encodeLayersJSON(_ layers: [[[String]]]) throws -> String {
@@ -251,17 +284,71 @@ class EditorState {
         return ActionToken.parse(document.layers[currentLayer][row][col])
     }
 
+    /// The firmware's own ceiling, not an editor preference: `LayerEngine`'s
+    /// `toggledLayers`/`momentaryCounts` are sized `count: 16` and
+    /// `isLayerActive` rejects anything `>= 16`, so a device can only ever
+    /// activate layers 0-15. Part of the firmware coupling this app tracks
+    /// by hand (see CLAUDE.md) -- bump it only alongside the firmware.
+    static let maxLayerCount = 16
+
+    /// Highest layer index the palette's MO/TG chips may name: the last
+    /// layer the document actually has, capped by `maxLayerCount` (a loaded
+    /// file can legally hold more layers than the firmware can activate).
+    /// Anything above this would emit an `mo:`/`tg:` token that can never
+    /// fire, since the firmware's `getAction` only walks the layers it has.
+    var maxAssignableLayerIndex: Int {
+        min(document.layers.count, Self.maxLayerCount) - 1
+    }
+
     func addLayer() {
+        guard document.layers.count < Self.maxLayerCount else { return }
         document.layers.append(KeymapDocument.blankTransparentLayer(for: activeDesign))
         currentLayer = document.layers.count - 1
         isDirty = true
     }
 
+    /// Removes the layer currently being edited. Deliberately just the
+    /// selected-row case of `removeLayer(at:)` -- including its refusal to
+    /// delete layer 0 -- so both entry points renumber `mo:`/`tg:`
+    /// references identically instead of drifting apart.
     func removeCurrentLayer() {
-        guard document.layers.count > 1 else { return }
-        document.layers.remove(at: currentLayer)
+        removeLayer(at: currentLayer)
+    }
+
+    /// The Layers list's per-row delete (hover trash glyph, confirmed via
+    /// alert) -- unlike `removeCurrentLayer()`, this can remove a layer
+    /// that isn't the one currently being edited. Layer 0 ("Base") is never
+    /// deletable: the firmware always treats it as the present-by-default
+    /// layer.
+    func removeLayer(at index: Int) {
+        guard document.layers.count > 1, index > 0, index < document.layers.count else { return }
+        document.layers.remove(at: index)
+        // Every mo:/tg: cell above `index` now names the wrong layer -- fix
+        // the whole document before anything else looks at it.
+        document.renumberLayerReferences(afterRemoving: index)
+        // Layers after `index` shifted down by one -- follow the same
+        // physical layer rather than silently landing on whatever now
+        // occupies the old `currentLayer` slot. If `currentLayer` was the
+        // one just removed, it's left pointing at whatever shifted into
+        // that index (or clamped below if it was the last layer).
+        if currentLayer > index {
+            currentLayer -= 1
+        }
         currentLayer = min(currentLayer, document.layers.count - 1)
+        // Same shift for the palette's MO/TG stepper, so it keeps naming the
+        // layer it named before rather than one that no longer exists.
+        if pendingLayerIndex > index {
+            pendingLayerIndex -= 1
+        }
+        clampPendingLayerIndex()
         isDirty = true
+    }
+
+    /// Pulls the palette's MO/TG stepper back into range whenever the
+    /// document's layer count shrinks (delete, load, New) -- otherwise it
+    /// keeps offering `mo:`/`tg:` chips for layers that aren't there.
+    private func clampPendingLayerIndex() {
+        pendingLayerIndex = max(0, min(pendingLayerIndex, maxAssignableLayerIndex))
     }
 
     func toggleSelection(_ token: ActionToken) {

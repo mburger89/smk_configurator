@@ -8,9 +8,20 @@ import SwiftCrossUI
 struct KeyListColumnView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.presentAlert) var presentAlert
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
     var selectDesign: (KeyboardDesign) -> Void
     var selectTheme: (KeyboardTheme) -> Void
+
+    /// Which layer row the pointer is over, if any -- drives the delete
+    /// trash glyph. Lives here (not on a per-row view) because the trash
+    /// glyph has to sit outside `layerRow`'s own onTapGesture-wrapped
+    /// subtree: SwiftCrossUI's onTapGesture requires being the outermost
+    /// gesture on its subtree to reliably receive clicks, so a second,
+    /// independent tap target (delete) can't be nested inside a first
+    /// (select) at all -- they have to be siblings under a shared,
+    /// gesture-free parent, which is what the ForEach below builds.
+    @State private var hoveredLayerIndex: Int? = nil
 
     var body: some View {
         ScrollView {
@@ -28,9 +39,39 @@ struct KeyListColumnView: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    SectionHeader(title: "Layers")
+                    HStack {
+                        SectionHeader(title: "Layers")
+                        Spacer()
+                        addLayerChip
+                    }
                     ForEach(editor.document.layers.indices, id: \.self) { index in
-                        layerRow(index)
+                        // No gesture modifiers on this outer ZStack itself --
+                        // just a plain layout container. layerRow(index)
+                        // carries its own onHover+onTapGesture (in that
+                        // order, matching designRow/themeRow), which is the
+                        // only ordering that reliably receives clicks; the
+                        // trash glyph is a true sibling with its own
+                        // independent onTapGesture.
+                        ZStack(alignment: .trailing) {
+                            layerRow(index)
+                            // Layer 0 ("Base") is never deletable -- the
+                            // firmware always treats it as the
+                            // present-by-default layer.
+                            if hoveredLayerIndex == index && index != 0 {
+                                Text("🗑")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(chrome.dangerText)
+                                    .padding(.trailing, 8)
+                                    .onTapGesture {
+                                        Task {
+                                            await presentAlert("Delete Layer \(index)?") {
+                                                Button("Delete") { editor.removeLayer(at: index) }
+                                                Button("Cancel") {}
+                                            }
+                                        }
+                                    }
+                            }
+                        }
                     }
                 }
             }
@@ -77,6 +118,32 @@ struct KeyListColumnView: View {
         .onTapGesture { selectTheme(theme) }
     }
 
+    /// The "LAYERS" header's trailing "+" -- adds a new blank-transparent
+    /// layer (`EditorState.addLayer()`), dimmed and inert once
+    /// `EditorState.maxLayerCount` is reached.
+    private var addLayerChip: some View {
+        let isEnabled = editor.document.layers.count < EditorState.maxLayerCount
+        let fade = isEnabled ? 1.0 : 0.4
+        return TapTarget(
+            background: chrome.chipBackground.opacity(fade),
+            cornerRadius: 4,
+            action: { if isEnabled { editor.addLayer() } }
+        ) {
+            Text("+")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(chrome.textPrimary.opacity(fade))
+        }
+        .frame(width: 20, height: 20)
+    }
+
+    /// The selectable content of one Layers-list row -- background, drag
+    /// dots, label. Deliberately doesn't include the delete trash glyph:
+    /// see `hoveredLayerIndex`'s doc comment for why that has to live as a
+    /// sibling at the call site instead of nested in here. `.onHover` is
+    /// chained directly onto this same view, in front of `.onTapGesture`
+    /// (matching `designRow`/`themeRow`) -- putting hover on a *different*,
+    /// outer-wrapping view broke click delivery to this row's tap gesture
+    /// entirely, not just the nested trash glyph's.
     private func layerRow(_ index: Int) -> some View {
         let isSelected = editor.currentLayer == index
         return ZStack {
@@ -93,6 +160,9 @@ struct KeyListColumnView: View {
             }
             .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
         }
+        .onHover { hovering in
+            hoveredLayerIndex = hovering ? index : (hoveredLayerIndex == index ? nil : hoveredLayerIndex)
+        }
         .onTapGesture { editor.currentLayer = index }
     }
 }
@@ -104,6 +174,26 @@ struct KeyMainContentView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
+    /// Guaranteed minimum for the board's own scroll area -- without this,
+    /// the palette drawer below it can take everything and squeeze this
+    /// `ScrollView` down to near nothing at the window's minimum size.
+    /// `ContentView`'s `minHeight` is sized to guarantee this much room.
+    private static let boardMinHeight: Double = 240
+    /// `body`'s `.padding(20)`, top and bottom.
+    private static let verticalPadding: Double = 40
+    /// The two gaps in `body`'s `VStack(spacing: 16)` (three children).
+    private static let stackSpacing: Double = 32
+
+    /// What this column needs at the window floor: the board's guaranteed
+    /// minimum plus the drawer squeezed to its own floor.
+    static let minContentHeight: Double =
+        verticalPadding + stackSpacing + boardMinHeight + PaletteDrawerView.minHeight
+    /// What it needs for the drawer to show every palette section without
+    /// scrolling, with the board still at its minimum -- the height the
+    /// window opens at (see `App.swift`'s `defaultSize`).
+    static let idealContentHeight: Double =
+        verticalPadding + stackSpacing + boardMinHeight + PaletteDrawerView.maxHeight
+
     var body: some View {
         VStack(spacing: 16) {
             Spacer(minLength: 0)
@@ -112,8 +202,15 @@ struct KeyMainContentView: View {
                     .background(editor.activeTheme.background.color)
                     .cornerRadius(10)
             }
+            .frame(minHeight: Self.boardMinHeight)
+            // The drawer is served first out of this VStack's available
+            // height, so it reaches its full no-scroll `maxHeight` before
+            // the (infinitely flexible) board scroll area takes the rest.
+            // Without the priority the stack splits the slack evenly and the
+            // drawer would scroll even in a tall window -- see
+            // `PaletteDrawerView.maxHeight`'s doc comment.
             PaletteDrawerView()
-            Spacer(minLength: 0)
+                .layoutPriority(1)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

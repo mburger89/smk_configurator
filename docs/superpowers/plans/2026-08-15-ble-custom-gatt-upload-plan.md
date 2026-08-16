@@ -1,0 +1,1284 @@
+# BLE Custom GATT Upload Service — Phase 1 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Move ESP32-C6 keymap upload off the HID Report ID 2 channel (which macOS Core Bluetooth hides from apps) onto a custom 128-bit GATT service, and give the configurator a live, honest read-out of the connection.
+
+**Architecture:** The firmware registers one primary GATT service with a write characteristic (host→device packets) and a notify characteristic (device→host responses), both dispatching into the existing transport-agnostic `smk_keymap_dispatch_packet`. The app gains a single shared `BLECentral` Core Bluetooth session used by both the upload transport and a DEV-pane monitor. The 32-byte BEGIN/CHUNK/COMMIT protocol is unchanged on both sides.
+
+**Tech Stack:** ESP-IDF v6.0.1 + NimBLE + Embedded Swift (firmware); Swift 6 + SwiftCrossUI + Core Bluetooth + Swift Testing (app).
+
+**Spec:** `docs/superpowers/specs/2026-08-15-ble-custom-gatt-upload-design.md`
+
+## Global Constraints
+
+- **Two repos.** Every task states its repo. Firmware: `~/esp/SMK`. App: `~/esp/smk_configurator`. Never run one repo's build in the other.
+- **App build/test always scoped and flagged:** `swift build --target SMKConfigurator --build-system native` and `swift test --build-system native`. A bare `swift build` fails on swift-cross-ui's Android shim — see the app repo's CLAUDE.md.
+- **Firmware build:** `idf.py build` from `~/esp/SMK` (target already set to esp32c6). Flash with `PORT=/dev/cu.usbmodem101 ./flash_esp32c6.sh`, or `idf.py -p /dev/cu.usbmodem101 flash` to skip the monitor.
+- **Packet size is 32 bytes, unchanged.** `SMK_UPLOAD_PACKET_LEN` (firmware) and `KeymapUploadProtocol.packetLength` (app) must both stay 32. Do not "improve" this to use a larger MTU.
+- **UUIDs are generated, never hand-typed:** service `DA227673-007D-4BE6-A602-BC27421945FC`, packet write `3A877283-CAFD-4716-8671-148B32475E97`, response notify `C975356B-1B48-4871-A8A6-FB1155381A8F`.
+- **BLE code in the app is `#if canImport(CoreBluetooth)`-gated**, including new files and their tests — the app is built on Linux in CI.
+- **Commit messages** follow each repo's existing style and end with the `Co-Authored-By:` trailer already used in their histories.
+- **Read-only hardware probes** already exist and should be reused rather than rewritten: `blescan` (filtered/unfiltered scan) and `blediscover` (connect + enumerate GATT), built during investigation. Rebuild from `blescan.swift` / `blediscover.swift` with `swiftc -O <file>.swift -o <name>` if the binaries are gone.
+
+---
+
+## Part A — Firmware (`~/esp/SMK`)
+
+### Task 1: UUID source of truth and generator
+
+**Repo:** `~/esp/SMK`
+
+**Files:**
+- Create: `~/esp/SMK/ble_upload_uuids.json`
+- Create: `~/esp/SMK/generate_ble_uuids.sh`
+- Generates: `~/esp/SMK/Sources/components/smk_ble_uuids.h`
+- Generates: `~/esp/smk_configurator/Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: C constants `smk_upload_svc_uuid`, `smk_upload_packet_chr_uuid`, `smk_upload_response_chr_uuid` (each a `ble_uuid128_t`, used as `&name.u`); Swift constants `BLEUploadUUIDs.service`, `.packet`, `.response` (each a `CBUUID`).
+
+- [ ] **Step 1: Write the UUID source of truth**
+
+Create `~/esp/SMK/ble_upload_uuids.json`:
+
+```json
+{
+  "service": "DA227673-007D-4BE6-A602-BC27421945FC",
+  "packet": "3A877283-CAFD-4716-8671-148B32475E97",
+  "response": "C975356B-1B48-4871-A8A6-FB1155381A8F"
+}
+```
+
+- [ ] **Step 2: Write the generator**
+
+Create `~/esp/SMK/generate_ble_uuids.sh` (mode 755). NimBLE's `BLE_UUID128_INIT` takes bytes in **reverse** order of the textual UUID; that reversal is the entire reason this script exists.
+
+```bash
+#!/usr/bin/env bash
+# Regenerates the BLE upload service's UUID constants for both repos from
+# ble_upload_uuids.json. Run after changing that file; commit the outputs in
+# both repos.
+#
+#   ./generate_ble_uuids.sh [path-to-smk_configurator]   (default ../smk_configurator)
+set -euo pipefail
+cd "$(dirname "$0")"
+CONFIGURATOR="${1:-../smk_configurator}"
+
+python3 - "$CONFIGURATOR" <<'PY'
+import json, pathlib, sys
+
+configurator = pathlib.Path(sys.argv[1]).expanduser()
+uuids = json.load(open("ble_upload_uuids.json"))
+
+def nimble_bytes(uuid: str) -> str:
+    raw = uuid.replace("-", "")
+    octets = [raw[i:i + 2] for i in range(0, 32, 2)]
+    body = ", ".join("0x" + o.lower() for o in reversed(octets))
+    return ",\n                     ".join(
+        [", ".join(body.split(", ")[i:i + 8]) for i in range(0, 16, 8)]
+    )
+
+names = {
+    "service": "smk_upload_svc_uuid",
+    "packet": "smk_upload_packet_chr_uuid",
+    "response": "smk_upload_response_chr_uuid",
+}
+
+header = ["// Generated by generate_ble_uuids.sh from ble_upload_uuids.json.",
+          "// Do not edit by hand -- edit the JSON and re-run the script.",
+          "#pragma once",
+          "",
+          '#include "host/ble_uuid.h"',
+          ""]
+for role, name in names.items():
+    header.append(f"// {uuids[role]}")
+    header.append(f"static const ble_uuid128_t {name} =")
+    header.append(f"    BLE_UUID128_INIT({nimble_bytes(uuids[role])});")
+    header.append("")
+pathlib.Path("Sources/components/smk_ble_uuids.h").write_text("\n".join(header))
+
+swift = ["// Generated by ~/esp/SMK/generate_ble_uuids.sh from",
+         "// ble_upload_uuids.json. Do not edit by hand.",
+         "",
+         "#if canImport(CoreBluetooth)",
+         "import CoreBluetooth",
+         "",
+         "/// UUIDs of the firmware's custom keymap-upload GATT service.",
+         "enum BLEUploadUUIDs {",
+         f'    static let service = CBUUID(string: "{uuids["service"]}")',
+         f'    static let packet = CBUUID(string: "{uuids["packet"]}")',
+         f'    static let response = CBUUID(string: "{uuids["response"]}")',
+         "}",
+         "#endif",
+         ""]
+out = configurator / "Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift"
+out.write_text("\n".join(swift))
+print(f"wrote Sources/components/smk_ble_uuids.h and {out}")
+PY
+```
+
+- [ ] **Step 3: Run the generator**
+
+```bash
+cd ~/esp/SMK && chmod +x generate_ble_uuids.sh && ./generate_ble_uuids.sh
+```
+
+Expected: prints both output paths.
+
+- [ ] **Step 4: Verify the byte reversal by hand**
+
+```bash
+grep -A2 "DA227673" ~/esp/SMK/Sources/components/smk_ble_uuids.h
+```
+
+Expected: the first byte is `0xfc` and the last is `0xda` — the exact reverse of `DA22...45FC`. If it reads `0xda, 0x22, ...` the reversal is missing and every later task will fail with a service the app can never find.
+
+- [ ] **Step 5: Commit (both repos)**
+
+```bash
+cd ~/esp/SMK && git add ble_upload_uuids.json generate_ble_uuids.sh Sources/components/smk_ble_uuids.h
+git commit -m "Add generated BLE upload service UUID constants"
+
+cd ~/esp/smk_configurator && git add Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift
+git commit -m "Add generated BLE upload service UUIDs"
+```
+
+---
+
+### Task 2: Register the custom GATT service
+
+**Repo:** `~/esp/SMK`
+
+**Files:**
+- Modify: `Sources/components/ble_helper.c` (includes near line 8; new code above `init_ble_hid`; two registration calls inside `init_ble_hid`)
+
+**Interfaces:**
+- Consumes: `smk_ble_uuids.h` from Task 1; `smk_keymap_dispatch_packet(const uint8_t *, uint8_t *)` — the `@_cdecl` Swift entry point in `Sources/SMKCore/KeymapProtocol.swift`.
+- Produces: a registered primary service; file-static `smk_upload_response_handle`.
+
+- [ ] **Step 1: Add the includes**
+
+In `Sources/components/ble_helper.c`, after the existing `#include "services/gap/ble_svc_gap.h"` (line 7), add:
+
+```c
+#include "host/ble_hs_mbuf.h"
+#include "services/gatt/ble_svc_gatt.h"
+#include "smk_ble_uuids.h"
+```
+
+- [ ] **Step 2: Add the service definition and write callback**
+
+Insert immediately above `void init_ble_hid(void) {`:
+
+```c
+#define SMK_UPLOAD_PACKET_LEN 32
+
+// Defined in Sources/SMKCore/KeymapProtocol.swift as
+// @_cdecl("smk_keymap_dispatch_packet"). Same transport-agnostic entry
+// point the RP2040/nRF52840/STM32 USB paths call -- this file is now just
+// one more transport in front of it.
+extern void smk_keymap_dispatch_packet(const uint8_t *packet, uint8_t *response);
+
+// Value handle of the response characteristic, filled in by
+// ble_gatts_add_svcs() during registration and used to address
+// notifications back to the host.
+static uint16_t smk_upload_response_handle;
+
+// Host writes a 32-byte upload packet; we dispatch it and notify the
+// 32-byte reply. conn_handle comes in as an argument, so this needs no GAP
+// callback of its own to know who to answer.
+static int smk_upload_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)attr_handle;
+    (void)arg;
+
+    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    uint8_t packet[SMK_UPLOAD_PACKET_LEN];
+    uint16_t len = 0;
+    if (ble_hs_mbuf_to_flat(ctxt->om, packet, sizeof(packet), &len) != 0) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    if (len != SMK_UPLOAD_PACKET_LEN) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+
+    // Runs on the NimBLE host task. COMMIT writes NVS and briefly blocks the
+    // stack -- same as the Report ID 2 path this replaces.
+    uint8_t response[SMK_UPLOAD_PACKET_LEN];
+    smk_keymap_dispatch_packet(packet, response);
+
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(response, sizeof(response));
+    if (om == NULL) {
+        return BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    ble_gatts_notify_custom(conn_handle, smk_upload_response_handle, om);
+    return 0;
+}
+
+static const struct ble_gatt_svc_def smk_upload_svcs[] = {
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &smk_upload_svc_uuid.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = &smk_upload_packet_chr_uuid.u,
+                .access_cb = smk_upload_access_cb,
+                .flags = BLE_GATT_CHR_F_WRITE,
+            },
+            {
+                .uuid = &smk_upload_response_chr_uuid.u,
+                .access_cb = smk_upload_access_cb,
+                .flags = BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &smk_upload_response_handle,
+            },
+            { 0 },
+        },
+    },
+    { 0 },
+};
+```
+
+- [ ] **Step 3: Register the service in `init_ble_hid`**
+
+Insert **after** the `smk_ble_set_hid_dev(s_hid_dev);` line and **before** `ble_svc_gap_device_name_set(...)`. Ordering is not cosmetic: `nimble_port_init()` must already have run (it allocates the host state that `ble_gatts_count_cfg` dereferences — see the existing comment above `nimble_port_init()` about the Guru Meditation crash), and `esp_nimble_enable()` must not have run yet, because the host starts the GATT server there.
+
+```c
+    // Custom keymap-upload service. Registered here rather than as HID
+    // Report ID 2 because macOS hides the HID service (0x1812) from Core
+    // Bluetooth apps entirely -- see
+    // smk_configurator/docs/superpowers/specs/2026-08-15-ble-custom-gatt-upload-design.md
+    int upload_rc = ble_gatts_count_cfg(smk_upload_svcs);
+    if (upload_rc != 0) {
+        ESP_LOGE(TAG, "ble_gatts_count_cfg failed; rc=%d", upload_rc);
+    }
+    upload_rc = ble_gatts_add_svcs(smk_upload_svcs);
+    if (upload_rc != 0) {
+        ESP_LOGE(TAG, "ble_gatts_add_svcs failed; rc=%d", upload_rc);
+    }
+```
+
+- [ ] **Step 4: Build**
+
+```bash
+cd ~/esp/SMK && idf.py build
+```
+
+Expected: build succeeds. A link error naming `smk_keymap_dispatch_packet` means the `extern` prototype's types don't match the `@_cdecl` signature — it is `(const uint8_t *, uint8_t *)`, nothing else.
+
+- [ ] **Step 5: Flash and verify the service is visible**
+
+```bash
+cd ~/esp/SMK && idf.py -p /dev/cu.usbmodem101 flash
+cd <scratchpad> && ./blediscover
+```
+
+Expected: `services (4): [...]` now including `DA227673-007D-4BE6-A602-BC27421945FC`, with two characteristics listed under it (`3A877283-…` props 8 = write, `C975356B-…` props 16 = notify). If the service is absent, re-check Task 1 Step 4's byte order before anything else.
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd ~/esp/SMK && git add Sources/components/ble_helper.c
+git commit -m "Add custom GATT service for keymap upload"
+```
+
+---
+
+### Task 3: Advertise the service UUID
+
+**Repo:** `~/esp/SMK`
+
+**Files:**
+- Modify: `Sources/components/ble_helper.c` — `start_advertising()` (~line 66)
+
+**Interfaces:**
+- Consumes: `smk_upload_svc_uuid` (Task 1).
+- Produces: an advertisement the app can match with `scanForPeripherals(withServices: [BLEUploadUUIDs.service])`.
+
+- [ ] **Step 1: Move the name to the scan response and add the UUID**
+
+The advertisement is 31 bytes: flags (3) + appearance (4) + name (14) = 21, and a 128-bit UUID costs 18 more, so the name has to move. In `start_advertising()`, replace the three `fields.name*` assignments with the UUID fields:
+
+```c
+    memset(&fields, 0, sizeof(fields));
+    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    fields.appearance = 0x03C1; // Keyboard
+    fields.appearance_is_present = 1;
+    // The upload service UUID goes in the *primary* advertisement so the
+    // configurator's scan filter matches it directly, without depending on
+    // how a host merges scan-response data. Name moves to the scan response
+    // below: all three would overrun the 31-byte budget.
+    fields.uuids128 = (ble_uuid128_t *)&smk_upload_svc_uuid;
+    fields.num_uuids128 = 1;
+    fields.uuids128_is_complete = 1;
+
+    rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "error setting advertisement data; rc=%d", rc);
+        return;
+    }
+
+    struct ble_hs_adv_fields rsp_fields;
+    memset(&rsp_fields, 0, sizeof(rsp_fields));
+    rsp_fields.name = (uint8_t *)ble_hid_config.device_name;
+    rsp_fields.name_len = strlen(ble_hid_config.device_name);
+    rsp_fields.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "error setting scan response data; rc=%d", rc);
+        return;
+    }
+```
+
+- [ ] **Step 2: Build and flash**
+
+```bash
+cd ~/esp/SMK && idf.py build && idf.py -p /dev/cu.usbmodem101 flash
+```
+
+Expected: build and flash succeed. `rc=4` (`BLE_HS_EMSGSIZE`) logged at boot means the advertisement still overflows 31 bytes — remove the appearance field before removing anything else.
+
+- [ ] **Step 3: Verify with a filtered scan**
+
+Edit the scratchpad `blescan.swift`'s `hidService` constant to `CBUUID(string: "DA227673-007D-4BE6-A602-BC27421945FC")`, rebuild (`swiftc -O blescan.swift -o blescan`), and run it.
+
+Expected: `scan A found 1 HID peripheral(s)` (the filtered scan now matches), and the unfiltered listing shows `SMK Keyboard` with the service UUID present rather than `services []`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd ~/esp/SMK && git add Sources/components/ble_helper.c
+git commit -m "Advertise the upload service UUID, move name to scan response"
+```
+
+---
+
+### Task 4: Remove the HID Report ID 2 channel
+
+**Repo:** `~/esp/SMK`
+
+**Files:**
+- Modify: `Sources/components/ble_helper.c:30-37` (the Report ID 2 block of `hid_report_map`)
+- Modify: `Sources/smk/BleHelper.swift:148-168` (the `espHiddOutputEvent` case)
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: a keyboard-only HID report map. After this task the custom service is the only BLE upload path.
+
+- [ ] **Step 1: Delete the vendor collection from the report map**
+
+In `hid_report_map`, delete the comment and the four data lines that follow the keyboard collection's closing `0xc0`:
+
+```c
+    // Keymap upload channel — Usage Page (Vendor Defined 0xFF00), Report ID 2
+    0x06, 0x00, 0xFF, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x02,
+    0x75, 0x08, 0x95, 0x20, 0x15, 0x00, 0x26, 0xFF, 0x00,
+    0x09, 0x01, 0x81, 0x02,
+    0x09, 0x01, 0x91, 0x02,
+    0xC0
+```
+
+leaving the keyboard collection's `0xc0` as the array's last element. `ble_report_maps` uses `.len = sizeof(hid_report_map)`, so no length constant needs updating — verify that is still true rather than assuming it.
+
+- [ ] **Step 2: Delete the output-report handler**
+
+In `Sources/smk/BleHelper.swift`, replace the whole `case espHiddOutputEvent:` branch (the `guard let eventData`, the `output.report_id == 2` check, the `smk_keymap_dispatch_packet` call and the `esp_hidd_dev_input_set(dev, 0, 2, ...)` reply) with:
+
+```swift
+    case espHiddOutputEvent:
+        // Nothing to do: keymap upload moved to the custom GATT service in
+        // ble_helper.c, and this build's report map has no output reports.
+        break
+```
+
+Leave `espHiddStartEvent`, `espHiddConnectEvent` and `espHiddDisconnectEvent` untouched — `start_advertising()` on disconnect is what makes the keyboard reconnectable.
+
+- [ ] **Step 3: Build and flash**
+
+```bash
+cd ~/esp/SMK && idf.py build && idf.py -p /dev/cu.usbmodem101 flash
+```
+
+Expected: build succeeds with no unused-symbol warnings for `smk_keymap_dispatch_packet` (Task 2's C caller is now its only BLE user).
+
+- [ ] **Step 4: Verify HID still works and the service survives**
+
+Pair the board to the Mac in System Settings → Bluetooth, then type into any text field.
+
+Expected: keystrokes arrive (Report ID 1 is untouched), and `./blediscover` still lists the upload service with both characteristics.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd ~/esp/SMK && git add Sources/components/ble_helper.c Sources/smk/BleHelper.swift
+git commit -m "Remove the HID Report ID 2 keymap channel"
+```
+
+---
+
+### Task 5: Raise the bond limit
+
+**Repo:** `~/esp/SMK`
+
+**Files:**
+- Modify: `sdkconfig.defaults:4`
+- Modify: `sdkconfig:1231` and `sdkconfig:4296`
+- Modify: `README.md` (a note about NVS and bonds)
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: room for 4 bonded hosts.
+
+- [ ] **Step 1: Change both config files**
+
+`sdkconfig.defaults` is the source of truth and the only one of the two that is committed — **`sdkconfig` is gitignored** (`.gitignore:3`), regenerated from the defaults when absent. But an existing local `sdkconfig` is what your build actually reads, and `idf.py` will not rewrite it just because the defaults changed, so edit both: the defaults for everyone else, the local file for this working copy.
+
+```bash
+cd ~/esp/SMK
+sed -i '' 's/^CONFIG_BT_NIMBLE_MAX_BONDS=1$/CONFIG_BT_NIMBLE_MAX_BONDS=4/' sdkconfig.defaults sdkconfig
+sed -i '' 's/^CONFIG_NIMBLE_MAX_BONDS=1$/CONFIG_NIMBLE_MAX_BONDS=4/' sdkconfig
+grep -n "MAX_BONDS" sdkconfig.defaults sdkconfig
+```
+
+Expected: all four lines now read `=4`.
+
+- [ ] **Step 2: Verify the built config picked it up**
+
+```bash
+cd ~/esp/SMK && idf.py build && grep -rn "MAX_BONDS" build/config/sdkconfig.h
+```
+
+Expected: `#define CONFIG_BT_NIMBLE_MAX_BONDS 4`. If it still says 1, `sdkconfig` was not updated — repeat Step 1 rather than proceeding.
+
+- [ ] **Step 3: Check the factory-reset path does not clear bonds**
+
+```bash
+cd ~/esp/SMK && grep -n "erase\|nvs" Sources/smk/Main.swift
+```
+
+Read whatever the factory-reset-on-boot path calls. It must clear only the keymap namespace, not the whole NVS partition (`nvs_flash_erase()` would take the bonds with it). If it does erase everything, note it in the commit message and raise it — do not silently change reset semantics as part of this task.
+
+- [ ] **Step 4: Document the NVS/flash interaction**
+
+Add to `README.md`, in whatever section covers flashing:
+
+```markdown
+BLE bonds live in NVS. `idf.py flash` preserves them, so paired hosts survive
+a firmware update; `idf.py erase_flash` wipes them and every host must be
+re-paired. `CONFIG_BT_NIMBLE_MAX_BONDS` (4) caps how many hosts can stay
+paired at once — a 5th pairing evicts the oldest.
+```
+
+- [ ] **Step 5: Flash and run the two-Mac acceptance test**
+
+```bash
+cd ~/esp/SMK && idf.py -p /dev/cu.usbmodem101 flash
+```
+
+Pair the board to Mac A, confirm typing works. Pair to Mac B, confirm typing works. Return to Mac A and confirm it reconnects **without** re-adding the device. Then power-cycle the board and confirm it reconnects to whichever Mac is nearby.
+
+Expected: both Macs keep working. This is the acceptance criterion for the "no re-adding it" goal; if it fails, stop and diagnose before continuing to Part B.
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd ~/esp/SMK && git add sdkconfig sdkconfig.defaults README.md
+git commit -m "Raise MAX_BONDS to 4 so several Macs can stay paired"
+```
+
+---
+
+## Part B — App (`~/esp/smk_configurator`)
+
+### Task 6: Pin the generated UUIDs with a test
+
+**Repo:** `~/esp/smk_configurator`
+
+**Files:**
+- Test: `Tests/SMKConfiguratorTests/BLEUploadUUIDsTests.swift` (create)
+- Uses: `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` (generated in Task 1)
+
+**Interfaces:**
+- Consumes: `BLEUploadUUIDs.service`, `.packet`, `.response` (Task 1).
+- Produces: nothing new; guards the constants.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `Tests/SMKConfiguratorTests/BLEUploadUUIDsTests.swift`:
+
+```swift
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+import Testing
+@testable import SMKConfigurator
+
+/// Deliberately a change-detector. These UUIDs are generated into two repos
+/// from ~/esp/SMK/ble_upload_uuids.json; a regeneration or hand-edit that
+/// changes one silently produces a keyboard this app can never find, with no
+/// error anywhere. Failing here is the cheapest place to notice.
+@Suite("BLE upload service UUIDs match the firmware's generated constants")
+struct BLEUploadUUIDsTests {
+    @Test("service UUID is unchanged")
+    func serviceUUID() {
+        #expect(BLEUploadUUIDs.service.uuidString == "DA227673-007D-4BE6-A602-BC27421945FC")
+    }
+
+    @Test("packet write characteristic UUID is unchanged")
+    func packetUUID() {
+        #expect(BLEUploadUUIDs.packet.uuidString == "3A877283-CAFD-4716-8671-148B32475E97")
+    }
+
+    @Test("response notify characteristic UUID is unchanged")
+    func responseUUID() {
+        #expect(BLEUploadUUIDs.response.uuidString == "C975356B-1B48-4871-A8A6-FB1155381A8F")
+    }
+}
+#endif
+```
+
+- [ ] **Step 2: Run it**
+
+```bash
+cd ~/esp/smk_configurator && swift test --build-system native --filter BLEUploadUUIDsTests
+```
+
+Expected: PASS if Task 1 ran and committed the generated file. A compile error naming `BLEUploadUUIDs` means Task 1's generator was not run with the right configurator path — re-run `./generate_ble_uuids.sh ~/esp/smk_configurator`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add Tests/SMKConfiguratorTests/BLEUploadUUIDsTests.swift
+git commit -m "Pin the generated BLE upload UUIDs with a change-detector test"
+```
+
+---
+
+### Task 7: Upload progress reporting
+
+**Repo:** `~/esp/smk_configurator`
+
+**Files:**
+- Modify: `Sources/SMKConfigurator/Device/DeviceTransport.swift` (the `KeymapUploader` enum)
+- Test: `Tests/SMKConfiguratorTests/KeymapUploadProtocolTests.swift` (add to the existing `KeymapUploaderTests` suite)
+
+**Interfaces:**
+- Consumes: existing `DeviceTransport`, `KeymapUploadProtocol`.
+- Produces: `KeymapUploader.UploadPhase` (`.begin`, `.chunk(index: Int, of: Int)`, `.commit`), and `KeymapUploader.upload(json:using:progress:)` where `progress` is `((UploadPhase) -> Void)? = nil`.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to the existing `KeymapUploaderTests` suite in `Tests/SMKConfiguratorTests/KeymapUploadProtocolTests.swift`:
+
+```swift
+    @Test("reports begin, one chunk per packet, then commit")
+    func progressSequence() async throws {
+        // 60 bytes of payload -> 3 chunks at 28 bytes each.
+        let json = #"{"layers":["# + String(repeating: "a", count: 47) + "]}"
+        let transport = MockTransport(responses: [])
+        var phases: [KeymapUploader.UploadPhase] = []
+
+        try await KeymapUploader.upload(json: json, using: transport) { phases.append($0) }
+
+        let chunkCount = transport.sent.filter { $0[0] == 0x02 }.count
+        #expect(phases.first == .begin)
+        #expect(phases.last == .commit)
+        #expect(phases.count == chunkCount + 2)
+        for (i, phase) in phases.dropFirst().dropLast().enumerated() {
+            #expect(phase == .chunk(index: i, of: chunkCount))
+        }
+    }
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+```bash
+swift test --build-system native --filter progressSequence
+```
+
+Expected: FAIL to compile — `UploadPhase` does not exist and `upload` takes no trailing closure.
+
+- [ ] **Step 3: Implement**
+
+In `Sources/SMKConfigurator/Device/DeviceTransport.swift`, add to `enum KeymapUploader`:
+
+```swift
+    /// Where an upload has got to, for the DEV pane's progress read-out. A
+    /// ~4 KB keymap is ~146 round trips, so this is several visible seconds.
+    enum UploadPhase: Equatable {
+        case begin
+        case chunk(index: Int, of: Int)
+        case commit
+    }
+```
+
+and change `upload` to:
+
+```swift
+    static func upload(
+        json: String,
+        using transport: DeviceTransport,
+        progress: ((UploadPhase) -> Void)? = nil
+    ) async throws {
+```
+
+Inside, emit phases: `progress?(.begin)` before the BEGIN send; compute
+`let chunkCount = (bytes.count + KeymapUploadProtocol.maxChunkDataLength - 1) / KeymapUploadProtocol.maxChunkDataLength`
+before the loop, track a `chunkIndex`, call `progress?(.chunk(index: chunkIndex, of: chunkCount))` before each CHUNK send and increment it after; call `progress?(.commit)` before the COMMIT send. Leave every existing `guard`/`throw` exactly as it is.
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+swift test --build-system native
+```
+
+Expected: all tests pass, including the pre-existing `fullUpload`, which still calls `upload(json:using:)` with no progress argument.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Sources/SMKConfigurator/Device/DeviceTransport.swift Tests/SMKConfiguratorTests/KeymapUploadProtocolTests.swift
+git commit -m "Report upload progress from KeymapUploader"
+```
+
+---
+
+### Task 8: `BLECentral` shared session
+
+**Repo:** `~/esp/smk_configurator`
+
+**Files:**
+- Create: `Sources/SMKConfigurator/Device/BLECentral.swift`
+- Test: `Tests/SMKConfiguratorTests/BLEConnectionStateTests.swift` (create)
+
+**Interfaces:**
+- Consumes: `BLEUploadUUIDs` (Task 1), `DeviceTransportError`.
+- Produces:
+  - `enum BLEConnectionState: Equatable { case idle, searching, connecting, connected, ready, failed(String) }` with `var isReady: Bool` and `var summary: String`.
+  - `@MainActor final class BLECentral`: `static let shared`, `var state: BLEConnectionState`, `var peripheralName: String?`, `var rssi: Int?`, `var mtu: Int?`, `func connect() async throws`, `func send(_ packet: [UInt8]) async throws -> [UInt8]`, `func readRSSI()`.
+
+There is deliberately no `disconnect()`: the monitor stops updating when the DEV pane closes but leaves the link up, because a bonded keyboard is connected to the Mac anyway and holding it costs nothing — while dropping it would force a rescan on the next upload.
+
+- [ ] **Step 1: Write the failing test for the state type**
+
+The Core Bluetooth plumbing needs a radio, but the state vocabulary the UI reads does not. Create `Tests/SMKConfiguratorTests/BLEConnectionStateTests.swift`:
+
+```swift
+#if canImport(CoreBluetooth)
+import Testing
+@testable import SMKConfigurator
+
+@Suite("BLEConnectionState distinguishes the states the DEV pane must show")
+struct BLEConnectionStateTests {
+    @Test("only .ready counts as usable for an upload")
+    func readiness() {
+        #expect(BLEConnectionState.ready.isReady)
+        #expect(!BLEConnectionState.connected.isReady)
+        #expect(!BLEConnectionState.idle.isReady)
+        #expect(!BLEConnectionState.failed("nope").isReady)
+    }
+
+    @Test("connected-but-not-ready reads differently from not connected")
+    func summariesAreDistinct() {
+        // A board whose service is missing is a UUID mismatch, not an absent
+        // keyboard, and the pane must not conflate the two.
+        #expect(BLEConnectionState.connected.summary != BLEConnectionState.idle.summary)
+        #expect(BLEConnectionState.ready.summary != BLEConnectionState.connected.summary)
+    }
+}
+#endif
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+```bash
+swift test --build-system native --filter BLEConnectionStateTests
+```
+
+Expected: FAIL to compile — `BLEConnectionState` does not exist.
+
+- [ ] **Step 3: Write `BLECentral.swift`**
+
+Create `Sources/SMKConfigurator/Device/BLECentral.swift`, entirely inside `#if canImport(CoreBluetooth)`. Start with the state type:
+
+```swift
+/// What the DEV pane shows, and what gates an upload. `.connected` means a
+/// GATT link exists but the upload service or one of its characteristics is
+/// missing -- the exact symptom of a firmware/app UUID mismatch, kept
+/// distinct from `.idle` so nobody has to guess which they have.
+enum BLEConnectionState: Equatable {
+    case idle
+    case searching
+    case connecting
+    case connected
+    case ready
+    case failed(String)
+
+    var isReady: Bool { self == .ready }
+
+    var summary: String {
+        switch self {
+        case .idle: return "Not connected"
+        case .searching: return "Searching…"
+        case .connecting: return "Connecting…"
+        case .connected: return "Connected — upload service missing"
+        case .ready: return "Ready"
+        case .failed(let why): return "Failed: \(why)"
+        }
+    }
+}
+```
+
+Then the session. It owns the single `CBCentralManager` in the app — two managers would scan against each other and fight over the same peripheral:
+
+```swift
+@MainActor
+final class BLECentral: NSObject {
+    static let shared = BLECentral()
+
+    private(set) var state: BLEConnectionState = .idle
+    private(set) var peripheralName: String?
+    private(set) var rssi: Int?
+    /// Largest single write the link will take, from
+    /// `maximumWriteValueLength(for: .withResponse)`. Purely diagnostic —
+    /// packets are always 32 bytes — but it is the fastest way to tell a
+    /// healthy link from a barely-negotiated one.
+    private(set) var mtu: Int?
+
+    private var central: CBCentralManager!
+    private var peripheral: CBPeripheral?
+    private var packetCharacteristic: CBCharacteristic?
+    private var responseCharacteristic: CBCharacteristic?
+    private var readyContinuation: CheckedContinuation<Void, Error>?
+    private var pendingContinuation: CheckedContinuation<[UInt8], Error>?
+
+    override init() {
+        super.init()
+        central = CBCentralManager(delegate: self, queue: nil)
+    }
+}
+```
+
+`connect()` tries the two discovery paths in order, per the spec:
+
+```swift
+    /// Resolves only once notifications are live -- a packet written before
+    /// the subscription is active gets a response nobody is listening for.
+    func connect() async throws {
+        if state.isReady { return }
+        // Fast path: a bonded keyboard in use is connected to the system and
+        // NOT advertising, so a scan would miss it exactly when it is
+        // working. This only finds it because we match a custom service;
+        // Core Bluetooth would never report a HID match here.
+        if let known = central.retrieveConnectedPeripherals(
+            withServices: [BLEUploadUUIDs.service]
+        ).first {
+            try await connect(to: known)
+            return
+        }
+        state = .searching
+        central.scanForPeripherals(withServices: [BLEUploadUUIDs.service])
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            self.readyContinuation = c
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard let self, let pending = self.readyContinuation else { return }
+                self.readyContinuation = nil
+                self.central.stopScan()
+                self.state = .idle
+                pending.resume(throwing: DeviceTransportError.noDeviceFound)
+            }
+        }
+    }
+```
+
+`send(_:)` resolves on the **notification**, not the write ack — `didWriteValueFor` carries no payload and can arrive on either side of the notification — and times out rather than hanging:
+
+```swift
+    func send(_ packet: [UInt8]) async throws -> [UInt8] {
+        guard let peripheral, let packetCharacteristic else {
+            throw DeviceTransportError.noDeviceFound
+        }
+        return try await withCheckedThrowingContinuation { c in
+            self.pendingContinuation = c
+            peripheral.writeValue(Data(packet), for: packetCharacteristic, type: .withResponse)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, let pending = self.pendingContinuation else { return }
+                self.pendingContinuation = nil
+                pending.resume(throwing: DeviceTransportError.transportFailure(
+                    "timed out waiting for a response packet"))
+            }
+        }
+    }
+```
+
+(The spec asks this error to name the packet index. The session layer does
+not know it — `KeymapUploader` does — so the index reaches the user through
+the DEV pane's progress line, which is showing "Sending chunk N of M…" at the
+moment the timeout fires. Do not thread an index through `send` for it.)
+
+Delegate work, in the `CBCentralManagerDelegate` / `CBPeripheralDelegate`
+extensions. Most are one-liners:
+
+- `didDiscover` → `central.stopScan()`, `state = .connecting`, `central.connect(peripheral)`.
+- `didConnect` → `state = .connected`, `peripheralName = peripheral.name`, `mtu = peripheral.maximumWriteValueLength(for: .withResponse)`, `peripheral.discoverServices([BLEUploadUUIDs.service])`.
+- `didDiscoverServices` → if no service matches `BLEUploadUUIDs.service`, resolve the ready continuation with `.transportFailure("upload service \(BLEUploadUUIDs.service.uuidString) not found")` and leave `state = .connected`; else `peripheral.discoverCharacteristics([BLEUploadUUIDs.packet, BLEUploadUUIDs.response], for: service)`.
+- `didDiscoverCharacteristicsFor` → assign `packetCharacteristic` and `responseCharacteristic` by UUID; if either is nil afterwards, fail the ready continuation with `.transportFailure` naming the missing UUID; else `peripheral.setNotifyValue(true, for: responseCharacteristic!)`.
+- `didUpdateValueFor characteristic` → `pendingContinuation?.resume(returning: Array(characteristic.value ?? Data()))`, then nil it.
+- `didReadRSSI` → `rssi = RSSI.intValue`.
+- `readRSSI()` → `peripheral?.readRSSI()`.
+
+These two carry the behavioural fixes this rewrite exists for, so write them
+exactly:
+
+```swift
+    // Ready means *notifications are live*, not merely "characteristic
+    // found". A packet written before the subscription is active gets a
+    // response with nobody listening, and the upload hangs.
+    func peripheral(_ peripheral: CBPeripheral,
+                    didUpdateNotificationStateFor characteristic: CBCharacteristic,
+                    error: Error?) {
+        guard characteristic.uuid == BLEUploadUUIDs.response else { return }
+        if let error {
+            state = .failed(error.localizedDescription)
+            readyContinuation?.resume(throwing:
+                DeviceTransportError.transportFailure(error.localizedDescription))
+        } else {
+            state = .ready
+            readyContinuation?.resume(returning: ())
+        }
+        readyContinuation = nil
+    }
+
+    // The old transport left an in-flight continuation suspended forever if
+    // the board vanished mid-upload.
+    func centralManager(_ central: CBCentralManager,
+                        didDisconnectPeripheral peripheral: CBPeripheral,
+                        error: Error?) {
+        packetCharacteristic = nil
+        responseCharacteristic = nil
+        rssi = nil
+        mtu = nil
+        state = .idle
+        pendingContinuation?.resume(throwing:
+            DeviceTransportError.transportFailure("disconnected mid-upload"))
+        pendingContinuation = nil
+        readyContinuation?.resume(throwing: DeviceTransportError.noDeviceFound)
+        readyContinuation = nil
+    }
+```
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+swift test --build-system native --filter BLEConnectionStateTests
+swift build --target SMKConfigurator --build-system native
+```
+
+Expected: tests pass, app builds.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Sources/SMKConfigurator/Device/BLECentral.swift Tests/SMKConfiguratorTests/BLEConnectionStateTests.swift
+git commit -m "Add a shared BLECentral session for the upload service"
+```
+
+---
+
+### Task 9: Rewrite `BLETransport` on top of `BLECentral`
+
+**Repo:** `~/esp/smk_configurator`
+
+**Files:**
+- Modify: `Sources/SMKConfigurator/Device/BLETransport.swift` (replace nearly all of it)
+
+**Interfaces:**
+- Consumes: `BLECentral.shared` (Task 8).
+- Produces: `BLETransport` conforming to `DeviceTransport`, with `func connect() async throws` and `func send(_:) async throws -> [UInt8]`, both delegating to the session.
+
+- [ ] **Step 1: Replace the file's contents**
+
+Everything that existed to find one characteristic inside a HID service goes: `hidServiceUUID`, `reportCharacteristicUUID`, `reportReferenceDescriptorUUID`, `targetReportID`, `reportTypeInput`/`reportTypeOutput`, the descriptor walk, and both delegate extensions. What is left is a transport:
+
+```swift
+#if canImport(CoreBluetooth)
+import Foundation
+
+/// Carries keymap-upload packets over the firmware's custom GATT service
+/// (see ble_helper.c's smk_upload_svcs). The HID Report ID 2 channel this
+/// replaces was unreachable on macOS: Core Bluetooth hides the HID service
+/// from apps entirely. Discovery, connection and characteristic lookup live
+/// in BLECentral, which the DEV pane's monitor shares -- duplicating them
+/// here is how the two would drift.
+@MainActor
+final class BLETransport: DeviceTransport {
+    private let session: BLECentral
+
+    init(session: BLECentral = .shared) {
+        self.session = session
+    }
+
+    func connect() async throws {
+        try await session.connect()
+    }
+
+    func send(_ packet: [UInt8]) async throws -> [UInt8] {
+        try await session.send(packet)
+    }
+}
+#endif
+```
+
+- [ ] **Step 2: Build**
+
+```bash
+swift build --target SMKConfigurator --build-system native
+```
+
+Expected: builds. `EditorState.sendToDevice()` already calls `BLETransport()` then `connect()`, so it keeps compiling unchanged.
+
+- [ ] **Step 3: Run the full test suite**
+
+```bash
+swift test --build-system native
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Sources/SMKConfigurator/Device/BLETransport.swift
+git commit -m "Rewrite BLETransport over the custom GATT service"
+```
+
+---
+
+### Task 10: Device status and progress on `EditorState`
+
+**Repo:** `~/esp/smk_configurator`
+
+**Files:**
+- Modify: `Sources/SMKConfigurator/Model/EditorState.swift` (device section, ~lines 185-226)
+
+**Interfaces:**
+- Consumes: `BLECentral.shared` (Task 8), `KeymapUploader.UploadPhase` (Task 7).
+- Produces: `EditorState.bleState: BLEConnectionState`, `EditorState.bleRSSI: Int?`, `EditorState.blePeripheralName: String?`, `EditorState.uploadProgress: KeymapUploader.UploadPhase?`, `func testBLEConnection()`, and `refreshDeviceStatus()` also refreshing BLE fields.
+
+- [ ] **Step 1: Add the stored properties**
+
+Next to `usbConnected` (~line 97). Plain stored properties mutated on the main actor — `@ObservableObject` skips properties with accessors, so no `didSet`:
+
+```swift
+    #if canImport(CoreBluetooth)
+    var bleState: BLEConnectionState = .idle
+    var bleRSSI: Int?
+    var bleMTU: Int?
+    var blePeripheralName: String?
+    #endif
+    /// Non-nil only while an upload is in flight; drives the DEV pane's
+    /// progress line. ~146 round trips for a 4 KB keymap.
+    var uploadProgress: KeymapUploader.UploadPhase?
+```
+
+- [ ] **Step 2: Thread progress through `sendToDevice()`**
+
+In the `do` block, pass a progress closure to both upload calls and clear it in the existing `defer`:
+
+```swift
+                let json = try encodeLayersJSON(document.layers)
+                if let usb = try? USBRawHIDTransport() {
+                    try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
+                        self?.uploadProgress = phase
+                    }
+                } else {
+                    #if canImport(CoreBluetooth)
+                    let ble = BLETransport()
+                    try await ble.connect()
+                    try await KeymapUploader.upload(json: json, using: ble) { [weak self] phase in
+                        self?.uploadProgress = phase
+                    }
+                    #else
+                    throw DeviceTransportError.noDeviceFound
+                    #endif
+                }
+```
+
+and add `uploadProgress = nil` to the `defer` block alongside `isSendingToDevice = false`.
+
+- [ ] **Step 3: Extend `refreshDeviceStatus()` and add a connection test**
+
+```swift
+    func refreshDeviceStatus() {
+        usbConnected = (try? USBRawHIDTransport()) != nil
+        #if canImport(CoreBluetooth)
+        bleState = BLECentral.shared.state
+        bleRSSI = BLECentral.shared.rssi
+        bleMTU = BLECentral.shared.mtu
+        blePeripheralName = BLECentral.shared.peripheralName
+        #endif
+    }
+
+    /// Non-destructive answer to "is the board reachable?" -- connects,
+    /// discovers, and reports, without uploading anything.
+    func testBLEConnection() {
+        #if canImport(CoreBluetooth)
+        Task {
+            try? await BLECentral.shared.connect()
+            refreshDeviceStatus()
+        }
+        #endif
+    }
+```
+
+- [ ] **Step 4: Build and test**
+
+```bash
+swift build --target SMKConfigurator --build-system native && swift test --build-system native
+```
+
+Expected: builds, all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Sources/SMKConfigurator/Model/EditorState.swift
+git commit -m "Track BLE state and upload progress on EditorState"
+```
+
+---
+
+### Task 11: Live monitoring and the DEV pane read-out
+
+**Repo:** `~/esp/smk_configurator`
+
+**Files:**
+- Create: `Sources/SMKConfigurator/Device/DeviceMonitor.swift`
+- Modify: `Sources/SMKConfigurator/Views/DeviceModeViews.swift` (all three views)
+
+**Interfaces:**
+- Consumes: `BLECentral.shared`, `EditorState`'s new properties (Task 10).
+- Produces: `@MainActor final class DeviceMonitor` with `static let shared`, `func start(editor: EditorState)`, `func stop()`.
+
+- [ ] **Step 1: Write `DeviceMonitor`**
+
+Create `Sources/SMKConfigurator/Device/DeviceMonitor.swift`. It runs only while the DEV pane is on screen, and is mostly event-driven — Core Bluetooth's delegate callbacks already report connect/disconnect, so only RSSI and the USB probe are actually polled:
+
+```swift
+import Foundation
+
+/// Keeps EditorState's device fields live while the DEV pane is open, and
+/// stops the moment it closes -- nothing runs in the background while the
+/// user is editing a keymap.
+///
+/// Deliberately cheap: presence comes from retrieveConnectedPeripherals (a
+/// system query, no radio scan) and from delegate callbacks. Only RSSI is
+/// genuinely polled. The one expensive operation, scanning for an idle
+/// board, is duty-cycled and stops as soon as the board is found.
+@MainActor
+final class DeviceMonitor {
+    static let shared = DeviceMonitor()
+
+    private var task: Task<Void, Never>?
+
+    func start(editor: EditorState) {
+        guard task == nil else { return }
+        task = Task { @MainActor in
+            var tick = 0
+            while !Task.isCancelled {
+                editor.refreshDeviceStatus()
+                #if canImport(CoreBluetooth)
+                if editor.bleState.isReady {
+                    BLECentral.shared.readRSSI()
+                } else if tick % 5 == 0 {
+                    // Duty-cycled discovery: one attempt per ~15s while
+                    // nothing is found, rather than a continuous scan.
+                    try? await BLECentral.shared.connect()
+                }
+                #endif
+                tick += 1
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+}
+```
+
+- [ ] **Step 2: Drive it from the DEV pane's lifecycle**
+
+In `DeviceMainContentView`, replace the existing `.onAppear { editor.refreshDeviceStatus() }` with:
+
+```swift
+        .onAppear {
+            editor.refreshDeviceStatus()
+            DeviceMonitor.shared.start(editor: editor)
+        }
+        .onDisappear {
+            DeviceMonitor.shared.stop()
+        }
+```
+
+- [ ] **Step 3: Make the BLE card tell the truth**
+
+In `DeviceListColumnView`, replace the hardcoded card:
+
+```swift
+                    transportCard(name: "USB (RP2040)", isConnected: editor.usbConnected)
+                    #if canImport(CoreBluetooth)
+                    transportCard(
+                        name: "BLE (ESP32-C6)",
+                        isConnected: editor.bleState.isReady,
+                        detail: editor.bleState.summary
+                    )
+                    #endif
+```
+
+and give `transportCard` a `detail: String? = nil` parameter, rendering it under the existing "Connected"/"Not connected" line in `chrome.textTertiary` at size 11 when non-nil. Update the USB call site to pass nothing.
+
+Also update the doc comment above `DeviceListColumnView` — it currently says BLE "is always shown as not connected", which stops being true here.
+
+- [ ] **Step 4: Show progress and a Test Connection button**
+
+In `DeviceMainContentView`, under the existing `InspectorButton`, add:
+
+```swift
+            #if canImport(CoreBluetooth)
+            InspectorButton(label: "Test Connection", isEnabled: !editor.isSendingToDevice) {
+                editor.testBLEConnection()
+            }
+            .frame(width: 180)
+            #endif
+            if let phase = editor.uploadProgress {
+                Text(progressLabel(phase))
+                    .font(.system(size: 12))
+                    .foregroundColor(chrome.textSecondary)
+            }
+```
+
+with:
+
+```swift
+    private func progressLabel(_ phase: KeymapUploader.UploadPhase) -> String {
+        switch phase {
+        case .begin: return "Starting upload…"
+        case .chunk(let index, let total): return "Sending chunk \(index + 1) of \(total)…"
+        case .commit: return "Committing…"
+        }
+    }
+```
+
+- [ ] **Step 5: Add the diagnostics read-out**
+
+In `DeviceInspectorView`'s `VStack`, after the existing `infoLine` calls:
+
+```swift
+                #if canImport(CoreBluetooth)
+                infoLine("BLE", editor.bleState.summary)
+                infoLine("Peripheral", editor.blePeripheralName ?? "—")
+                infoLine("Signal", editor.bleRSSI.map { "\($0) dBm" } ?? "—")
+                infoLine("Max write", editor.bleMTU.map { "\($0) B" } ?? "—")
+                #endif
+```
+
+- [ ] **Step 6: Build and test**
+
+```bash
+swift build --target SMKConfigurator --build-system native && swift test --build-system native
+```
+
+Expected: builds, all tests pass.
+
+- [ ] **Step 7: Verify in the running app**
+
+```bash
+bash Scripts/run.sh
+```
+
+Click the DEV rail tab with the board powered. Expected: within a few seconds the BLE card goes to "Ready", the inspector shows the peripheral name and a dBm figure that changes as you move the board, and closing the DEV tab stops the updates.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add Sources/SMKConfigurator/Device/DeviceMonitor.swift Sources/SMKConfigurator/Views/DeviceModeViews.swift
+git commit -m "Monitor the device live while the DEV pane is open"
+```
+
+---
+
+### Task 12: Hardware acceptance and documentation
+
+**Repo:** both
+
+**Files:**
+- Modify: `~/esp/smk_configurator/CLAUDE.md` ("Firmware coupling" section)
+- Create: `~/esp/SMK/docs/superpowers/specs/2026-08-15-ble-custom-gatt-upload-pointer.md`
+
+**Interfaces:**
+- Consumes: everything above.
+- Produces: nothing code-facing.
+
+- [ ] **Step 1: Run the full round trip**
+
+With the board flashed and paired: open the app, edit one key to something unmistakable (e.g. set the top-left key to `key:z`), go to the DEV pane, confirm "Ready", press Send to Device, and watch the chunk counter run.
+
+Expected: upload completes with no error, `Last sent just now` appears.
+
+- [ ] **Step 2: Verify it took effect and persisted**
+
+Type on the keyboard: the remapped key produces the new output. Then power-cycle the board, reconnect, and type again.
+
+Expected: the remap survives the power cycle (it is in NVS). If it does not, the COMMIT path failed silently — check the serial console for NVS errors before touching the app.
+
+- [ ] **Step 3: Record the new firmware coupling**
+
+Add to the "Firmware coupling" list in `~/esp/smk_configurator/CLAUDE.md`:
+
+```markdown
+- `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` — **generated**, do not edit. The custom GATT upload service's UUIDs, produced together with the firmware's `Sources/components/smk_ble_uuids.h` by `~/esp/SMK/generate_ble_uuids.sh` from `~/esp/SMK/ble_upload_uuids.json`. Regenerate in both repos and commit both. `BLEUploadUUIDsTests` pins the values.
+```
+
+- [ ] **Step 4: Leave a pointer in the firmware repo**
+
+Create `~/esp/SMK/docs/superpowers/specs/2026-08-15-ble-custom-gatt-upload-pointer.md`:
+
+```markdown
+# BLE Custom GATT Upload Service — see the configurator repo
+
+The design and implementation plan for the ESP32-C6 custom GATT upload
+service (which replaced the HID Report ID 2 channel, because macOS hides the
+HID service from Core Bluetooth apps) live in the sibling configurator repo:
+
+- `~/esp/smk_configurator/docs/superpowers/specs/2026-08-15-ble-custom-gatt-upload-design.md`
+- `~/esp/smk_configurator/docs/superpowers/plans/2026-08-15-ble-custom-gatt-upload-plan.md`
+
+Firmware pieces this repo owns: `Sources/components/ble_helper.c`
+(`smk_upload_svcs`, `smk_upload_access_cb`, advertising layout),
+`ble_upload_uuids.json` + `generate_ble_uuids.sh`, and
+`CONFIG_BT_NIMBLE_MAX_BONDS`.
+```
+
+- [ ] **Step 5: Commit both repos**
+
+```bash
+cd ~/esp/smk_configurator && git add CLAUDE.md && git commit -m "Record the generated BLE UUID coupling"
+cd ~/esp/SMK && git add docs/superpowers/specs/2026-08-15-ble-custom-gatt-upload-pointer.md
+git commit -m "Point at the configurator repo's BLE GATT upload design"
+```
+
+---
+
+## Phase 2 (not in this plan)
+
+Encryption on the upload characteristic (`BLE_GATT_CHR_F_WRITE_ENC` plus
+bonded-peripheral handling in `BLECentral`) is spec §11 and gets its own
+plan once phase 1 is proven on hardware.

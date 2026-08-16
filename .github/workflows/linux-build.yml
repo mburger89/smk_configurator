@@ -14,7 +14,10 @@ jobs:
       - name: Install Swift
         uses: SwiftyLab/setup-swift@latest
         with:
-          swift-version: "6.1.0"
+          # Must be >= Package.swift's `// swift-tools-version: 6.2` —
+          # an older toolchain can't parse the manifest and the job dies
+          # before it compiles anything.
+          swift-version: "6.2.0"
 
       - name: Swift version
         run: swift --version

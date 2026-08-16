@@ -28,8 +28,15 @@ struct Chrome {
     var chipBackground: Color { scheme == .dark ? .hex("#323234") : .hex("#F2F2F4") }
     var chipBorder: Color { scheme == .dark ? .hex("#48484A") : .hex("#E0E0E2") }
 
-    var railActiveBackground: Color { accent }
-    var railInactiveBackground: Color { pillBackground }
+    /// Faux-glass tile fill for icon-only buttons (`ToolbarIconButton`) --
+    /// translucent rather than opaque like `pillBackground`, since a real
+    /// backdrop-blur material isn't available (see `ToolbarIconButton`'s doc
+    /// comment). Light mode needs a higher alpha than dark to stay visible
+    /// against `bar`'s near-white background.
+    var glassFill: Color { pillBackground.opacity(scheme == .dark ? 0.9 : 0.97) }
+    /// Same idea as `glassFill` but accent-tinted, for the icon rail's
+    /// active tab -- reads as "selected" without going fully opaque.
+    var glassActiveFill: Color { accent.opacity(scheme == .dark ? 0.8 : 0.75) }
 
     var toggleOn: Color { scheme == .dark ? .hex("#30D158") : .hex("#34C759") }
     var toggleOff: Color { scheme == .dark ? .hex("#48484A") : .hex("#E2E2E5") }
@@ -77,14 +84,36 @@ struct SectionHeader: View {
 /// re-skinned per-platform.
 struct TapTarget<Content: View>: View {
     var background: Color
+    /// Set this to half the frame's side length for a circular target --
+    /// there's deliberately no `Circle` branch here, see `body`.
     var cornerRadius: Double
+    /// Hairline stroke traced around the shape -- used by the icon-only
+    /// glass tiles (`ToolbarIconButton`) to read as a distinct button
+    /// against a translucent background. `.clear` (the default) everywhere
+    /// else, rather than an optional, so `body` stays branch-free.
+    var border: Color = .clear
     var action: () -> Void
     @ViewBuilder var content: () -> Content
 
+    /// The shape and the label must be the `ZStack`'s only two *direct*
+    /// children, and neither may come from an `if`/`else` branch.
+    /// SwiftCrossUI's `ZStack` overlays the children of its immediate
+    /// `TupleView` (it logs "ZStack will not function correctly with
+    /// non-TupleView content" otherwise); views grouped by a conditional
+    /// land in a nested container that stacks them *vertically* instead.
+    /// That's what turned the titlebar's icon buttons into a column of
+    /// fill-circle / glyph / border-ring, and squashed the icon rail's
+    /// 40x40 tiles to 40x30. So: no `if` in here, the border is always
+    /// stroked (`.clear` when unwanted), and a circle is expressed as a
+    /// `cornerRadius` of half the side rather than as a `Circle` branch.
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(background)
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(border, style: StrokeStyle(width: 1))
+                }
             content()
         }
         .onTapGesture(perform: action)
@@ -110,9 +139,51 @@ struct ToolbarPill: View {
     }
 }
 
-/// One of the four icon-rail buttons (`KEY`/`DSN`/`THM`/`DEV`).
+/// An icon-only glass tile in the titlebar toolbar group (`New`, `Open`,
+/// `Save`, `Save As`, `Import`, `Export`) with a `.help()` tooltip carrying
+/// the action name. Distinct from `ToolbarPill` (used elsewhere for
+/// dynamic text pills, e.g. DSN's `+ Row`/width presets) since those have
+/// no natural icon and must keep showing text. A circular `TapTarget`
+/// (`chrome.glassFill` translucent tint, `chrome.chipBorder` hairline
+/// stroke) -- SwiftCrossUI has no backdrop-blur/Material API, so a plain
+/// translucent fill is the closest approximation to a real glass material.
+struct ToolbarIconButton: View {
+    var icon: AppIcon
+    var tooltip: String
+    var action: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+
+    var body: some View {
+        // cornerRadius is half of the 30x30 frame below, i.e. a circle --
+        // see `TapTarget.body` for why this isn't a `Circle`.
+        TapTarget(
+            background: chrome.glassFill,
+            cornerRadius: 15,
+            border: chrome.chipBorder,
+            action: action
+        ) {
+            if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
+                Image(url).resizable().frame(width: 15, height: 15)
+            } else {
+                Text(icon.fallbackLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(chrome.textPrimary)
+            }
+        }
+        .frame(width: 30, height: 30)
+        .help(tooltip)
+    }
+}
+
+/// One of the four icon-rail buttons (KEY/DSN/THM/DEV) -- a platform-native
+/// icon with a `.help()` tooltip carrying the full name. Rounded-rect
+/// (unlike the titlebar's circular `ToolbarIconButton`), but keeps the
+/// same translucent glass tint colors.
 struct RailButton: View {
-    var label: String
+    var icon: AppIcon
+    var tooltip: String
     var isActive: Bool
     var action: () -> Void
 
@@ -121,15 +192,29 @@ struct RailButton: View {
 
     var body: some View {
         TapTarget(
-            background: isActive ? chrome.railActiveBackground : chrome.railInactiveBackground,
+            background: isActive ? chrome.glassActiveFill : chrome.glassFill,
             cornerRadius: 9,
             action: action
         ) {
-            Text(label)
+            iconImage
+        }
+        .frame(width: 40, height: 40)
+        .help(tooltip)
+    }
+
+    /// Active tabs sit on the accent-tinted glass fill (`chrome.glassActiveFill`)
+    /// -- this always uses the white-tinted ("dark" folder) icon variant
+    /// when active, regardless of the app's actual color scheme, since it
+    /// needs to read against that blue tint either way.
+    @ViewBuilder
+    private var iconImage: some View {
+        if let url = IconLoader.url(for: icon, colorScheme: isActive ? .dark : colorScheme) {
+            Image(url).resizable().frame(width: 22, height: 22)
+        } else {
+            Text(icon.fallbackLabel)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(isActive ? .white : chrome.textSecondary)
         }
-        .frame(width: 40, height: 40)
     }
 }
 

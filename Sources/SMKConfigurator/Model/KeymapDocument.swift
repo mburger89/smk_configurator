@@ -34,6 +34,50 @@ struct KeymapDocument: Codable, Equatable {
             (0..<design.colCount).map { _ in "trans" }
         }
     }
+
+    /// Rewrites every `mo:`/`tg:` cell in every layer so it still names the
+    /// same physical layer after the layer at `index` has been removed from
+    /// `layers`. Without this, deleting a layer silently breaks every
+    /// reference above it: the firmware's `getAction` only walks
+    /// `0..<keymaps.count` and `isLayerActive` only reports layers it has,
+    /// so an off-by-one `mo:`/`tg:` becomes a permanently dead key.
+    ///
+    /// - references *below* `index` are untouched,
+    /// - references *above* it shift down by one,
+    /// - references *to* it become `none` -- the layer they named no longer
+    ///   exists, and `none` says that honestly rather than leaving a token
+    ///   that can never fire.
+    ///
+    /// Cells that aren't layer references (including `.raw` tokens this app
+    /// doesn't understand) are left byte-for-byte alone, preserving the
+    /// lossless-save guarantee above.
+    mutating func renumberLayerReferences(afterRemoving index: Int) {
+        for layer in layers.indices {
+            for row in layers[layer].indices {
+                for col in layers[layer][row].indices {
+                    guard let rewritten = Self.renumbering(
+                        layers[layer][row][col],
+                        afterRemoving: index
+                    ) else { continue }
+                    layers[layer][row][col] = rewritten
+                }
+            }
+        }
+    }
+
+    /// The replacement for one cell, or `nil` when it needs no change.
+    private static func renumbering(_ cell: String, afterRemoving index: Int) -> String? {
+        switch ActionToken.parse(cell) {
+        case .momentaryLayer(let n) where n > index:
+            return ActionToken.momentaryLayer(n - 1).canonicalString
+        case .toggleLayer(let n) where n > index:
+            return ActionToken.toggleLayer(n - 1).canonicalString
+        case .momentaryLayer(let n), .toggleLayer(let n):
+            return n == index ? ActionToken.none.canonicalString : nil
+        default:
+            return nil
+        }
+    }
 }
 
 extension Array where Element == [String] {

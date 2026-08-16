@@ -17,6 +17,8 @@ struct ContentView: View {
     @Environment(\.chooseFile) var chooseFile
     @Environment(\.chooseFileSaveDestination) var chooseFileSaveDestination
     @Environment(\.presentAlert) var presentAlert
+    @Environment(\.colorScheme) private var colorScheme
+    private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     @State var designDraft: KeyboardDesign = .blank()
     /// `nil` while the draft is an unsaved "+ New Design…"; the design
@@ -28,9 +30,30 @@ struct ContentView: View {
     @State var themeDraft: KeyboardTheme = .blank()
     @State var editingThemeOriginal: KeyboardTheme? = nil
 
+    /// Everything `body` stacks above and below the four-pane row: titlebar
+    /// (50) + the top divider and the one above the status bar (~3) +
+    /// status bar (26).
+    private static let chromeHeight: Double = 79
+
+    /// The window floor. KEY mode's Main content column is the tallest of
+    /// the four, so it sets the bound: chrome plus what that column needs
+    /// with the board at `boardMinHeight` and the palette drawer squeezed to
+    /// its own floor. Kept deliberately under the ~730pt of usable height a
+    /// 1366x768 laptop has -- a floor taller than the screen leaves the
+    /// status bar unreachable with no way to shrink the window. See
+    /// `PaletteDrawerView.maxHeight` for why the drawer can shrink again.
+    static let minWindowHeight: Double = chromeHeight + KeyMainContentView.minContentHeight
+
+    /// Launch height: enough for the palette to show every section without
+    /// scrolling. Larger than `minWindowHeight` on purpose -- the OS clamps
+    /// it down to whatever the display can fit, and the window stays
+    /// resizable from there.
+    static let idealWindowHeight: Double = chromeHeight + KeyMainContentView.idealContentHeight
+
     var body: some View {
         VStack(spacing: 0) {
             TitlebarView()
+            chrome.divider.frame(height: 2)
             HStack(spacing: 0) {
                 IconRailView(mode: railModeBinding)
                 Divider()
@@ -43,7 +66,7 @@ struct ContentView: View {
             Divider()
             StatusBarView()
         }
-        .frame(minWidth: 1440, minHeight: 900)
+        .frame(minWidth: 1440, minHeight: Self.minWindowHeight)
         .onAppear {
             designDraft = editor.activeDesign
             editingDesignOriginal = editor.activeDesign

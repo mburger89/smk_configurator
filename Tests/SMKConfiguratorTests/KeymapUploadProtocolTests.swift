@@ -96,4 +96,23 @@ struct KeymapUploaderTests {
             try await KeymapUploader.upload(json: json, using: transport)
         }
     }
+
+    @Test("reports begin, one chunk per packet, then commit")
+    @MainActor
+    func progressSequence() async throws {
+        // 60 bytes of payload -> 3 chunks at 28 bytes each.
+        let json = #"{"layers":["# + String(repeating: "a", count: 47) + "]}"
+        let transport = MockTransport(responses: [])
+        var phases: [KeymapUploader.UploadPhase] = []
+
+        try await KeymapUploader.upload(json: json, using: transport) { phases.append($0) }
+
+        let chunkCount = transport.sent.filter { $0[0] == 0x02 }.count
+        #expect(phases.first == .begin)
+        #expect(phases.last == .commit)
+        #expect(phases.count == chunkCount + 2)
+        for (i, phase) in phases.dropFirst().dropLast().enumerated() {
+            #expect(phase == .chunk(index: i, of: chunkCount))
+        }
+    }
 }

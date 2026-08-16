@@ -22,11 +22,16 @@ struct KeyCapView: View {
     var interactive: Bool = true
 
     static let unit: Double = 46
-    static let spacing: Double = 4
+    /// Column gap -- also used directly as `KeyboardBoardView`'s row
+    /// `HStack(spacing:)` so the two can't drift apart. Needed here to
+    /// compute a multi-unit key's width so it spans its columns exactly
+    /// (e.g. a 2.0-unit key spans two unit-width columns plus the one gap
+    /// between them).
+    static let spacing: Int = 10
 
     var body: some View {
         let token = editor.action(row: row, col: col)
-        let width = widthUnits * Self.unit + (widthUnits - 1) * Self.spacing
+        let width = widthUnits * Self.unit + (widthUnits - 1) * Double(Self.spacing)
         let activeTheme = theme ?? editor.activeTheme
         let isArmed = interactive && editor.selectedToken == token && token != .none
         let isInspected = interactive && editor.selectedKeyPosition == KeyPosition(row: row, col: col)

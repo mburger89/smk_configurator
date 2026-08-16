@@ -1,8 +1,9 @@
 import Foundation
 
 /// 32-byte packet framing for the BEGIN/CHUNK/COMMIT/ERASE keymap-upload
-/// protocol shared with the firmware (Sources/componets/
-/// smk_keymap_protocol.c in the SMK firmware repo). See
+/// protocol shared with the firmware (Sources/SMKCore/KeymapProtocol.swift
+/// in the SMK firmware repo, ported from the former Sources/components/
+/// smk_keymap_protocol.c). See
 /// ~/esp/SMK/docs/superpowers/specs/2026-07-31-runtime-keymap-updates-design.md.
 enum KeymapUploadProtocol {
     static let packetLength = 32

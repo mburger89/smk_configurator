@@ -11,11 +11,11 @@ struct TitlebarView: View {
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        HStack(spacing: 4) {
-            ToolbarPill(label: "New") {
+        HStack(spacing: 10) {
+            ToolbarIconButton(icon: .newDoc, tooltip: "New") {
                 editor.newDocument()
             }
-            ToolbarPill(label: "Open") {
+            ToolbarIconButton(icon: .open, tooltip: "Open") {
                 Task {
                     guard
                         let url = await chooseFile(
@@ -26,7 +26,7 @@ struct TitlebarView: View {
                     editor.load(from: url)
                 }
             }
-            ToolbarPill(label: "Save") {
+            ToolbarIconButton(icon: .save, tooltip: "Save") {
                 Task {
                     if let url = editor.fileURL {
                         editor.save(to: url)
@@ -35,10 +35,10 @@ struct TitlebarView: View {
                     }
                 }
             }
-            ToolbarPill(label: "Save As") {
+            ToolbarIconButton(icon: .saveAs, tooltip: "Save As") {
                 Task { await saveAs() }
             }
-            ToolbarPill(label: "Import") {
+            ToolbarIconButton(icon: .importFile, tooltip: "Import") {
                 Task {
                     guard
                         let url = await chooseFile(
@@ -49,7 +49,7 @@ struct TitlebarView: View {
                     editor.load(from: url)
                 }
             }
-            ToolbarPill(label: "Export") {
+            ToolbarIconButton(icon: .exportFile, tooltip: "Export") {
                 Task {
                     guard
                         let url = await chooseFileSaveDestination(
@@ -68,8 +68,8 @@ struct TitlebarView: View {
                 .toggleStyle(.switch)
                 .fixedSize()
         }
-        .padding(EdgeInsets(top: 0, bottom: 0, leading: 12, trailing: 12))
-        .frame(height: 44)
+        .padding(10)
+        .frame(height: 50)
         .background(chrome.bar)
     }
 

@@ -4,3 +4,13 @@ format_version = 2
 identifier = 'dev.maxburger.SMKConfigurator'
 product = 'SMKConfigurator'
 version = '0.1.0'
+
+# macOS terminates any process that touches Core Bluetooth without a usage
+# description in its Info.plist (and reports CBManagerState.unauthorized
+# beforehand), so BLE upload does not work at all from a bundle without
+# this. There is no checked-in Info.plist -- swift-bundler generates it, and
+# the `plist` table is its hook for merging extra keys in (the older
+# `extra_plist_entries` spelling is only accepted in pre-format_version-2
+# configs and is rejected outright by swift-bundler 3.0).
+[apps.SMKConfigurator.plist]
+NSBluetoothAlwaysUsageDescription = 'SMK Configurator uses Bluetooth to find your SMK keyboard and upload keymaps to it.'
