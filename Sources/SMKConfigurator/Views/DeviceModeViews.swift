@@ -105,6 +105,66 @@ struct DeviceListColumnView: View {
     }
 }
 
+/// Which transport the DEV pane should speak for. `EditorState.sendToDevice()`
+/// tries USB first and falls back to BLE, so the pane's headline and the
+/// inspector's MCU row have to answer for both rather than each hard-coding
+/// USB -- the headline previously read "Not connected · RP2040" while a BLE
+/// upload was succeeding over the very link the card beside it called Ready.
+private enum DeviceTransportStatus {
+    case usb
+    case bleReady
+    /// Linked, but the upload service is missing -- a firmware/app UUID
+    /// mismatch, kept distinct from "not connected" for the same reason the
+    /// transport card distinguishes them.
+    case bleServiceMissing
+    case bleBusy(String)
+    case bleFailed(String)
+    case disconnected
+
+    @MainActor
+    static func current(_ editor: EditorState) -> DeviceTransportStatus {
+        if editor.usbConnected { return .usb }
+        #if canImport(CoreBluetooth)
+        switch editor.bleState {
+        case .ready: return .bleReady
+        case .connected: return .bleServiceMissing
+        case .searching, .connecting: return .bleBusy(editor.bleState.summary)
+        case .failed: return .bleFailed(editor.bleState.summary)
+        case .idle: return .disconnected
+        }
+        #else
+        return .disconnected
+        #endif
+    }
+
+    var headline: String {
+        switch self {
+        case .usb: "Connected via USB"
+        case .bleReady: "Connected via BLE"
+        case .bleServiceMissing: "Linked — upload service missing"
+        case .bleBusy(let summary): summary
+        case .bleFailed(let summary): summary
+        case .disconnected: "Not connected"
+        }
+    }
+
+    var mcu: String {
+        switch self {
+        case .usb: "RP2040"
+        case .bleReady, .bleServiceMissing: "ESP32-C6"
+        case .bleBusy, .bleFailed, .disconnected: "—"
+        }
+    }
+
+    func dotColor(_ chrome: Chrome) -> Color {
+        switch self {
+        case .usb, .bleReady: chrome.connectedDot
+        case .bleServiceMissing, .bleFailed: chrome.dangerText
+        case .bleBusy, .disconnected: chrome.disconnectedDot
+        }
+    }
+}
+
 /// DEV rail mode's Main content: connection status, board summary, and the
 /// Send to Device action.
 struct DeviceMainContentView: View {
@@ -115,11 +175,12 @@ struct DeviceMainContentView: View {
     var body: some View {
         VStack(spacing: 10) {
             Spacer(minLength: 0)
-            StatusDot(color: editor.usbConnected ? chrome.connectedDot : chrome.disconnectedDot, diameter: 14)
-            Text(editor.usbConnected ? "Connected via USB" : "Not connected")
+            let status = DeviceTransportStatus.current(editor)
+            StatusDot(color: status.dotColor(chrome), diameter: 14)
+            Text(status.headline)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(chrome.textPrimary)
-            Text("\(editor.activeDesign.name) · RP2040 · fw \(firmwareVersionLabel)")
+            Text("\(editor.activeDesign.name) · \(status.mcu) · fw \(firmwareVersionLabel)")
                 .font(.system(size: 13))
                 .foregroundColor(chrome.textSecondary)
             InspectorButton(
@@ -194,7 +255,7 @@ struct DeviceInspectorView: View {
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 infoLine("Board", editor.activeDesign.name)
-                infoLine("MCU", editor.usbConnected ? "RP2040" : "—")
+                infoLine("MCU", DeviceTransportStatus.current(editor).mcu)
                 infoLine("Matrix", "\(editor.activeDesign.rowCount)×\(editor.activeDesign.colCount)")
                 infoLine("Firmware", firmwareVersionLabel)
                 infoLine("Layers on device", "\(editor.document.layers.count)")
