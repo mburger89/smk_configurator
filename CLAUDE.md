@@ -52,6 +52,7 @@ This app is written against a specific version of `~/esp/SMK` and several places
 - `ActionToken`'s cases/raw strings — must match `KeyAction`/`KeyCode`/`Modifier.fromCString` in the firmware's `LayerEngine.swift`.
 - `EditorState.maxLayerCount` — the firmware's layer ceiling (16), not an editor preference: `LayerEngine`'s `toggledLayers`/`momentaryCounts` are sized `count: 16` and `isLayerActive` rejects anything `>= 16`.
 - `defaultKeymapURL` (`EditorState.swift`) points at `~/esp/SMK/keymap.json` — the reference file this app is pointed at by default.
+- `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` — **generated**, do not edit. The custom GATT upload service's UUIDs, produced together with the firmware's `Sources/components/smk_ble_uuids.h` by `~/esp/SMK/generate_ble_uuids.sh` from `~/esp/SMK/ble_upload_uuids.json`. Regenerate in both repos and commit both. `BLEUploadUUIDsTests` pins the values.
 
 When editing model/device code, check whether the change needs a matching change on the firmware side (or vice versa) before assuming it's editor-only.
 
