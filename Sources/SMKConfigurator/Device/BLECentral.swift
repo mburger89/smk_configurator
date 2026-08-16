@@ -59,20 +59,12 @@ final class BLECentral: NSObject {
 
     /// Resolves only once notifications are live -- a packet written before
     /// the subscription is active gets a response nobody is listening for.
+    ///
+    /// One continuation, one 10s timeout, covering both discovery paths
+    /// below -- arming a second timeout per path would let the continuation
+    /// be resumed twice (a trap) if both fired.
     func connect() async throws {
         if state.isReady { return }
-        // Fast path: a bonded keyboard in use is connected to the system and
-        // NOT advertising, so a scan would miss it exactly when it is
-        // working. This only finds it because we match a custom service;
-        // Core Bluetooth would never report a HID match here.
-        if let known = central.retrieveConnectedPeripherals(
-            withServices: [BLEUploadUUIDs.service]
-        ).first {
-            try await connect(to: known)
-            return
-        }
-        state = .searching
-        central.scanForPeripherals(withServices: [BLEUploadUUIDs.service])
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             self.readyContinuation = c
             Task { @MainActor [weak self] in
@@ -83,16 +75,21 @@ final class BLECentral: NSObject {
                 self.state = .idle
                 pending.resume(throwing: DeviceTransportError.noDeviceFound)
             }
-        }
-    }
-
-    private func connect(to peripheral: CBPeripheral) async throws {
-        self.peripheral = peripheral
-        peripheral.delegate = self
-        state = .connecting
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-            self.readyContinuation = c
-            central.connect(peripheral)
+            // Fast path: a bonded keyboard in use is connected to the system
+            // and NOT advertising, so a scan would miss it exactly when it
+            // is working. This only finds it because we match a custom
+            // service; Core Bluetooth would never report a HID match here.
+            if let known = self.central.retrieveConnectedPeripherals(
+                withServices: [BLEUploadUUIDs.service]
+            ).first {
+                self.peripheral = known
+                known.delegate = self
+                self.state = .connecting
+                self.central.connect(known)
+            } else {
+                self.state = .searching
+                self.central.scanForPeripherals(withServices: [BLEUploadUUIDs.service])
+            }
         }
     }
 
