@@ -95,6 +95,15 @@ class EditorState {
     /// Whether a USB (RP2040) transport was reachable last time it was
     /// checked -- see `refreshDeviceStatus()`.
     var usbConnected: Bool = false
+    #if canImport(CoreBluetooth)
+    var bleState: BLEConnectionState = .idle
+    var bleRSSI: Int?
+    var bleMTU: Int?
+    var blePeripheralName: String?
+    #endif
+    /// Non-nil only while an upload is in flight; drives the DEV pane's
+    /// progress line. ~146 round trips for a 4 KB keymap.
+    var uploadProgress: KeymapUploader.UploadPhase?
     var lastSentAt: Date? = nil
 
     /// Persisted across launches so the drawer stays the size you left it.
@@ -193,20 +202,25 @@ class EditorState {
     func sendToDevice() {
         guard !isSendingToDevice else { return }
         isSendingToDevice = true
-        Task {
+        Task { [self] in
             defer {
                 isSendingToDevice = false
+                uploadProgress = nil
                 refreshDeviceStatus()
             }
             do {
                 let json = try encodeLayersJSON(document.layers)
                 if let usb = try? USBRawHIDTransport() {
-                    try await KeymapUploader.upload(json: json, using: usb)
+                    try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
+                        self?.uploadProgress = phase
+                    }
                 } else {
                     #if canImport(CoreBluetooth)
                     let ble = BLETransport()
                     try await ble.connect()
-                    try await KeymapUploader.upload(json: json, using: ble)
+                    try await KeymapUploader.upload(json: json, using: ble) { [weak self] phase in
+                        self?.uploadProgress = phase
+                    }
                     #else
                     throw DeviceTransportError.noDeviceFound
                     #endif
@@ -223,6 +237,23 @@ class EditorState {
     /// dot without holding a transport open across the whole app lifetime.
     func refreshDeviceStatus() {
         usbConnected = (try? USBRawHIDTransport()) != nil
+        #if canImport(CoreBluetooth)
+        bleState = BLECentral.shared.state
+        bleRSSI = BLECentral.shared.rssi
+        bleMTU = BLECentral.shared.mtu
+        blePeripheralName = BLECentral.shared.peripheralName
+        #endif
+    }
+
+    /// Non-destructive answer to "is the board reachable?" -- connects,
+    /// discovers, and reports, without uploading anything.
+    func testBLEConnection() {
+        #if canImport(CoreBluetooth)
+        Task {
+            try? await BLECentral.shared.connect()
+            refreshDeviceStatus()
+        }
+        #endif
     }
 
     private func encodeLayersJSON(_ layers: [[[String]]]) throws -> String {
