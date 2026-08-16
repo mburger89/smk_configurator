@@ -1,9 +1,10 @@
 import Foundation
 import SwiftCrossUI
 
-/// DEV rail mode's List column: one card per transport. BLE has no live
-/// connection tracking yet (see `EditorState.refreshDeviceStatus`, which
-/// only probes USB), so it's always shown as not connected.
+/// DEV rail mode's List column: one card per transport. USB's card reflects
+/// `EditorState.refreshDeviceStatus`'s presence probe; BLE's reflects
+/// `DeviceMonitor`'s live session state, kept current while this pane is on
+/// screen.
 struct DeviceListColumnView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.colorScheme) private var colorScheme
@@ -15,7 +16,13 @@ struct DeviceListColumnView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionHeader(title: "Transports")
                     transportCard(name: "USB (RP2040)", isConnected: editor.usbConnected)
-                    transportCard(name: "BLE (ESP32-C6)", isConnected: false)
+                    #if canImport(CoreBluetooth)
+                    transportCard(
+                        name: "BLE (ESP32-C6)",
+                        isConnected: editor.bleState.isReady,
+                        detail: editor.bleState.summary
+                    )
+                    #endif
                 }
             }
             .padding(EdgeInsets(top: 12, bottom: 12, leading: 10, trailing: 10))
@@ -25,7 +32,7 @@ struct DeviceListColumnView: View {
         .background(chrome.column)
     }
 
-    private func transportCard(name: String, isConnected: Bool) -> some View {
+    private func transportCard(name: String, isConnected: Bool, detail: String? = nil) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8)
                 .fill(chrome.surface)
@@ -43,6 +50,11 @@ struct DeviceListColumnView: View {
                 Text(isConnected ? "Connected" : "Not connected")
                     .font(.system(size: 11))
                     .foregroundColor(chrome.textTertiary)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundColor(chrome.textTertiary)
+                }
             }
             .padding(10)
         }
@@ -74,6 +86,17 @@ struct DeviceMainContentView: View {
                 editor.sendToDevice()
             }
             .frame(width: 180)
+            #if canImport(CoreBluetooth)
+            InspectorButton(label: "Test Connection", isEnabled: !editor.isSendingToDevice) {
+                editor.testBLEConnection()
+            }
+            .frame(width: 180)
+            #endif
+            if let phase = editor.uploadProgress {
+                Text(progressLabel(phase))
+                    .font(.system(size: 12))
+                    .foregroundColor(chrome.textSecondary)
+            }
             if let lastSentAt = editor.lastSentAt {
                 Text("Last sent \(relativeTimeString(from: lastSentAt))")
                     .font(.system(size: 12))
@@ -86,6 +109,18 @@ struct DeviceMainContentView: View {
         .background(chrome.canvas)
         .onAppear {
             editor.refreshDeviceStatus()
+            DeviceMonitor.shared.start(editor: editor)
+        }
+        .onDisappear {
+            DeviceMonitor.shared.stop()
+        }
+    }
+
+    private func progressLabel(_ phase: KeymapUploader.UploadPhase) -> String {
+        switch phase {
+        case .begin: return "Starting upload…"
+        case .chunk(let index, let total): return "Sending chunk \(index + 1) of \(total)…"
+        case .commit: return "Committing…"
         }
     }
 
@@ -119,6 +154,12 @@ struct DeviceInspectorView: View {
                 infoLine("Matrix", "\(editor.activeDesign.rowCount)×\(editor.activeDesign.colCount)")
                 infoLine("Firmware", firmwareVersionLabel)
                 infoLine("Layers on device", "\(editor.document.layers.count)")
+                #if canImport(CoreBluetooth)
+                infoLine("BLE", editor.bleState.summary)
+                infoLine("Peripheral", editor.blePeripheralName ?? "—")
+                infoLine("Signal", editor.bleRSSI.map { "\($0) dBm" } ?? "—")
+                infoLine("Max write", editor.bleMTU.map { "\($0) B" } ?? "—")
+                #endif
             }
             Spacer(minLength: 0)
         }
