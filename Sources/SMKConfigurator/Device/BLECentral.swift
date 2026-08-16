@@ -51,6 +51,13 @@ final class BLECentral: NSObject {
     private var responseCharacteristic: CBCharacteristic?
     private var readyContinuation: CheckedContinuation<Void, Error>?
     private var pendingContinuation: CheckedContinuation<[UInt8], Error>?
+    /// The single in-flight connection attempt, if any. A second caller
+    /// arriving while one attempt is already running (e.g. a periodic
+    /// monitor overlapping a user-initiated connect) awaits this same task
+    /// instead of opening a second continuation over `readyContinuation` --
+    /// which would strand the first caller forever and let the first
+    /// attempt's timeout resolve the second attempt instead.
+    private var connectTask: Task<Void, Error>?
 
     override init() {
         super.init()
@@ -62,40 +69,59 @@ final class BLECentral: NSObject {
     ///
     /// One continuation, one 10s timeout, covering both discovery paths
     /// below -- arming a second timeout per path would let the continuation
-    /// be resumed twice (a trap) if both fired.
+    /// be resumed twice (a trap) if both fired. Concurrent callers coalesce
+    /// onto the single in-flight `connectTask` rather than each opening
+    /// their own continuation: every caller means "ensure we're connected",
+    /// so they can all share one attempt and one outcome.
     func connect() async throws {
         if state.isReady { return }
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-            self.readyContinuation = c
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                guard let self, let pending = self.readyContinuation else { return }
-                self.readyContinuation = nil
-                self.central.stopScan()
-                self.state = .idle
-                pending.resume(throwing: DeviceTransportError.noDeviceFound)
-            }
-            // Fast path: a bonded keyboard in use is connected to the system
-            // and NOT advertising, so a scan would miss it exactly when it
-            // is working. This only finds it because we match a custom
-            // service; Core Bluetooth would never report a HID match here.
-            if let known = self.central.retrieveConnectedPeripherals(
-                withServices: [BLEUploadUUIDs.service]
-            ).first {
-                self.peripheral = known
-                known.delegate = self
-                self.state = .connecting
-                self.central.connect(known)
-            } else {
-                self.state = .searching
-                self.central.scanForPeripherals(withServices: [BLEUploadUUIDs.service])
+        if let connectTask {
+            try await connectTask.value
+            return
+        }
+        let task = Task<Void, Error> { [self] in
+            defer { self.connectTask = nil }
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                self.readyContinuation = c
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                    guard let self, let pending = self.readyContinuation else { return }
+                    self.readyContinuation = nil
+                    self.central.stopScan()
+                    self.state = .idle
+                    pending.resume(throwing: DeviceTransportError.noDeviceFound)
+                }
+                // Fast path: a bonded keyboard in use is connected to the
+                // system and NOT advertising, so a scan would miss it
+                // exactly when it is working. This only finds it because we
+                // match a custom service; Core Bluetooth would never report
+                // a HID match here.
+                if let known = self.central.retrieveConnectedPeripherals(
+                    withServices: [BLEUploadUUIDs.service]
+                ).first {
+                    self.peripheral = known
+                    known.delegate = self
+                    self.state = .connecting
+                    self.central.connect(known)
+                } else {
+                    self.state = .searching
+                    self.central.scanForPeripherals(withServices: [BLEUploadUUIDs.service])
+                }
             }
         }
+        connectTask = task
+        try await task.value
     }
 
     func send(_ packet: [UInt8]) async throws -> [UInt8] {
         guard let peripheral, let packetCharacteristic else {
             throw DeviceTransportError.noDeviceFound
+        }
+        // Unlike connect(), overlapping sends carry different packets and
+        // cannot share an outcome -- coalescing would silently deliver one
+        // call's response to the other. Surface it as a caller bug instead.
+        guard pendingContinuation == nil else {
+            throw DeviceTransportError.transportFailure("a packet is already in flight")
         }
         return try await withCheckedThrowingContinuation { c in
             self.pendingContinuation = c
@@ -152,6 +178,7 @@ extension BLECentral: @preconcurrency CBCentralManagerDelegate {
         responseCharacteristic = nil
         rssi = nil
         mtu = nil
+        peripheralName = nil
         state = .idle
         pendingContinuation?.resume(throwing:
             DeviceTransportError.transportFailure("disconnected mid-upload"))
