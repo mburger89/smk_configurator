@@ -65,6 +65,20 @@ struct KeyboardDesign: Codable, Equatable, Identifiable {
         return KeyboardDesign(name: "gateron_lp_kbd", matrix: matrix, grid: grid)
     }()
 
+    /// The SMK test board: a minimal 3x3 macropad on an ESP32-C6 with EC11 encoder.
+    /// Matches the firmware's board config and the PCB generator's PIN table.
+    static let smkTestBoard: KeyboardDesign = {
+        let matrix = KeymapDocument.Matrix(
+            rows: [1, 2, 21],
+            cols: [22, 23, 16],
+            colsAreDriven: 1
+        )
+        let grid: [[Cell]] = (0..<matrix.rows.count).map { _ in
+            (0..<matrix.cols.count).map { _ in Cell() }
+        }
+        return KeyboardDesign(name: "smk_test_board", matrix: matrix, grid: grid)
+    }()
+
     /// Fallback for a `keymap.json` whose matrix doesn't match any known
     /// design: a plain uniform 1U grid at the file's own dimensions, so it
     /// still renders instead of failing to load.
