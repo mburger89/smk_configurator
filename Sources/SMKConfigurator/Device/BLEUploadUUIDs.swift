@@ -6,8 +6,8 @@ import CoreBluetooth
 
 /// UUIDs of the firmware's custom keymap-upload GATT service.
 enum BLEUploadUUIDs {
-    static let service = CBUUID(string: "DA227673-007D-4BE6-A602-BC27421945FC")
-    static let packet = CBUUID(string: "3A877283-CAFD-4716-8671-148B32475E97")
-    static let response = CBUUID(string: "C975356B-1B48-4871-A8A6-FB1155381A8F")
+    static var service: CBUUID { CBUUID(string: "DA227673-007D-4BE6-A602-BC27421945FC") }
+    static var packet: CBUUID { CBUUID(string: "3A877283-CAFD-4716-8671-148B32475E97") }
+    static var response: CBUUID { CBUUID(string: "C975356B-1B48-4871-A8A6-FB1155381A8F") }
 }
 #endif
