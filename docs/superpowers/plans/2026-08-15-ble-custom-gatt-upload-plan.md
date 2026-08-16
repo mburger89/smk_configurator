@@ -435,7 +435,7 @@ git commit -m "Remove the HID Report ID 2 keymap channel"
 
 - [ ] **Step 1: Change both config files**
 
-`sdkconfig.defaults` is the source of truth, but `sdkconfig` is checked in and is what the build actually reads — editing only the defaults file changes nothing, because `idf.py` regenerates `sdkconfig` only when it is absent. Change both:
+`sdkconfig.defaults` is the source of truth and the only one of the two that is committed — **`sdkconfig` is gitignored** (`.gitignore:3`), regenerated from the defaults when absent. But an existing local `sdkconfig` is what your build actually reads, and `idf.py` will not rewrite it just because the defaults changed, so edit both: the defaults for everyone else, the local file for this working copy.
 
 ```bash
 cd ~/esp/SMK
