@@ -7,6 +7,16 @@ struct JSONFileStore<T: Codable>: Sendable {
     var directory: URL
     var nameOf: @Sendable (T) -> String
 
+    /// Where the seeded-names record (below) is stored. Defaults to the real
+    /// app domain in production; tests inject a throwaway `UserDefaults(
+    /// suiteName:)` domain so they never touch persistent developer-machine
+    /// state. Named `userDefaults` (not `defaults`) to avoid shadowing
+    /// `ensureSeeded(with defaults:)`'s parameter of the same name below.
+    /// `UserDefaults` is documented thread-safe but predates `Sendable` and
+    /// isn't marked as conforming, so `nonisolated(unsafe)` is needed for
+    /// this `Sendable`-conforming struct to hold one as a stored property.
+    nonisolated(unsafe) var userDefaults: UserDefaults = .standard
+
     func fileName(for item: T) -> String {
         let sanitized = nameOf(item)
             .lowercased()
@@ -46,7 +56,7 @@ struct JSONFileStore<T: Codable>: Sendable {
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        var seededNames = Set(UserDefaults.standard.stringArray(forKey: seededNamesDefaultsKey) ?? [])
+        var seededNames = Set(userDefaults.stringArray(forKey: seededNamesDefaultsKey) ?? [])
         for item in defaults {
             let name = nameOf(item)
             guard !seededNames.contains(name) else { continue }
@@ -56,7 +66,7 @@ struct JSONFileStore<T: Codable>: Sendable {
             }
             seededNames.insert(name)
         }
-        UserDefaults.standard.set(Array(seededNames), forKey: seededNamesDefaultsKey)
+        userDefaults.set(Array(seededNames), forKey: seededNamesDefaultsKey)
     }
 
     func loadAll(fallback: [T]) -> [T] {
