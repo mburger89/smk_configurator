@@ -43,7 +43,10 @@ struct DeviceListColumnView: View {
     private var bleDotColor: Color {
         switch editor.bleState {
         case .ready: return chrome.connectedDot
-        case .connected: return chrome.dangerText
+        // `.failed` gets the same attention colour: "Bluetooth is off" or
+        // "access was denied" is a thing the user can act on, not the same
+        // nothing-here as `.idle`.
+        case .connected, .failed: return chrome.dangerText
         default: return chrome.disconnectedDot
         }
     }
@@ -55,6 +58,10 @@ struct DeviceListColumnView: View {
         switch editor.bleState {
         case .ready: return "Connected"
         case .connected: return "Linked — service missing"
+        // The `summary` line underneath carries the actual reason (radio
+        // off, access denied, service missing); this only has to stop it
+        // reading as an ordinary empty search.
+        case .failed: return "Unavailable"
         default: return "Not connected"
         }
     }

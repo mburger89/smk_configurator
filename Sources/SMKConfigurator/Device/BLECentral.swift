@@ -58,6 +58,13 @@ final class BLECentral: NSObject {
     /// which would strand the first caller forever and let the first
     /// attempt's timeout resolve the second attempt instead.
     private var connectTask: Task<Void, Error>?
+    /// Stamps identifying which connect/send a timeout task belongs to.
+    /// Every timeout is both cancelled when its own operation finishes and
+    /// gated on its stamp still being the current one, so a timer armed by
+    /// an operation that has already ended can never resume the
+    /// continuation of a *later* one (see the timeout tasks below).
+    private var connectGeneration: UInt64 = 0
+    private var sendGeneration: UInt64 = 0
 
     override init() {
         super.init()
@@ -81,11 +88,26 @@ final class BLECentral: NSObject {
         }
         let task = Task<Void, Error> { [self] in
             defer { self.connectTask = nil }
+            // Scanning before the manager is powered on is dropped on the
+            // floor by Core Bluetooth (logged as API MISUSE, never queued),
+            // so an unpowered/unauthorized radio would otherwise burn the
+            // full 10s timeout and then look exactly like "no keyboard
+            // here". Fail fast with the real reason instead.
+            try await self.requirePoweredOn()
+            self.connectGeneration &+= 1
+            let generation = self.connectGeneration
+            // Held so the attempt that armed it can cancel it the moment it
+            // finishes, however it finishes -- see the stamp check below
+            // for why an uncancelled straggler still can't do harm.
+            var timeout: Task<Void, Never>?
+            defer { timeout?.cancel() }
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
                 self.readyContinuation = c
-                Task { @MainActor [weak self] in
+                timeout = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 10_000_000_000)
-                    guard let self, let pending = self.readyContinuation else { return }
+                    guard !Task.isCancelled, let self,
+                          self.connectGeneration == generation,
+                          let pending = self.readyContinuation else { return }
                     self.readyContinuation = nil
                     self.central.stopScan()
                     self.state = .idle
@@ -123,12 +145,25 @@ final class BLECentral: NSObject {
         guard pendingContinuation == nil else {
             throw DeviceTransportError.transportFailure("a packet is already in flight")
         }
+        sendGeneration &+= 1
+        let generation = sendGeneration
+        // A ~4 KB keymap is ~150 of these round trips back to back. A
+        // fire-and-forget timer that outlives its own packet would fire
+        // mid-upload and fail whichever packet was then in flight (most
+        // often COMMIT, reporting failure for an upload the firmware had
+        // already committed), so each timer is cancelled by the send that
+        // armed it and, belt and braces, refuses to act unless its stamp is
+        // still current.
+        var timeout: Task<Void, Never>?
+        defer { timeout?.cancel() }
         return try await withCheckedThrowingContinuation { c in
             self.pendingContinuation = c
             peripheral.writeValue(Data(packet), for: packetCharacteristic, type: .withResponse)
-            Task { @MainActor [weak self] in
+            timeout = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard let self, let pending = self.pendingContinuation else { return }
+                guard !Task.isCancelled, let self,
+                      self.sendGeneration == generation,
+                      let pending = self.pendingContinuation else { return }
                 self.pendingContinuation = nil
                 pending.resume(throwing: DeviceTransportError.transportFailure(
                     "timed out waiting for a response packet"))
@@ -139,13 +174,75 @@ final class BLECentral: NSObject {
     func readRSSI() {
         peripheral?.readRSSI()
     }
+
+    /// Returns once the manager is `.poweredOn`; throws a described
+    /// `.transportFailure` otherwise.
+    ///
+    /// `.unknown`/`.resetting` are startup states, not failures: a
+    /// `CBCentralManager` created moments ago reports `.unknown` until its
+    /// first `centralManagerDidUpdateState` lands, so a connect() issued
+    /// right after launch (the DEV pane's monitor does exactly that) has to
+    /// wait rather than fail. Bounded, because a stack that never settles
+    /// must not hang the caller either.
+    private func requirePoweredOn() async throws {
+        for _ in 0..<60 {
+            guard central.state == .unknown || central.state == .resetting else { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard central.state == .poweredOn else {
+            let why = Self.unavailableReason(for: central.state)
+            state = .failed(why)
+            throw DeviceTransportError.transportFailure(why)
+        }
+    }
+
+    /// User-facing text for every non-`.poweredOn` manager state. These are
+    /// the failures that are otherwise indistinguishable from "no keyboard
+    /// in range", including the one an app bundle missing
+    /// `NSBluetoothAlwaysUsageDescription` produces (`.unauthorized`).
+    static func unavailableReason(for managerState: CBManagerState) -> String {
+        switch managerState {
+        case .poweredOn: return "Bluetooth is available"
+        case .poweredOff: return "Bluetooth is off — turn it on in System Settings"
+        case .unauthorized:
+            return "Bluetooth access was denied — allow it in System Settings › Privacy & Security › Bluetooth"
+        case .unsupported: return "this machine has no Bluetooth LE radio"
+        case .resetting: return "the Bluetooth stack is resetting — try again in a moment"
+        case .unknown: return "the Bluetooth stack has not finished starting up"
+        @unknown default: return "Bluetooth is unavailable"
+        }
+    }
 }
 
 extension BLECentral: @preconcurrency CBCentralManagerDelegate {
-    // The only non-optional method of this protocol. connect() drives
-    // scanning/retrieval directly rather than waiting on a .poweredOn
-    // callback here, so this has nothing to do.
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {}
+    // The only non-optional method of this protocol. connect() polls
+    // `central.state` itself (see requirePoweredOn) rather than being driven
+    // from here, so this exists to catch the radio going away *after* a
+    // connect: nothing in flight can complete once the manager leaves
+    // .poweredOn, and the DEV pane would otherwise sit on a stale "Ready".
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        switch central.state {
+        case .poweredOn, .unknown, .resetting:
+            // .unknown/.resetting are startup/transient states, not
+            // failures -- reporting them would make the DEV pane flash a
+            // scary string during the manager's normal cold start.
+            // .poweredOn deliberately leaves `state` alone: the next
+            // connect() sets it, and clearing here would also erase an
+            // unrelated .failed (e.g. "upload service not found").
+            break
+        case .poweredOff, .unauthorized, .unsupported:
+            let why = Self.unavailableReason(for: central.state)
+            state = .failed(why)
+            packetCharacteristic = nil
+            responseCharacteristic = nil
+            pendingContinuation?.resume(throwing: DeviceTransportError.transportFailure(why))
+            pendingContinuation = nil
+            readyContinuation?.resume(throwing: DeviceTransportError.transportFailure(why))
+            readyContinuation = nil
+        @unknown default:
+            break
+        }
+    }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
@@ -243,9 +340,20 @@ extension BLECentral: @preconcurrency CBPeripheralDelegate {
         readyContinuation = nil
     }
 
+    // Guarded on identity *and* error. Without the identity check any other
+    // characteristic's update would be handed to a waiting send() as its
+    // response; without the error check a failed notification resumes with
+    // an empty payload, which the upload protocol reads as a well-formed
+    // NAK rather than as the transport failure it actually is.
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        pendingContinuation?.resume(returning: Array(characteristic.value ?? Data()))
+        guard characteristic.uuid == BLEUploadUUIDs.response else { return }
+        guard let pending = pendingContinuation else { return }
         pendingContinuation = nil
+        if let error {
+            pending.resume(throwing: DeviceTransportError.transportFailure(error.localizedDescription))
+        } else {
+            pending.resume(returning: Array(characteristic.value ?? Data()))
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
