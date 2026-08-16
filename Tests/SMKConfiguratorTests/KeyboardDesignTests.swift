@@ -47,4 +47,17 @@ struct KeyboardDesignTests {
         #expect(design.colCount == 2)
         #expect(design.grid.flatMap { $0 }.allSatisfy { !$0.isGap && $0.width == 1.0 })
     }
+
+    @Test("smkTestBoard matches the board's GPIO map")
+    func testBoardMatrix() {
+        // These GPIO numbers are a hand-synced contract with the firmware's
+        // board config and the PCB generator's PIN table. See
+        // ~/esp/SMK_test_board/docs/superpowers/specs/2026-08-16-smk-test-board-design.md
+        let design = KeyboardDesign.smkTestBoard
+        #expect(design.rowCount == 3)
+        #expect(design.colCount == 3)
+        #expect(design.matrix.rows == [1, 2, 21])
+        #expect(design.matrix.cols == [22, 23, 16])
+        #expect(design.matrix.colsAreDriven == 1)
+    }
 }
