@@ -20,6 +20,8 @@ struct DeviceListColumnView: View {
                     transportCard(
                         name: "BLE (ESP32-C6)",
                         isConnected: editor.bleState.isReady,
+                        dotColor: bleDotColor,
+                        headline: bleHeadline,
                         detail: editor.bleState.summary
                     )
                     #endif
@@ -32,7 +34,39 @@ struct DeviceListColumnView: View {
         .background(chrome.column)
     }
 
-    private func transportCard(name: String, isConnected: Bool, detail: String? = nil) -> some View {
+    #if canImport(CoreBluetooth)
+    /// `.connected` (linked, but the upload service is missing -- the
+    /// signature of a firmware/app UUID mismatch) must read as visibly
+    /// different from an absent keyboard, not blend into the same grey dot
+    /// as `.idle`/`.searching`. `dangerText` is the closest existing
+    /// attention-drawing token `Chrome` exposes.
+    private var bleDotColor: Color {
+        switch editor.bleState {
+        case .ready: return chrome.connectedDot
+        case .connected: return chrome.dangerText
+        default: return chrome.disconnectedDot
+        }
+    }
+
+    /// Kept consistent with `BLEConnectionState.summary`, which becomes the
+    /// card's detail line below this headline -- neither may contradict the
+    /// other for the same state.
+    private var bleHeadline: String {
+        switch editor.bleState {
+        case .ready: return "Connected"
+        case .connected: return "Linked — service missing"
+        default: return "Not connected"
+        }
+    }
+    #endif
+
+    private func transportCard(
+        name: String,
+        isConnected: Bool,
+        dotColor: Color? = nil,
+        headline: String? = nil,
+        detail: String? = nil
+    ) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8)
                 .fill(chrome.surface)
@@ -42,12 +76,15 @@ struct DeviceListColumnView: View {
                 }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    StatusDot(color: isConnected ? chrome.connectedDot : chrome.disconnectedDot, diameter: 8)
+                    StatusDot(
+                        color: dotColor ?? (isConnected ? chrome.connectedDot : chrome.disconnectedDot),
+                        diameter: 8
+                    )
                     Text(name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(chrome.textPrimary)
                 }
-                Text(isConnected ? "Connected" : "Not connected")
+                Text(headline ?? (isConnected ? "Connected" : "Not connected"))
                     .font(.system(size: 11))
                     .foregroundColor(chrome.textTertiary)
                 if let detail {
