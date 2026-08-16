@@ -54,18 +54,23 @@ does not claim the interface.
 ## Design overview
 
 Phase 1 is the implementable unit and everything below describes it unless
-marked otherwise. Phase 2 (§9) is scoped here because it shares the same
-NimBLE security surface, but it gets its own plan.
+marked otherwise. Phase 2 (§11) is scoped here because it builds directly on
+§5's bonding work, but it gets its own plan.
 
-1. Fixed service and characteristic UUIDs, shared by both repos.
+1. Service and characteristic UUIDs, generated into both repos from one
+   source of truth.
 2. Firmware: register a custom GATT service in `ble_helper.c`.
 3. Firmware: re-lay the advertisement so the service UUID fits.
 4. Firmware: remove the Report ID 2 channel.
-5. App: rewrite `BLETransport` discovery and I/O.
-6. App: real BLE status and upload progress.
-7. Error handling.
-8. Testing.
-9. Phase 2: encryption, persistent bonding, multi-host reconnect.
+5. Firmware: raise the bond limit so multiple Macs can stay paired.
+6. App: one shared Core Bluetooth session, used by both the transport and
+   the monitor.
+7. App: rewrite `BLETransport` discovery and I/O.
+8. App: live device monitoring while the DEV pane is open, plus upload
+   progress.
+9. Error handling.
+10. Testing.
+11. Phase 2: encryption on the upload characteristic.
 
 ## 1. UUIDs
 
@@ -75,15 +80,43 @@ NimBLE security surface, but it gets its own plan.
 | Packet write (host → device) | `3A877283-CAFD-4716-8671-148B32475E97` |
 | Response notify (device → host) | `C975356B-1B48-4871-A8A6-FB1155381A8F` |
 
-These are fixed constants in both repos and must be kept in sync by hand, the
-same way `KeymapUploader.maxPayloadLength` and `ActionToken`'s vocabulary
-already are (see the configurator's CLAUDE.md "Firmware coupling").
+These are **generated into both repos from one source of truth**, not
+hand-synced. The rest of the firmware coupling this app carries
+(`KeymapUploader.maxPayloadLength`, `ActionToken`'s vocabulary) is
+hand-maintained because it mirrors hand-written firmware code; a UUID has no
+such excuse — it is a constant with two mechanical renderings, and the
+transformation between them is exactly where the error lives.
 
 **NimBLE's `BLE_UUID128_INIT` takes its 16 bytes in reverse order of the
-textual form.** Getting this wrong produces a service that registers cleanly,
-advertises cleanly, and is simply never found by the app. The implementation
-must write the bytes out explicitly and verify with a scan before building
-anything on top.
+textual form.** Getting that wrong produces a service that registers cleanly,
+advertises cleanly, and is simply never found by the app — a failure with no
+error message anywhere. Generating the reversal removes the one step of this
+feature most likely to burn an afternoon.
+
+**Source of truth:** `~/esp/SMK/ble_upload_uuids.json`, a flat map of role →
+canonical UUID string. It lives in the firmware repo because that repo owns
+the upload protocol (see its
+`docs/superpowers/specs/2026-07-31-runtime-keymap-updates-design.md`).
+
+**Generator:** `~/esp/SMK/generate_ble_uuids.sh`, matching that repo's
+top-level `build_*.sh` / `flash_*.sh` script convention. It writes two files
+and takes the configurator's path as an argument, defaulting to
+`../smk_configurator`:
+
+- `~/esp/SMK/Sources/components/smk_ble_uuids.h` — `BLE_UUID128_INIT` byte
+  arrays, reversed by the generator.
+- `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` — `CBUUID` constants.
+
+Both outputs are checked in and carry a "generated, do not edit" header,
+following this repo's existing generate-and-commit precedent for icon PNGs
+(`Scripts/generate-icons.sh`) rather than generating at build time — neither
+build system should depend on the sibling repo being present.
+
+Because the two repos can drift independently, the configurator gets a test
+asserting the generated constants equal the literal UUID strings above. That
+is deliberately a change-detector: for a cross-repo constant, a regeneration
+or hand-edit that silently changes a UUID should fail loudly rather than
+produce a keyboard the app can no longer find.
 
 ## 2. Firmware: GATT service registration
 
@@ -146,12 +179,61 @@ the keymap branch of `ble_hidd_event_callback` in
 handling only real HID traffic. The report map shrinks, so any hard-coded
 descriptor length beside it must be re-derived rather than left stale.
 
-## 5. App: `BLETransport` rewrite
+## 5. Firmware: raising the bond limit
+
+`sdkconfig` currently has `CONFIG_BT_NIMBLE_MAX_BONDS=1`: one bond slot
+total, so pairing a second Mac evicts the first and reproduces the re-add
+ritual this whole effort is meant to eliminate. Raise it to 4. This is
+independent of the GATT work — a one-line config change plus a flash — and it
+is in phase 1 because the goal of "connect to any of my MacBooks without
+re-adding it" is not met without it.
+
+The rest of the bonding groundwork is already correct and needs no change
+(see §11 for what phase 2 adds): `ble_helper.c:165-169` sets
+`sm_bonding = 1`, `sm_sc = 1`, `sm_io_cap = NO_IO`, and distributes
+`ENC | ID` — the IRK exchange is what lets a host re-identify the keyboard
+across address changes. `CONFIG_BT_NIMBLE_NVS_PERSIST=y` keeps keys across
+reboots, `SMP_ID_RESET` is unset, and advertising uses a stable public
+address.
+
+Two things to confirm rather than assume during implementation:
+
+- The factory-reset-on-boot path in `Sources/smk/Main.swift` clears the
+  keymap without clearing BLE bonds.
+- `idf.py flash` preserves NVS (so bonds survive firmware updates) while
+  `erase_flash` does not — worth a line in the firmware README, since a
+  developer wiping flash will silently need to re-pair every host.
+
+**Acceptance test for this piece:** pair the board to two Macs in turn,
+reboot the board, close and reopen the lid on each, and confirm it returns on
+both with no intervention.
+
+## 6. App: one shared Core Bluetooth session
+
+Both the transport (§7) and the monitor (§8) need a `CBCentralManager`, and
+two of them in one process would scan against each other and fight over the
+same peripheral's connection state. So a single `@MainActor` `BLECentral`
+owns the manager, the discovered peripheral, and the two characteristics, and
+exposes: current state, connect/disconnect, a packet round trip, and an
+RSSI read.
+
+`BLETransport` becomes a thin `DeviceTransport` conformance over that
+session rather than the owner of a manager. The practical payoff is that when
+the DEV pane already holds a live connection, an upload starts immediately
+with no scan and no reconnect.
+
+## 7. App: `BLETransport` rewrite
 
 Deletions first: `hidServiceUUID`, `reportCharacteristicUUID`,
 `reportReferenceDescriptorUUID`, `targetReportID`, the report-type constants,
 and the descriptor walk that existed only to find one characteristic among a
 HID service's many. What replaces it is smaller.
+
+Discovery, connection and characteristic lookup described below live in the
+`BLECentral` session (§6), not in `BLETransport` itself — the monitor needs
+exactly the same steps, and duplicating them would be how the two drift.
+`BLETransport` is left holding the `DeviceTransport` conformance: ask the
+session for a ready connection, then round-trip packets on it.
 
 **Discovery has two paths, and the fast one is the common case.** A keyboard
 that is bonded to the Mac and in use is *connected to the system and not
@@ -179,28 +261,61 @@ the upload instead of hanging it, which is what the current code does.
 
 `DeviceTransport` and `KeymapUploadProtocol` are untouched.
 
-## 6. App: status and progress
+## 8. App: live monitoring and upload progress
 
-`KeymapUploader` gains a `UploadPhase` enum (`.begin`, `.chunk(index: Int,
-of: Int)`, `.commit`) and `upload` takes an optional
+**The DEV pane reports live state while it is open.** The BLE card today
+hardcodes `isConnected: false` and `refreshDeviceStatus()` only probes USB,
+so the pane cannot answer the question it exists to answer. A `DeviceMonitor`
+attached to the `BLECentral` session runs whenever `railMode == .device` and
+stops when the pane closes — bounded by visibility, so nothing runs in the
+background while the user is editing a keymap.
+
+The monitor is mostly *event-driven rather than polled*, which is what makes
+continuous status affordable:
+
+- **Presence** comes from `retrieveConnectedPeripherals(withServices:)`,
+  a system query with no radio scan. Cheap enough to run on entry and on a
+  3s timer.
+- **Connect/disconnect** needs no polling at all: once connected, Core
+  Bluetooth's delegate callbacks report transitions immediately, so a
+  keyboard that walks out of range updates the dot without waiting for a
+  tick.
+- **Signal strength** is the one genuinely polled value — `readRSSI()` on a
+  2s timer while connected, giving a live readout instead of a boolean.
+- **Discovery of an idle board** is the expensive case, so it is the only
+  one that is duty-cycled: when nothing is found, scan for 5s, idle for 10s,
+  repeat, and stop the moment the board appears or the pane closes.
+- **USB** is probed on the same 3s tick, replacing today's manual refresh.
+
+What the pane shows, therefore, is not one boolean but a diagnostic readout:
+transport, peripheral name and identifier, connection state, RSSI, whether
+the upload service and both characteristics were found, negotiated MTU, and
+the last error or successful upload. "Service missing" is a distinct,
+visible state from "not connected" — it is precisely the symptom of a
+firmware/app UUID mismatch, and a user staring at a dot should not have to
+guess which one they have.
+
+**Test Connection** stays, in `DeviceMainContentView` beside Send to Device,
+for the case where the pane is not open or the user wants an immediate answer
+rather than waiting for a tick.
+
+`EditorState` gains a `deviceStatus` value (transport presence, RSSI,
+service-found flag, last error) and `uploadProgress:
+KeymapUploader.UploadPhase?`, both plain stored properties mutated on the
+main actor — no `didSet`, per the `@ObservableObject` rule that class already
+follows.
+
+`KeymapUploader` gains an `UploadPhase` enum (`.begin`,
+`.chunk(index: Int, of: Int)`, `.commit`) and `upload` takes an optional
 `progress: ((UploadPhase) -> Void)?`. It is transport-agnostic, so the USB
 path gets progress for free.
 
-`EditorState` gains `bleConnected: Bool` and
-`uploadProgress: KeymapUploader.UploadPhase?` (nil when no upload is in
-flight), both plain stored properties mutated on the main actor — no
-`didSet`, per the `@ObservableObject` rule that class already follows.
+**Battery note:** the duty-cycled scan is the only meaningful radio cost, and
+it stops as soon as the board is found. Holding a connection to a keyboard
+the Mac is already connected to costs nothing extra — the link exists either
+way.
 
-`DeviceListColumnView`'s BLE card stops hardcoding `isConnected: false` and
-reads `editor.bleConnected`. A **Test Connection** button goes in
-`DeviceMainContentView`, beside the existing Send to Device action: it
-connects and disconnects without uploading, which is the non-destructive
-answer to "is it reachable?". `refreshDeviceStatus()` deliberately does *not* scan in the
-background: USB's probe is a cheap open/close, but a BLE scan takes seconds
-and polling it would stutter the UI and cost battery. Status changes on
-explicit action only — Test Connection, or an upload finishing.
-
-## 7. Error handling
+## 9. Error handling
 
 `DeviceTransportError`'s existing cases cover this; the new paths map onto
 them deliberately:
@@ -214,7 +329,7 @@ them deliberately:
 - Disconnection mid-upload fails the in-flight continuation instead of
   leaving it suspended forever.
 
-## 8. Testing
+## 10. Testing
 
 - `smk_keymap_dispatch_packet` is unchanged and already covered by the
   firmware's host unit tests. The new firmware surface is C glue: the
@@ -222,36 +337,36 @@ them deliberately:
 - App side: `KeymapUploadProtocol`'s framing tests already exist; add
   coverage for the progress callback sequence against the fake
   `DeviceTransport` the `KeymapUploader` suite already has.
+- The generated `BLEUploadUUIDs.swift` gets the change-detector test
+  described in §1.
+- `DeviceMonitor`'s state machine (found → connected → service-found, and
+  each failure transition) should be testable without a radio by putting the
+  `BLECentral` session behind a small protocol the tests can fake. If that
+  turns out to distort the design, drop it and rely on the hardware test
+  rather than contorting the code for coverage.
 - Neither test suite can prove GATT plumbing. The acceptance test is the
-  hardware round trip: flash, Test Connection, upload a keymap with a
-  distinctive remap, confirm it takes effect and survives a power cycle.
+  hardware round trip: flash, watch the DEV pane report the board, upload a
+  keymap with a distinctive remap, confirm it takes effect and survives a
+  power cycle. Plus §5's two-Mac bonding test.
 - The scan and GATT-enumeration probes built during investigation are the
   fastest way to verify the service and advertisement before touching the
   app (`blescan` / `blediscover`, Core Bluetooth, read-only).
 
-## 9. Phase 2 (separate plan): encryption and reliable reconnect
+## 11. Phase 2 (separate plan): encryption on the upload characteristic
 
 Phase 1 leaves the upload characteristic writable by any connected client —
 matching the board's current posture, where every service is reachable with
 no pairing at all. **Known limitation: anyone in radio range can rewrite the
-keymap.** Phase 2 closes that and, in the same pass, addresses the goal that
-the keyboard should reconnect to a MacBook without being re-added.
+keymap.** Phase 2 closes that:
 
-Investigation on 2026-08-15 found the bonding groundwork already correct:
-`ble_helper.c:165-169` sets `sm_bonding = 1`, `sm_sc = 1`,
-`sm_io_cap = NO_IO`, and distributes `ENC | ID` (the IRK exchange is what
-lets a host re-identify the keyboard); `sdkconfig` has
-`CONFIG_BT_NIMBLE_NVS_PERSIST=y`, `SMP_ID_RESET` unset, and a stable public
-address. Phase 2 therefore is not a rebuild, it is:
+- `BLE_GATT_CHR_F_WRITE_ENC` on the packet characteristic, so writes only
+  succeed over an encrypted link.
+- `BLECentral` handles the bonded/encrypted case: an unbonded host must pair
+  before uploading, and the pairing prompt has to be a legible state in the
+  DEV pane rather than a silent write failure.
 
-- `BLE_GATT_CHR_F_WRITE_ENC` on the packet characteristic, plus handling
-  bonded peripherals in `BLETransport`.
-- **`CONFIG_BT_NIMBLE_MAX_BONDS=1` is the setting that would defeat the
-  goal**: one bond slot means pairing a second Mac evicts the first, which
-  reproduces the re-add ritual exactly. Raise it (3–5).
-- Confirm the factory-reset-on-boot path in `Sources/smk/Main.swift` clears
-  the keymap without clearing BLE bonds, and note that `idf.py flash`
-  preserves NVS while `erase_flash` does not.
-- Acceptance test: pair, reboot the board, close and reopen the lid, and
-  confirm the keyboard returns with no intervention; then repeat across two
-  Macs.
+The bonding and multi-host reconnect work that was originally scoped here has
+moved into phase 1 (§5), since the "any of my MacBooks" goal is part of what
+this feature is for. Phase 2 is therefore only the access-control change, and
+depends on §5 already being in place — encryption is worth little if only one
+host can hold a bond.
