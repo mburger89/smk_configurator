@@ -118,7 +118,7 @@ class EditorState {
         let storedAppearanceMode = UserDefaults.standard.string(forKey: appearanceModeDefaultsKey)
         self.appearanceMode = storedAppearanceMode.flatMap(AppearanceMode.init(rawValue:)) ?? .system
 
-        designStore.ensureSeeded(with: [.gateronLPKBD])
+        designStore.ensureSeeded(with: [.gateronLPKBD, .smkTestBoard])
         themeStore.ensureSeeded(with: KeyboardTheme.allBuiltIns)
 
         let designs = designStore.loadAll(fallback: [.gateronLPKBD])
