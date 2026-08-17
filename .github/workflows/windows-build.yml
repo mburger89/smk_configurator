@@ -92,12 +92,27 @@ jobs:
           Write-Host "cores=$env:NUMBER_OF_PROCESSORS totalRAM=$([math]::Round($os.TotalVisibleMemorySize/1MB,2))GB freeRAM=$([math]::Round($os.FreePhysicalMemory/1MB,2))GB"
           Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} | Format-Table | Out-String | Write-Host
 
+          # Sample free RAM throughout: a passing run tells us nothing about
+          # peak pressure, and if the captured stderr turns out empty we do
+          # not want to spend another ~18min cycle to get this number.
+          $sampler = Start-Job {
+            $min = [double]::MaxValue
+            while ($true) {
+              $f = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
+              if ($f -lt $min) { $min = $f }
+              Set-Content -Path "$using:PWD\minfree.txt" -Value ([math]::Round($min,2))
+              Start-Sleep -Seconds 5
+            }
+          }
+
           swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
           $code = $LASTEXITCODE
 
+          Stop-Job $sampler; Remove-Job $sampler
           $os = Get-CimInstance Win32_OperatingSystem
           Write-Host "swift build exit code: $code"
           Write-Host "freeRAM after=$([math]::Round($os.FreePhysicalMemory/1MB,2))GB"
+          if (Test-Path minfree.txt) { Write-Host "freeRAM minimum during build=$(Get-Content minfree.txt)GB" }
 
           if ($code -ne 0) {
             Write-Host "===== last 150 lines of captured output ====="
