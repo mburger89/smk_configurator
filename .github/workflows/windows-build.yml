@@ -70,7 +70,37 @@ jobs:
         # that Swift's Windows clang importer also respects — pointing
         # directly at vcpkg's installed headers/libs.
         run: |
+          # DIAGNOSTIC (temporary, see PR): this job fails ~2/3 of the time,
+          # always at the same place — every SwiftCrossUI source compiles,
+          # then the step exits 1 roughly 40s later with no diagnostic in
+          # the log, having never reached `Emitting module SwiftCrossUI`.
+          #
+          # Exit code 1 is SwiftPM's ordinary "build failed" code; a crash
+          # or an OOM kill on Windows surfaces a large NTSTATUS-derived code
+          # instead. So the diagnostics almost certainly exist and are being
+          # lost before they reach the log. GitHub runs pwsh steps with
+          # $ErrorActionPreference = 'Stop', under which a native command
+          # writing to stderr can terminate the step and drop the output.
+          # Force stderr into stdout and keep going, so whatever swift build
+          # is actually saying survives.
+          $ErrorActionPreference = 'Continue'
           $triplet = "${{ steps.triplet.outputs.lowercase }}"
           $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
           $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
-          swift build --target SMKConfigurator
+
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Host "cores=$env:NUMBER_OF_PROCESSORS totalRAM=$([math]::Round($os.TotalVisibleMemorySize/1MB,2))GB freeRAM=$([math]::Round($os.FreePhysicalMemory/1MB,2))GB"
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} | Format-Table | Out-String | Write-Host
+
+          swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
+          $code = $LASTEXITCODE
+
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Host "swift build exit code: $code"
+          Write-Host "freeRAM after=$([math]::Round($os.FreePhysicalMemory/1MB,2))GB"
+
+          if ($code -ne 0) {
+            Write-Host "===== last 150 lines of captured output ====="
+            Get-Content build.log -Tail 150
+            exit $code
+          }
