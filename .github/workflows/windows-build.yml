@@ -71,57 +71,51 @@ jobs:
         # that Swift's Windows clang importer also respects — pointing
         # directly at vcpkg's installed headers/libs.
         run: |
-          # DIAGNOSTIC v2. Established so far:
-          #   * Not a build error. A deliberate syntax error on this same
-          #     step surfaces `error:` lines normally and fails the job, so
-          #     the capture path works.
-          #   * stderr IS captured (the hidapi pkg-config warning appears).
-          #   * The failure produces NO diagnostic whatsoever: the last
-          #     SwiftCrossUI source compiles, then ~59s of silence, then
-          #     exit 1, never reaching `Emitting module SwiftCrossUI`.
-          #   * Free RAM floor in a PASSING run was 8.25GB of 16GB.
-          # A silent death during module emission points at the frontend
-          # process being killed or crashing. Windows logs that, so ask it.
+          # Swift 6.2's compiler crashes intermittently while building
+          # SwiftCrossUI on Windows -- roughly a third to a half of runs.
+          # Confirmed a crash, not a build failure: one captured run exited
+          # 0xC000001D (STATUS_ILLEGAL_INSTRUCTION), which is what this
+          # toolchain's assertions build does when an internal invariant
+          # trips. It produces no diagnostic at all: the last SwiftCrossUI
+          # source compiles, then silence, then the process dies.
+          #
+          # Ruled out by measurement, not assumption: source errors (a
+          # deliberate syntax error reports normally), swallowed stderr (it
+          # is captured -- the hidapi warning proves it), and memory (floors
+          # of 12.43/9.83/8.0 GB free of 16 GB across three failures).
+          #
+          # Nothing here is ours to fix, so retry the crash. Two notes on
+          # why this is shaped the way it is:
+          #   * $LASTEXITCODE must be propagated by hand. Piping through
+          #     Tee-Object means the step's own status no longer reflects
+          #     the compiler's, and without this a real break would pass
+          #     silently. The original step's missing propagation is why
+          #     every failure looked like "exit 1" and the crash code went
+          #     unseen for so long.
+          #   * Only crash-shaped failures retry. A genuine build error
+          #     emits `error:` and must fail immediately rather than burn
+          #     three ~15 minute attempts.
           $ErrorActionPreference = 'Continue'
           $triplet = "${{ steps.triplet.outputs.lowercase }}"
           $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
           $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
-          $started = Get-Date
 
-          # 1s sampling: module emission can spike GBs between 5s samples.
-          $sampler = Start-Job {
-            $min = [double]::MaxValue
-            while ($true) {
-              $f = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
-              if ($f -lt $min) { $min = $f }
-              Set-Content -Path "$using:PWD\minfree.txt" -Value ([math]::Round($min,2))
-              Start-Sleep -Milliseconds 1000
+          $code = 0
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
+            $code = $LASTEXITCODE
+            if ($code -eq 0) { break }
+
+            if (Select-String -Path build.log -Pattern 'error:' -Quiet) {
+              Write-Host "swift build reported errors (exit $code) -- a real failure, not retrying."
+              break
             }
+
+            Write-Host "::warning::swift build died with exit $code and no diagnostic on attempt $attempt of 3 -- the known Swift 6.2 compiler crash. Retrying."
           }
-
-          swift build --target SMKConfigurator -v 2>&1 | Tee-Object -FilePath build.log
-          $code = $LASTEXITCODE
-          Stop-Job $sampler; Remove-Job $sampler
-
-          if (Test-Path minfree.txt) { Write-Host "freeRAM minimum during build=$(Get-Content minfree.txt)GB" }
-          Write-Host "swift build exit code: $code"
 
           if ($code -ne 0) {
             Write-Host "===== build.log tail, progress lines removed ====="
             Get-Content build.log | Where-Object { $_ -notmatch '^\[\d+/\d+\]' } | Select-Object -Last 60
-
-            Write-Host "===== last swift-frontend invocation before death ====="
-            Get-Content build.log | Where-Object { $_ -match 'swift-frontend|emit-module' } | Select-Object -Last 3
-
-            # The decisive question: did a process crash or get killed?
-            Write-Host "===== Windows event log, this step's window ====="
-            foreach ($log in @('Application','System')) {
-              try {
-                Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$started} -ErrorAction Stop |
-                  Where-Object { $_.LevelDisplayName -in @('Error','Critical','Warning') } |
-                  Select-Object -First 25 TimeCreated,LevelDisplayName,ProviderName,@{n='Msg';e={$_.Message -replace "`r?`n",' ' }} |
-                  Format-List | Out-String -Width 400 | Write-Host
-              } catch { Write-Host "no matching events in $log" }
-            }
             exit $code
           }
