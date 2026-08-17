@@ -71,52 +71,33 @@ jobs:
         # that Swift's Windows clang importer also respects — pointing
         # directly at vcpkg's installed headers/libs.
         run: |
-          # DIAGNOSTIC (temporary, see PR): this job fails ~2/3 of the time,
-          # always at the same place — every SwiftCrossUI source compiles,
-          # then the step exits 1 roughly 40s later with no diagnostic in
-          # the log, having never reached `Emitting module SwiftCrossUI`.
+          # Windows CI failed intermittently for a long time -- ~2/3 of runs,
+          # always the same shape: every SwiftCrossUI source compiled, then
+          # the step exited 1 with NO diagnostic anywhere in the log, having
+          # never reached `Emitting module SwiftCrossUI`.
           #
-          # Exit code 1 is SwiftPM's ordinary "build failed" code; a crash
-          # or an OOM kill on Windows surfaces a large NTSTATUS-derived code
-          # instead. So the diagnostics almost certainly exist and are being
-          # lost before they reach the log. GitHub runs pwsh steps with
+          # It was never a build failure. GitHub runs pwsh steps with
           # $ErrorActionPreference = 'Stop', under which a native command
-          # writing to stderr can terminate the step and drop the output.
-          # Force stderr into stdout and keep going, so whatever swift build
-          # is actually saying survives.
+          # writing to stderr can terminate the step and discard its output.
+          # `swift build` writes to stderr during a normal build (the hidapi
+          # pkg-config warning, among others); whether that lands at a fatal
+          # moment depends on parallel-job timing, which is exactly why it
+          # looked random. Measured: 2 passes in 6 before this change, 5 in 5
+          # after.
+          #
+          # So: don't let stderr be fatal, merge it into stdout so it is
+          # visible, and propagate swift build's real exit code by hand --
+          # otherwise a genuine build failure would now pass silently.
+          # Memory was ruled out as a cause (floor of 8.25GB free of 16GB).
           $ErrorActionPreference = 'Continue'
           $triplet = "${{ steps.triplet.outputs.lowercase }}"
           $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
           $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
 
-          $os = Get-CimInstance Win32_OperatingSystem
-          Write-Host "cores=$env:NUMBER_OF_PROCESSORS totalRAM=$([math]::Round($os.TotalVisibleMemorySize/1MB,2))GB freeRAM=$([math]::Round($os.FreePhysicalMemory/1MB,2))GB"
-          Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} | Format-Table | Out-String | Write-Host
-
-          # Sample free RAM throughout: a passing run tells us nothing about
-          # peak pressure, and if the captured stderr turns out empty we do
-          # not want to spend another ~18min cycle to get this number.
-          $sampler = Start-Job {
-            $min = [double]::MaxValue
-            while ($true) {
-              $f = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
-              if ($f -lt $min) { $min = $f }
-              Set-Content -Path "$using:PWD\minfree.txt" -Value ([math]::Round($min,2))
-              Start-Sleep -Seconds 5
-            }
-          }
-
           swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
           $code = $LASTEXITCODE
-
-          Stop-Job $sampler; Remove-Job $sampler
-          $os = Get-CimInstance Win32_OperatingSystem
-          Write-Host "swift build exit code: $code"
-          Write-Host "freeRAM after=$([math]::Round($os.FreePhysicalMemory/1MB,2))GB"
-          if (Test-Path minfree.txt) { Write-Host "freeRAM minimum during build=$(Get-Content minfree.txt)GB" }
-
           if ($code -ne 0) {
-            Write-Host "===== last 150 lines of captured output ====="
+            Write-Host "===== swift build failed (exit $code); last 150 lines ====="
             Get-Content build.log -Tail 150
             exit $code
           }
