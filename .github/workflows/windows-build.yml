@@ -71,33 +71,57 @@ jobs:
         # that Swift's Windows clang importer also respects — pointing
         # directly at vcpkg's installed headers/libs.
         run: |
-          # Windows CI failed intermittently for a long time -- ~2/3 of runs,
-          # always the same shape: every SwiftCrossUI source compiled, then
-          # the step exited 1 with NO diagnostic anywhere in the log, having
-          # never reached `Emitting module SwiftCrossUI`.
-          #
-          # It was never a build failure. GitHub runs pwsh steps with
-          # $ErrorActionPreference = 'Stop', under which a native command
-          # writing to stderr can terminate the step and discard its output.
-          # `swift build` writes to stderr during a normal build (the hidapi
-          # pkg-config warning, among others); whether that lands at a fatal
-          # moment depends on parallel-job timing, which is exactly why it
-          # looked random. Measured: 2 passes in 6 before this change, 5 in 5
-          # after.
-          #
-          # So: don't let stderr be fatal, merge it into stdout so it is
-          # visible, and propagate swift build's real exit code by hand --
-          # otherwise a genuine build failure would now pass silently.
-          # Memory was ruled out as a cause (floor of 8.25GB free of 16GB).
+          # DIAGNOSTIC v2. Established so far:
+          #   * Not a build error. A deliberate syntax error on this same
+          #     step surfaces `error:` lines normally and fails the job, so
+          #     the capture path works.
+          #   * stderr IS captured (the hidapi pkg-config warning appears).
+          #   * The failure produces NO diagnostic whatsoever: the last
+          #     SwiftCrossUI source compiles, then ~59s of silence, then
+          #     exit 1, never reaching `Emitting module SwiftCrossUI`.
+          #   * Free RAM floor in a PASSING run was 8.25GB of 16GB.
+          # A silent death during module emission points at the frontend
+          # process being killed or crashing. Windows logs that, so ask it.
           $ErrorActionPreference = 'Continue'
           $triplet = "${{ steps.triplet.outputs.lowercase }}"
           $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
           $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
+          $started = Get-Date
 
-          swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
+          # 1s sampling: module emission can spike GBs between 5s samples.
+          $sampler = Start-Job {
+            $min = [double]::MaxValue
+            while ($true) {
+              $f = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
+              if ($f -lt $min) { $min = $f }
+              Set-Content -Path "$using:PWD\minfree.txt" -Value ([math]::Round($min,2))
+              Start-Sleep -Milliseconds 1000
+            }
+          }
+
+          swift build --target SMKConfigurator -v 2>&1 | Tee-Object -FilePath build.log
           $code = $LASTEXITCODE
+          Stop-Job $sampler; Remove-Job $sampler
+
+          if (Test-Path minfree.txt) { Write-Host "freeRAM minimum during build=$(Get-Content minfree.txt)GB" }
+          Write-Host "swift build exit code: $code"
+
           if ($code -ne 0) {
-            Write-Host "===== swift build failed (exit $code); last 150 lines ====="
-            Get-Content build.log -Tail 150
+            Write-Host "===== build.log tail, progress lines removed ====="
+            Get-Content build.log | Where-Object { $_ -notmatch '^\[\d+/\d+\]' } | Select-Object -Last 60
+
+            Write-Host "===== last swift-frontend invocation before death ====="
+            Get-Content build.log | Where-Object { $_ -match 'swift-frontend|emit-module' } | Select-Object -Last 3
+
+            # The decisive question: did a process crash or get killed?
+            Write-Host "===== Windows event log, this step's window ====="
+            foreach ($log in @('Application','System')) {
+              try {
+                Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$started} -ErrorAction Stop |
+                  Where-Object { $_.LevelDisplayName -in @('Error','Critical','Warning') } |
+                  Select-Object -First 25 TimeCreated,LevelDisplayName,ProviderName,@{n='Msg';e={$_.Message -replace "`r?`n",' ' }} |
+                  Format-List | Out-String -Width 400 | Write-Host
+              } catch { Write-Host "no matching events in $log" }
+            }
             exit $code
           }
