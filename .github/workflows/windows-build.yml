@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   windows:
@@ -70,7 +71,51 @@ jobs:
         # that Swift's Windows clang importer also respects — pointing
         # directly at vcpkg's installed headers/libs.
         run: |
+          # Swift 6.2's compiler crashes intermittently while building
+          # SwiftCrossUI on Windows -- roughly a third to a half of runs.
+          # Confirmed a crash, not a build failure: one captured run exited
+          # 0xC000001D (STATUS_ILLEGAL_INSTRUCTION), which is what this
+          # toolchain's assertions build does when an internal invariant
+          # trips. It produces no diagnostic at all: the last SwiftCrossUI
+          # source compiles, then silence, then the process dies.
+          #
+          # Ruled out by measurement, not assumption: source errors (a
+          # deliberate syntax error reports normally), swallowed stderr (it
+          # is captured -- the hidapi warning proves it), and memory (floors
+          # of 12.43/9.83/8.0 GB free of 16 GB across three failures).
+          #
+          # Nothing here is ours to fix, so retry the crash. Two notes on
+          # why this is shaped the way it is:
+          #   * $LASTEXITCODE must be propagated by hand. Piping through
+          #     Tee-Object means the step's own status no longer reflects
+          #     the compiler's, and without this a real break would pass
+          #     silently. The original step's missing propagation is why
+          #     every failure looked like "exit 1" and the crash code went
+          #     unseen for so long.
+          #   * Only crash-shaped failures retry. A genuine build error
+          #     emits `error:` and must fail immediately rather than burn
+          #     three ~15 minute attempts.
+          $ErrorActionPreference = 'Continue'
           $triplet = "${{ steps.triplet.outputs.lowercase }}"
           $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
           $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
-          swift build --target SMKConfigurator
+
+          $code = 0
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
+            $code = $LASTEXITCODE
+            if ($code -eq 0) { break }
+
+            if (Select-String -Path build.log -Pattern 'error:' -Quiet) {
+              Write-Host "swift build reported errors (exit $code) -- a real failure, not retrying."
+              break
+            }
+
+            Write-Host "::warning::swift build died with exit $code and no diagnostic on attempt $attempt of 3 -- the known Swift 6.2 compiler crash. Retrying."
+          }
+
+          if ($code -ne 0) {
+            Write-Host "===== build.log tail, progress lines removed ====="
+            Get-Content build.log | Where-Object { $_ -notmatch '^\[\d+/\d+\]' } | Select-Object -Last 60
+            exit $code
+          }
