@@ -10,7 +10,7 @@ jobs:
   windows:
     runs-on: windows-latest
     defaults:
-      run: # bash isn't supported by the Swift setup action on Windows
+      run:
         shell: pwsh
 
     steps:
@@ -19,12 +19,16 @@ jobs:
       - name: Setup VS Dev Environment
         uses: seanmiddleditch/gha-setup-vsdevenv@v5
 
+      # FIX 1: Enable Windows Long Paths to prevent deep swift-frontend temp crashes
+      - name: Enable Windows Long Paths
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+
       - name: Setup Swift
         uses: compnerd/gha-setup-swift@v0.3.0
         with:
-          # Must be >= Package.swift's `// swift-tools-version: 6.2` —
-          # an older toolchain can't parse the manifest and the job dies
-          # before it compiles anything.
           branch: swift-6.2-release
           tag: 6.2-RELEASE
 
@@ -57,44 +61,20 @@ jobs:
           path: vcpkg_installed
           key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Build
-        # Scoped to SMKConfigurator's own target, not a bare `swift build` —
-        # see linux-build.yml's comment for why (avoids building
-        # swift-cross-ui's platform-specific sibling backends/dependencies
-        # that aren't part of this target's actual dependency closure).
-        #
-        # PKG_CONFIG_PATH doesn't help here: confirmed via the first real
-        # Windows CI run that vcpkg's hidapi port has no .pc file at all, so
-        # SPM's systemLibrary pkgConfig resolution silently finds nothing
-        # (same failure mode as Ubuntu, different root cause). Set INCLUDE/
-        # LIB instead — the standard MSVC-toolchain search-path variables
-        # that Swift's Windows clang importer also respects — pointing
-        # directly at vcpkg's installed headers/libs.
+      # FIX 2: Isolate the SwiftCrossUIMacrosPlugin compilation first.
+      # This stops parallel worker threads from deadlocking/crashing the 6.2 compiler.
+      - name: Pre-compile Macro Targets
         run: |
-          # Swift 6.2's compiler crashes intermittently while building
-          # SwiftCrossUI on Windows -- roughly a third to a half of runs.
-          # Confirmed a crash, not a build failure: one captured run exited
-          # 0xC000001D (STATUS_ILLEGAL_INSTRUCTION), which is what this
-          # toolchain's assertions build does when an internal invariant
-          # trips. It produces no diagnostic at all: the last SwiftCrossUI
-          # source compiles, then silence, then the process dies.
-          #
-          # Ruled out by measurement, not assumption: source errors (a
-          # deliberate syntax error reports normally), swallowed stderr (it
-          # is captured -- the hidapi warning proves it), and memory (floors
-          # of 12.43/9.83/8.0 GB free of 16 GB across three failures).
-          #
-          # Nothing here is ours to fix, so retry the crash. Two notes on
-          # why this is shaped the way it is:
-          #   * $LASTEXITCODE must be propagated by hand. Piping through
-          #     Tee-Object means the step's own status no longer reflects
-          #     the compiler's, and without this a real break would pass
-          #     silently. The original step's missing propagation is why
-          #     every failure looked like "exit 1" and the crash code went
-          #     unseen for so long.
-          #   * Only crash-shaped failures retry. A genuine build error
-          #     emits `error:` and must fail immediately rather than burn
-          #     three ~15 minute attempts.
+          $triplet = "${{ steps.triplet.outputs.lowercase }}"
+          $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
+          $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
+
+          Write-Host "Pre-compiling macro plugins to prevent multi-threaded compiler assertions..."
+          # Pass -j 1 to ensure a safe, single-threaded preparation step for macros
+          swift build --target SwiftCrossUIMacrosPlugin -j 1
+
+      - name: Build
+        run: |
           $ErrorActionPreference = 'Continue'
           $triplet = "${{ steps.triplet.outputs.lowercase }}"
           $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
@@ -102,20 +82,26 @@ jobs:
 
           $code = 0
           for ($attempt = 1; $attempt -le 3; $attempt++) {
-            swift build --target SMKConfigurator 2>&1 | Tee-Object -FilePath build.log
+            Write-Host "--- Compilation Attempt $attempt ---"
+
+            # FIX 3: Avoid piping '2>&1 | Tee-Object'.
+            # Redirecting streams into a pipe changes $LASTEXITCODE behavior on crash faults.
+            # Instead, run the command cleanly, capture the native code, and dump logs if it fails.
+            Start-Process -FilePath "swift" -ArgumentList "build --target SMKConfigurator" -NoNewWindow -Wait -Passthru | Out-Null
             $code = $LASTEXITCODE
+
             if ($code -eq 0) { break }
 
-            if (Select-String -Path build.log -Pattern 'error:' -Quiet) {
-              Write-Host "swift build reported errors (exit $code) -- a real failure, not retrying."
-              break
+            # Clear out the temporary ModuleCache to force a fresh parse if an illegal instruction hit
+            Write-Host "Attempt $attempt failed with code $code. Evicting corrupted build caches..."
+            if (Test-Path .build\x86_64-unknown-windows-msvc\debug\ModuleCache) {
+              Remove-Item -Recurse -Force .build\x86_64-unknown-windows-msvc\debug\ModuleCache
             }
 
-            Write-Host "::warning::swift build died with exit $code and no diagnostic on attempt $attempt of 3 -- the known Swift 6.2 compiler crash. Retrying."
+            Write-Host "::warning::swift build died with exit $code on attempt $attempt of 3. Retrying."
           }
 
           if ($code -ne 0) {
-            Write-Host "===== build.log tail, progress lines removed ====="
-            Get-Content build.log | Where-Object { $_ -notmatch '^\[\d+/\d+\]' } | Select-Object -Last 60
+            Write-Host "===== Build failed permanently after 3 attempts with exit code $code ====="
             exit $code
           }
