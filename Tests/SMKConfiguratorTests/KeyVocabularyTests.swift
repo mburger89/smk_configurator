@@ -87,4 +87,34 @@ struct KeyVocabularyTests {
             seen[name.displayLabel] = name
         }
     }
+
+    @Test("drawer max height stays within a 1366x768 laptop's room")
+    @MainActor
+    func drawerHeightIsBounded() {
+        #expect(PaletteDrawerView.maxHeight <= 540)
+        #expect(PaletteDrawerView.maxHeight > PaletteDrawerView.minHeight)
+    }
+
+    @Test("palette renders every group the vocabulary defines")
+    func paletteCoversAllGroups() {
+        #expect(KeyName.allGroups.count == 10)
+        for group in KeyName.allGroups {
+            #expect(!group.keys.isEmpty, "\(group.title) is empty but still rendered")
+            #expect(group.rows >= 1)
+        }
+    }
+
+    /// body and the height arithmetic used to be maintained separately, which is
+    /// how adding Function Keys/System once clipped "Layers & Special" out of
+    /// view. They share keySections now; this asserts they cannot diverge.
+    @Test("every key group reaches the rendered section list")
+    @MainActor
+    func keySectionsCoverEveryGroup() {
+        let rendered = Set(PaletteDrawerView.keySections.map(\.title))
+        for group in KeyName.allGroups {
+            #expect(rendered.contains(group.title), "\(group.title) is not rendered")
+        }
+        #expect(rendered.contains("Modifiers"))
+        #expect(PaletteDrawerView.keySections.count == KeyName.allGroups.count + 1)
+    }
 }

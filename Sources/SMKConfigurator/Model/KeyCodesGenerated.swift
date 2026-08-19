@@ -509,8 +509,8 @@ extension KeyName {
     static let letters: [KeyName] = [.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z]
     static let digits: [KeyName] = [.k1, .k2, .k3, .k4, .k5, .k6, .k7, .k8, .k9, .k0]
     static let editing: [KeyName] = [.enter, .escape, .backspace, .tab, .space, .minus, .equal, .leftBracket, .rightBracket, .backslash, .semicolon, .quote, .grave, .comma, .period, .slash, .capsLock, .delete, .nonUSHash, .nonUSBackslash]
-    static let functionKeys: [KeyName] = [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24]
     static let navigation: [KeyName] = [.home, .pageUp, .end, .pageDown, .leftArrow, .rightArrow, .upArrow, .downArrow, .insert]
+    static let functionKeys: [KeyName] = [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24]
     static let keypad: [KeyName] = [.numLock, .keypadSlash, .keypadAsterisk, .keypadMinus, .keypadPlus, .keypadEnter, .keypad1, .keypad2, .keypad3, .keypad4, .keypad5, .keypad6, .keypad7, .keypad8, .keypad9, .keypad0, .keypadDot, .keypadEqual, .keypadComma, .keypadEqualAS400]
     static let editingCommands: [KeyName] = [.execute, .help, .menu, .select, .stop, .again, .undo, .cut, .copy, .paste, .find]
     static let system: [KeyName] = [.printScreen, .scrollLock, .pause, .application, .keyboardPower, .keyboardMute, .keyboardVolumeUp, .keyboardVolumeDown, .lockingCapsLock, .lockingNumLock, .lockingScrollLock]
@@ -525,8 +525,8 @@ extension KeyName {
             (title: "Letters", keys: letters, rows: 2),
             (title: "Numbers", keys: digits, rows: 1),
             (title: "Editing & Punctuation", keys: editing, rows: 1),
-            (title: "Function Keys", keys: functionKeys, rows: 1),
             (title: "Navigation", keys: navigation, rows: 1),
+            (title: "Function Keys", keys: functionKeys, rows: 1),
             (title: "Keypad", keys: keypad, rows: 1),
             (title: "Editing Commands", keys: editingCommands, rows: 1),
             (title: "System", keys: system, rows: 1),

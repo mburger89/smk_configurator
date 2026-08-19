@@ -2,9 +2,9 @@ import SwiftCrossUI
 
 /// The dense action palette below the board in KEY mode: every action the
 /// firmware understands, grouped into sections and shown simultaneously
-/// (not tabbed), white background, tall enough to fit every section
-/// (see `maxHeight`'s comment) -- see the handoff's "List column"/"Main
-/// content" KEY description. Tapping a chip arms it (see `KeyCapView`);
+/// (not tabbed), white background, as tall as `maxHeight` allows with the
+/// rarer sections scrolling below the fold (see that comment) -- see the
+/// handoff's "List column"/"Main content" KEY description. Tapping a chip arms it (see `KeyCapView`);
 /// tapping the armed chip again disarms it.
 struct PaletteDrawerView: View {
     @Environment(EditorState.self) var editor
@@ -35,10 +35,46 @@ struct PaletteDrawerView: View {
     /// `VStack(spacing: 4)`).
     private static let sectionTitleHeight: Double = 12
     private static let sectionTitleSpacing: Double = 4
-    /// Spacing between the 8 sections in `body`'s outer `VStack`.
+    /// Spacing between sections in `body`'s outer `VStack`.
     private static let sectionSpacing: Double = 12
     /// `body`'s outer `.padding(10)`, top and bottom.
     private static let outerPadding: Double = 10
+
+    /// Chips per row before a section wraps to another row. Not a layout
+    /// constraint -- sections scroll horizontally -- but the point past which a
+    /// single row is unreadable enough to be worth splitting. 13 is what keeps
+    /// Letters at the 2 rows it has always rendered; changing it re-flows every
+    /// section, so it is the one number here worth eyeballing in the running app.
+    private static let chipsPerRow = 13
+
+    /// Every palette section in display order: the generated key groups (see
+    /// `KeyName.allGroups`, ordered by how often they get used), then Modifiers,
+    /// which is not manifest-driven since it comes from `ModifierName`.
+    ///
+    /// `body` and `contentHeight` BOTH derive from this. They used to be
+    /// maintained separately, which is how adding the Function Keys/System
+    /// sections once silently clipped "Layers & Special" out of view -- see
+    /// `maxHeight`. Row counts are computed, not authored, for the same reason.
+    static var keySections: [(title: String, tokens: [ActionToken], rows: Int)] {
+        var sections = KeyName.allGroups.map { group in
+            (title: group.title,
+             tokens: group.keys.map { ActionToken.key($0) },
+             rows: max(1, Int((Double(group.keys.count) / Double(chipsPerRow)).rounded(.up))))
+        }
+        let modifiers = (title: "Modifiers",
+                         tokens: ModifierName.allCases.map { ActionToken.modifier($0) },
+                         rows: 1)
+        // Straight after Navigation, not appended at the end: modifiers are among
+        // the most-reached-for chips here, and anything past the `maxHeight` cap
+        // costs a scroll. Appending would bury them below Keypad/International/
+        // Legacy, which are the sections that genuinely belong down there.
+        if let navigation = sections.firstIndex(where: { $0.title == "Navigation" }) {
+            sections.insert(modifiers, at: navigation + 1)
+        } else {
+            sections.append(modifiers)
+        }
+        return sections
+    }
 
     private static func sectionHeight(rows: Int) -> Double {
         sectionTitleHeight + sectionTitleSpacing
@@ -46,15 +82,15 @@ struct PaletteDrawerView: View {
             + scrollBarReserve
     }
 
-    /// Sum of every section's actual rendered height: the 7 `section(...)`
-    /// calls in `body` (Letters is 2 rows, the rest are 1) plus
-    /// `layersAndSpecialSection`, their spacing, and the outer padding.
+    /// Sum of every section's rendered height, derived from `keySections`
+    /// rather than hand-enumerated, plus the Layers & Special row, the gaps
+    /// between sections, and the outer padding.
     private static var contentHeight: Double {
-        let letters = sectionHeight(rows: 2)
-        let oneRowSections = 6 * sectionHeight(rows: 1)
+        let sections = keySections
+        let sectionsHeight = sections.reduce(0.0) { $0 + sectionHeight(rows: $1.rows) }
         let layersAndSpecial = sectionTitleHeight + sectionTitleSpacing + layersRowHeight + scrollBarReserve
-        let sectionGaps = 7 * sectionSpacing
-        return letters + oneRowSections + layersAndSpecial + sectionGaps + 2 * outerPadding
+        let sectionGaps = Double(sections.count) * sectionSpacing
+        return sectionsHeight + layersAndSpecial + sectionGaps + 2 * outerPadding
     }
 
     /// Safety margin over `contentHeight` covering font-metric variance on
@@ -62,23 +98,27 @@ struct PaletteDrawerView: View {
     /// build-only, no test step -- see the repo's CLAUDE.md).
     private static let heightSafetyMargin: Double = 60
 
-    /// The height the drawer wants: tall enough to fit all 8 sections
-    /// (Letters through Layers & Special) without its own internal
-    /// `ScrollView(.vertical)` needing to scroll. Derived from
-    /// `contentHeight` (rather than a hand-picked constant) plus
-    /// `heightSafetyMargin` so it can't quietly fall behind again the way
-    /// the old flat `413` did once the Function Keys/System sections were
-    /// added, silently clipping "Layers & Special" out of view.
+    /// Ceiling on how tall the drawer may ask to be. `contentHeight` is what it
+    /// would take to show all 12 sections (10 generated key groups, Modifiers,
+    /// and Layers & Special) without internal scrolling -- about 1010pt now that
+    /// the full keyboard-page vocabulary is in, which is taller than a 1366x768
+    /// or 1440x900 laptop can spare. So the drawer asks for the smaller of
+    /// "everything fits" and this cap, and the rare tail sections scroll
+    /// vertically instead.
     ///
-    /// It's a *maximum*, paired with `minHeight` and a `.layoutPriority(1)`
+    /// Sections are ordered by how often they get used (see `KeyName.allGroups`),
+    /// so what lands above the fold is what people actually reach for. The cap is
+    /// set so everything through Modifiers clears it: Layers & Special, Letters,
+    /// Numbers, Editing & Punctuation, Navigation, Modifiers. Function Keys
+    /// onward -- and especially Keypad/International/Legacy -- scroll.
+    ///
+    /// It stays a *maximum*, paired with `minHeight` and a `.layoutPriority(1)`
     /// at the call site (see `KeyMainContentView`) rather than a strict
-    /// `.frame(height:)`: the priority makes the containing `VStack` hand
-    /// the drawer this full height before the board gets any of what's
-    /// left, so the no-scroll case still holds whenever the window has the
-    /// room -- but a short window can still squeeze the drawer down to
-    /// `minHeight` instead of forcing a window `minHeight` taller than a
-    /// 1366x768 or 1440x900 laptop screen.
-    static let maxHeight: Double = contentHeight + heightSafetyMargin
+    /// `.frame(height:)`, so a short window can still squeeze the drawer down to
+    /// `minHeight` instead of forcing a window `minHeight` taller than the
+    /// screen.
+    private static let heightCap: Double = 530
+    static var maxHeight: Double { min(contentHeight + heightSafetyMargin, heightCap) }
 
     /// Floor for the drawer when the window is too short to give it
     /// `maxHeight` -- roughly three sections plus the vertical scrollbar
@@ -89,14 +129,15 @@ struct PaletteDrawerView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 12) {
-                section("Letters", tokens: KeyName.letters.map { ActionToken.key($0) }, rows: 2)
-                section("Numbers", tokens: KeyName.digits.map { ActionToken.key($0) })
-                section("Editing & Punctuation", tokens: KeyName.editing.map { ActionToken.key($0) })
-                section("Function Keys", tokens: KeyName.functionKeys.map { ActionToken.key($0) })
-                section("Navigation", tokens: KeyName.navigation.map { ActionToken.key($0) })
-                section("System", tokens: KeyName.system.map { ActionToken.key($0) })
-                section("Modifiers", tokens: ModifierName.allCases.map { ActionToken.modifier($0) })
+                // First, not last. It holds the only controls with no other
+                // access path in the UI -- the layer picker feeding MO/TG, plus
+                // trans/none/toggle_conn -- and `maxHeight`'s cap means whatever
+                // sits at the bottom is reachable only by scrolling. One row is
+                // a cheap price for those never being below the fold.
                 layersAndSpecialSection
+                ForEach(Self.keySections, id: \.title) { s in
+                    section(s.title, tokens: s.tokens, rows: s.rows)
+                }
             }
             .padding(10)
         }
