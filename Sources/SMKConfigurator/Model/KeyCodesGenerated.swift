@@ -82,6 +82,89 @@ enum KeyName: String, CaseIterable, Hashable {
     case upArrow = "up"
     case downArrow = "down"
     case application = "application"
+    case nonUSHash = "nonUSHash"
+    case nonUSBackslash = "nonUSBackslash"
+    case insert = "insert"
+    case numLock = "numLock"
+    case keypadSlash = "keypadSlash"
+    case keypadAsterisk = "keypadAsterisk"
+    case keypadMinus = "keypadMinus"
+    case keypadPlus = "keypadPlus"
+    case keypadEnter = "keypadEnter"
+    case keypad1 = "keypad1"
+    case keypad2 = "keypad2"
+    case keypad3 = "keypad3"
+    case keypad4 = "keypad4"
+    case keypad5 = "keypad5"
+    case keypad6 = "keypad6"
+    case keypad7 = "keypad7"
+    case keypad8 = "keypad8"
+    case keypad9 = "keypad9"
+    case keypad0 = "keypad0"
+    case keypadDot = "keypadDot"
+    case keypadEqual = "keypadEqual"
+    case keypadComma = "keypadComma"
+    case keypadEqualAS400 = "keypadEqualAS400"
+    case keyboardPower = "keyboardPower"
+    case keyboardMute = "keyboardMute"
+    case keyboardVolumeUp = "keyboardVolumeUp"
+    case keyboardVolumeDown = "keyboardVolumeDown"
+    case lockingCapsLock = "lockingCapsLock"
+    case lockingNumLock = "lockingNumLock"
+    case lockingScrollLock = "lockingScrollLock"
+    case f13 = "f13"
+    case f14 = "f14"
+    case f15 = "f15"
+    case f16 = "f16"
+    case f17 = "f17"
+    case f18 = "f18"
+    case f19 = "f19"
+    case f20 = "f20"
+    case f21 = "f21"
+    case f22 = "f22"
+    case f23 = "f23"
+    case f24 = "f24"
+    case execute = "execute"
+    case help = "help"
+    case menu = "menu"
+    case select = "select"
+    case stop = "stop"
+    case again = "again"
+    case undo = "undo"
+    case cut = "cut"
+    case copy = "copy"
+    case paste = "paste"
+    case find = "find"
+    case international1 = "international1"
+    case international2 = "international2"
+    case international3 = "international3"
+    case international4 = "international4"
+    case international5 = "international5"
+    case international6 = "international6"
+    case international7 = "international7"
+    case international8 = "international8"
+    case international9 = "international9"
+    case language1 = "language1"
+    case language2 = "language2"
+    case language3 = "language3"
+    case language4 = "language4"
+    case language5 = "language5"
+    case language6 = "language6"
+    case language7 = "language7"
+    case language8 = "language8"
+    case language9 = "language9"
+    case alternateErase = "alternateErase"
+    case systemRequest = "systemRequest"
+    case cancel = "cancel"
+    case clear = "clear"
+    case prior = "prior"
+    case returnKey = "returnKey"
+    case separator = "separator"
+    case out = "out"
+    case oper = "oper"
+    case clearAgain = "clearAgain"
+    case crsel = "crsel"
+    case exsel = "exsel"
 }
 
 extension KeyName {
@@ -164,7 +247,90 @@ extension KeyName {
         case .rightArrow: return "→"
         case .upArrow: return "↑"
         case .downArrow: return "↓"
-        case .application: return "Menu"
+        case .application: return "App"
+        case .nonUSHash: return "#~"
+        case .nonUSBackslash: return "\\|"
+        case .insert: return "Ins"
+        case .numLock: return "NumLk"
+        case .keypadSlash: return "K/"
+        case .keypadAsterisk: return "K*"
+        case .keypadMinus: return "K-"
+        case .keypadPlus: return "K+"
+        case .keypadEnter: return "K⏎"
+        case .keypad1: return "K1"
+        case .keypad2: return "K2"
+        case .keypad3: return "K3"
+        case .keypad4: return "K4"
+        case .keypad5: return "K5"
+        case .keypad6: return "K6"
+        case .keypad7: return "K7"
+        case .keypad8: return "K8"
+        case .keypad9: return "K9"
+        case .keypad0: return "K0"
+        case .keypadDot: return "K."
+        case .keypadEqual: return "K="
+        case .keypadComma: return "K,"
+        case .keypadEqualAS400: return "K=A"
+        case .keyboardPower: return "Power"
+        case .keyboardMute: return "Mute"
+        case .keyboardVolumeUp: return "Vol+"
+        case .keyboardVolumeDown: return "Vol-"
+        case .lockingCapsLock: return "LCaps"
+        case .lockingNumLock: return "LNum"
+        case .lockingScrollLock: return "LScrl"
+        case .f13: return "F13"
+        case .f14: return "F14"
+        case .f15: return "F15"
+        case .f16: return "F16"
+        case .f17: return "F17"
+        case .f18: return "F18"
+        case .f19: return "F19"
+        case .f20: return "F20"
+        case .f21: return "F21"
+        case .f22: return "F22"
+        case .f23: return "F23"
+        case .f24: return "F24"
+        case .execute: return "Exec"
+        case .help: return "Help"
+        case .menu: return "Menu"
+        case .select: return "Selct"
+        case .stop: return "Stop"
+        case .again: return "Again"
+        case .undo: return "Undo"
+        case .cut: return "Cut"
+        case .copy: return "Copy"
+        case .paste: return "Paste"
+        case .find: return "Find"
+        case .international1: return "INT1"
+        case .international2: return "INT2"
+        case .international3: return "INT3"
+        case .international4: return "INT4"
+        case .international5: return "INT5"
+        case .international6: return "INT6"
+        case .international7: return "INT7"
+        case .international8: return "INT8"
+        case .international9: return "INT9"
+        case .language1: return "LNG1"
+        case .language2: return "LNG2"
+        case .language3: return "LNG3"
+        case .language4: return "LNG4"
+        case .language5: return "LNG5"
+        case .language6: return "LNG6"
+        case .language7: return "LNG7"
+        case .language8: return "LNG8"
+        case .language9: return "LNG9"
+        case .alternateErase: return "AltEr"
+        case .systemRequest: return "SysRq"
+        case .cancel: return "Cncl"
+        case .clear: return "Clear"
+        case .prior: return "Prior"
+        case .returnKey: return "Retn"
+        case .separator: return "Sep"
+        case .out: return "Out"
+        case .oper: return "Oper"
+        case .clearAgain: return "ClrAg"
+        case .crsel: return "CrSel"
+        case .exsel: return "ExSel"
         }
     }
 
@@ -252,6 +418,89 @@ extension KeyName {
         case .upArrow: return 0x52
         case .downArrow: return 0x51
         case .application: return 0x65
+        case .nonUSHash: return 0x32
+        case .nonUSBackslash: return 0x64
+        case .insert: return 0x49
+        case .numLock: return 0x53
+        case .keypadSlash: return 0x54
+        case .keypadAsterisk: return 0x55
+        case .keypadMinus: return 0x56
+        case .keypadPlus: return 0x57
+        case .keypadEnter: return 0x58
+        case .keypad1: return 0x59
+        case .keypad2: return 0x5A
+        case .keypad3: return 0x5B
+        case .keypad4: return 0x5C
+        case .keypad5: return 0x5D
+        case .keypad6: return 0x5E
+        case .keypad7: return 0x5F
+        case .keypad8: return 0x60
+        case .keypad9: return 0x61
+        case .keypad0: return 0x62
+        case .keypadDot: return 0x63
+        case .keypadEqual: return 0x67
+        case .keypadComma: return 0x85
+        case .keypadEqualAS400: return 0x86
+        case .keyboardPower: return 0x66
+        case .keyboardMute: return 0x7F
+        case .keyboardVolumeUp: return 0x80
+        case .keyboardVolumeDown: return 0x81
+        case .lockingCapsLock: return 0x82
+        case .lockingNumLock: return 0x83
+        case .lockingScrollLock: return 0x84
+        case .f13: return 0x68
+        case .f14: return 0x69
+        case .f15: return 0x6A
+        case .f16: return 0x6B
+        case .f17: return 0x6C
+        case .f18: return 0x6D
+        case .f19: return 0x6E
+        case .f20: return 0x6F
+        case .f21: return 0x70
+        case .f22: return 0x71
+        case .f23: return 0x72
+        case .f24: return 0x73
+        case .execute: return 0x74
+        case .help: return 0x75
+        case .menu: return 0x76
+        case .select: return 0x77
+        case .stop: return 0x78
+        case .again: return 0x79
+        case .undo: return 0x7A
+        case .cut: return 0x7B
+        case .copy: return 0x7C
+        case .paste: return 0x7D
+        case .find: return 0x7E
+        case .international1: return 0x87
+        case .international2: return 0x88
+        case .international3: return 0x89
+        case .international4: return 0x8A
+        case .international5: return 0x8B
+        case .international6: return 0x8C
+        case .international7: return 0x8D
+        case .international8: return 0x8E
+        case .international9: return 0x8F
+        case .language1: return 0x90
+        case .language2: return 0x91
+        case .language3: return 0x92
+        case .language4: return 0x93
+        case .language5: return 0x94
+        case .language6: return 0x95
+        case .language7: return 0x96
+        case .language8: return 0x97
+        case .language9: return 0x98
+        case .alternateErase: return 0x99
+        case .systemRequest: return 0x9A
+        case .cancel: return 0x9B
+        case .clear: return 0x9C
+        case .prior: return 0x9D
+        case .returnKey: return 0x9E
+        case .separator: return 0x9F
+        case .out: return 0xA0
+        case .oper: return 0xA1
+        case .clearAgain: return 0xA2
+        case .crsel: return 0xA3
+        case .exsel: return 0xA4
         }
     }
 }
@@ -259,14 +508,14 @@ extension KeyName {
 extension KeyName {
     static let letters: [KeyName] = [.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z]
     static let digits: [KeyName] = [.k1, .k2, .k3, .k4, .k5, .k6, .k7, .k8, .k9, .k0]
-    static let editing: [KeyName] = [.enter, .escape, .backspace, .tab, .space, .minus, .equal, .leftBracket, .rightBracket, .backslash, .semicolon, .quote, .grave, .comma, .period, .slash, .capsLock, .delete]
-    static let functionKeys: [KeyName] = [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12]
-    static let navigation: [KeyName] = [.home, .pageUp, .end, .pageDown, .leftArrow, .rightArrow, .upArrow, .downArrow]
-    static let keypad: [KeyName] = []
-    static let editingCommands: [KeyName] = []
-    static let system: [KeyName] = [.printScreen, .scrollLock, .pause, .application]
-    static let international: [KeyName] = []
-    static let legacy: [KeyName] = []
+    static let editing: [KeyName] = [.enter, .escape, .backspace, .tab, .space, .minus, .equal, .leftBracket, .rightBracket, .backslash, .semicolon, .quote, .grave, .comma, .period, .slash, .capsLock, .delete, .nonUSHash, .nonUSBackslash]
+    static let functionKeys: [KeyName] = [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24]
+    static let navigation: [KeyName] = [.home, .pageUp, .end, .pageDown, .leftArrow, .rightArrow, .upArrow, .downArrow, .insert]
+    static let keypad: [KeyName] = [.numLock, .keypadSlash, .keypadAsterisk, .keypadMinus, .keypadPlus, .keypadEnter, .keypad1, .keypad2, .keypad3, .keypad4, .keypad5, .keypad6, .keypad7, .keypad8, .keypad9, .keypad0, .keypadDot, .keypadEqual, .keypadComma, .keypadEqualAS400]
+    static let editingCommands: [KeyName] = [.execute, .help, .menu, .select, .stop, .again, .undo, .cut, .copy, .paste, .find]
+    static let system: [KeyName] = [.printScreen, .scrollLock, .pause, .application, .keyboardPower, .keyboardMute, .keyboardVolumeUp, .keyboardVolumeDown, .lockingCapsLock, .lockingNumLock, .lockingScrollLock]
+    static let international: [KeyName] = [.international1, .international2, .international3, .international4, .international5, .international6, .international7, .international8, .international9, .language1, .language2, .language3, .language4, .language5, .language6, .language7, .language8, .language9]
+    static let legacy: [KeyName] = [.alternateErase, .systemRequest, .cancel, .clear, .prior, .returnKey, .separator, .out, .oper, .clearAgain, .crsel, .exsel]
 
     /// Palette sections in display order, consumed by PaletteDrawerView for
     /// both rendering and its height math. Groups with no members are dropped

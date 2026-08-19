@@ -63,4 +63,28 @@ struct KeyVocabularyTests {
                     "KeyName.\(name) is not in exactly one palette group")
         }
     }
+
+    @Test("the full keyboard-page vocabulary is present")
+    func vocabularyIsComplete() {
+        #expect(KeyName.allCases.count == 161)
+        #expect(KeyName(rawValue: "insert") != nil)
+        #expect(KeyName(rawValue: "keypadAsterisk") != nil)
+        #expect(KeyName(rawValue: "f24") != nil)
+        #expect(KeyName(rawValue: "exsel") != nil)
+        #expect(KeyName.keypad.count == 20)
+        #expect(KeyName.editingCommands.count == 11)
+        #expect(KeyName.international.count == 18)
+        #expect(KeyName.legacy.count == 12)
+    }
+
+    @Test("no two palette chips carry the same label")
+    func labelsAreUnique() {
+        var seen: [String: KeyName] = [:]
+        for name in KeyName.allCases {
+            if let clash = seen[name.displayLabel] {
+                Issue.record("\(name) and \(clash) both render as \"\(name.displayLabel)\"")
+            }
+            seen[name.displayLabel] = name
+        }
+    }
 }

@@ -41,10 +41,22 @@ struct ActionTokenTests {
         }
     }
 
+    /// The real scenario this guards: a keymap.json written by a *newer*
+    /// firmware, naming a key this build's vocabulary doesn't have yet, must
+    /// survive a load/save round-trip rather than being silently dropped.
+    /// (This used to use "key:f13" as its example -- f13 is real vocabulary now,
+    /// which is what `f13ParsesNowThatItIsRealVocabulary` below records.)
     @Test("unrecognized cell text is preserved verbatim, never dropped")
     func unknownTokenPreserved() {
-        let parsed = ActionToken.parse("key:f13")
-        #expect(parsed == .raw("key:f13"))
-        #expect(parsed.canonicalString == "key:f13")
+        let parsed = ActionToken.parse("key:someFutureKey")
+        #expect(parsed == .raw("key:someFutureKey"))
+        #expect(parsed.canonicalString == "key:someFutureKey")
+    }
+
+    @Test("f13 parses as a real key now that the vocabulary covers it")
+    func f13ParsesNowThatItIsRealVocabulary() {
+        #expect(ActionToken.parse("key:f13") == .key(.f13))
+        #expect(ActionToken.parse("key:insert") == .key(.insert))
+        #expect(ActionToken.parse("key:exsel") == .key(.exsel))
     }
 }
