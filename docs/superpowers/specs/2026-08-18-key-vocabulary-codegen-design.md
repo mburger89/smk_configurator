@@ -20,7 +20,7 @@ Measured against QMK's `data/constants/keycodes/keycodes_0.0.1_basic.hjson`,
 |---|---|---|
 | 0x32, 0x64 | `nonUSHash`, `nonUSBackslash` (ISO) | 2 |
 | 0x49 | `insert` | 1 |
-| 0x53–0x63, 0x67, 0x85, 0x86 | Num Lock + full keypad cluster | 18 |
+| 0x53–0x63, 0x67, 0x85, 0x86 | Num Lock + full keypad cluster | 20 |
 | 0x66 | `keyboardPower` | 1 |
 | 0x68–0x73 | F13–F24 | 12 |
 | 0x74–0x7E | Execute, Help, Menu, Select, Stop, Again, Undo, Cut, Copy, Paste, Find | 11 |
@@ -34,8 +34,8 @@ Measured against QMK's `data/constants/keycodes/keycodes_0.0.1_basic.hjson`,
 but no Insert.
 
 Behind that sits a structural problem. The vocabulary is **hand-mirrored across two
-repos** — an 85-line `strcmp` if-chain in the firmware, a parallel `KeyName` enum plus
-85 hand-written `displayLabel` cases here. Nothing checks that the two agree. When they
+repos** — a 78-entry `strcmp` if-chain in the firmware, a parallel `KeyName` enum plus
+78 hand-written `displayLabel` cases here. Nothing checks that the two agree. When they
 disagree, the failure is silent: the editor writes a token, the firmware's `fromCString`
 falls through to `.noKey`, and the key does nothing with no error anywhere. Adding 83
 keys doubles that hand-maintained surface and roughly doubles the odds of that bug.
@@ -85,8 +85,8 @@ Five pieces:
 This repo already pays exactly this cost for a cross-repo constant: `ble_upload_uuids.json`
 → `generate_ble_uuids.sh` → `Sources/components/smk_ble_uuids.h` **and**
 `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift`, pinned by `BLEUploadUUIDsTests`.
-The precedent, the failure mode, and the fix are the same shape. At 168 vocabulary
-entries (85 existing + 83 new), hand-mirroring stops being sustainable — and Spec 2 adds
+The precedent, the failure mode, and the fix are the same shape. At 161 vocabulary
+entries (78 existing + 83 new), hand-mirroring stops being sustainable — and Spec 2 adds
 another ~28 on top.
 
 ## 1. `keycodes.json` (new, `~/esp/SMK/keycodes.json`)
@@ -143,7 +143,7 @@ byte-identical output (manifest order preserved; no dict iteration, no timestamp
 ### 3.1 Generated `KeyCode`
 
 `Sources/SMKCore/KeyCodesGenerated.swift` replaces the hand-written `KeyCode` enum and its
-85-line `strcmp` chain in `LayerEngine.swift`:
+78-entry `strcmp` chain in `LayerEngine.swift`:
 
 ```swift
 enum KeyCode: UInt8 { case noKey, a, b, /* … */ exsel, transparent }
@@ -162,8 +162,8 @@ emitting `case a = 4` style explicit raw values instead would be a silently diff
 type, since `LayerEngine` and `HIDReport.addKey` depend on `rawValue` being the HID usage.
 
 The table walk is the same O(n) `strcmp` sequence the if-chain already was — no
-performance change, ~170 lines of boilerplate replaced by ~6 lines of logic plus data.
-At ~170 entries × 300 cells this remains microseconds at boot.
+performance change, ~160 lines of boilerplate replaced by ~6 lines of logic plus data.
+At 161 entries × 300 cells this remains microseconds at boot.
 
 `KeyAction.fromCString`'s prefix dispatch (`key:` / `mod:` / `mo:` / `tg:` / `none` /
 `trans` / `toggle_conn`) stays hand-written and **unchanged** — only the vocabulary is
