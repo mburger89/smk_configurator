@@ -28,7 +28,7 @@ private let appearanceModeDefaultsKey = "appearanceMode"
 /// `KeymapUploader.maxPayloadLength`'s doc comment) — shown as a static
 /// label in the status bar / Device pane, since the app has no way to read
 /// a running firmware's version yet.
-let firmwareVersionLabel = "v0.8.0"
+let firmwareVersionLabel = "v0.9.0"
 
 /// Which of the four top-level workspaces the icon rail has selected. Drives
 /// what the list/main/inspector columns render; everything else (selected
