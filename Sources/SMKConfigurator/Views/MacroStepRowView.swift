@@ -31,7 +31,7 @@ struct MacroStepRowView: View {
             TapTarget(
                 background: isSelected ? chrome.accentWash : chrome.column,
                 cornerRadius: 7,
-                border: isSelected ? chrome.accent : Color.white.opacity(0.05),
+                border: isSelected ? chrome.accent : chrome.dividerLight,
                 action: onSelect
             ) {
                 HStack(spacing: 12) {
