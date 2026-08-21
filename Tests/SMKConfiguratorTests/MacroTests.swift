@@ -65,4 +65,45 @@ struct MacroTests {
         )
         #expect(try roundTrip(macro) == macro)
     }
+
+    @Test("each step type compiles to its documented byte width")
+    func stepByteWidths() {
+        #expect(MacroStep.keystroke(mods: [.leftGUI], key: .b, holdMs: 40).compiledSize == 5)
+        #expect(MacroStep.delay(ms: 400).compiledSize == 3)
+        #expect(MacroStep.layer(op: .momentary, n: 1).compiledSize == 3)
+        // 3 header bytes + one byte per UTF-8 byte of payload
+        #expect(MacroStep.text("abc", delivery: .keystrokes, msPerChar: 12).compiledSize == 6)
+        // 4 header bytes + the body's own size
+        #expect(MacroStep.repeatBlock(count: 2, steps: [.delay(ms: 5)]).compiledSize == 7)
+        // An unexecutable step costs nothing on the board
+        #expect(MacroStep.raw(.object(["t": .string("hologram")])).compiledSize == 0)
+    }
+
+    @Test("text steps are sized in UTF-8 bytes, not characters")
+    func textSizedInUTF8Bytes() {
+        // "é" is two UTF-8 bytes
+        #expect(MacroStep.text("é", delivery: .keystrokes, msPerChar: 12).compiledSize == 5)
+    }
+
+    @Test("a macro's size is its header plus its steps")
+    func macroSize() {
+        let macro = MacroDefinition(id: 5, name: "ab", steps: [.delay(ms: 400)])
+        // 3 header bytes + 2 name bytes + 3 step bytes
+        #expect(macro.compiledSize == 8)
+    }
+
+    @Test("estimated duration sums delays, holds, and typing time")
+    func estimatedDuration() {
+        let macro = MacroDefinition(
+            id: 1, name: "t",
+            steps: [
+                .keystroke(mods: [], key: .a, holdMs: 40),
+                .delay(ms: 400),
+                .text("abcd", delivery: .keystrokes, msPerChar: 12),
+                .repeatBlock(count: 3, steps: [.delay(ms: 10)]),
+            ]
+        )
+        // 40 + 400 + (4 * 12) + (3 * 10)
+        #expect(macro.estimatedDurationMs == 518)
+    }
 }

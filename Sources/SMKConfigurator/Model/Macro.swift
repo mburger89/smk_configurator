@@ -176,3 +176,57 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
         self.steps = steps
     }
 }
+
+// MARK: - Compiled size
+
+/// The on-board bytecode layout. These widths are the contract between this
+/// editor's byte meter and the firmware's macro player; changing one without
+/// the other makes the meter lie. See contract C3 in
+/// `docs/superpowers/specs/2026-08-20-macro-creation-design.md`.
+///
+///   keystroke   opcode(1) + mods(1) + keycode(1) + holdMs(2)      = 5
+///   delay       opcode(1) + ms(2)                                 = 3
+///   layer       opcode(1) + op(1) + index(1)                      = 3
+///   text        opcode(1) + msPerChar(1) + length(1) + payload    = 3 + n
+///   repeat      opcode(1) + count(1) + bodyLength(2) + body       = 4 + body
+///   macro       id(1) + nameLength(1) + name + stepCount(1)       = 3 + name + steps
+extension MacroStep {
+    var compiledSize: Int {
+        switch self {
+        case .keystroke: return 5
+        case .delay: return 3
+        case .layer: return 3
+        case .text(let s, _, _): return 3 + s.utf8.count
+        case .repeatBlock(_, let steps): return 4 + steps.reduce(0) { $0 + $1.compiledSize }
+        case .raw: return 0 // never compiled, so it costs no board memory
+        }
+    }
+
+    /// Milliseconds this step is expected to take when the board runs it.
+    var estimatedDurationMs: Int {
+        switch self {
+        case .keystroke(_, _, let holdMs): return holdMs
+        case .delay(let ms): return ms
+        case .text(let s, _, let msPerChar): return s.count * msPerChar
+        case .layer: return 0
+        case .repeatBlock(let count, let steps):
+            return count * steps.reduce(0) { $0 + $1.estimatedDurationMs }
+        case .raw: return 0
+        }
+    }
+}
+
+extension MacroDefinition {
+    var compiledSize: Int {
+        3 + name.utf8.count + steps.reduce(0) { $0 + $1.compiledSize }
+    }
+
+    var estimatedDurationMs: Int {
+        steps.reduce(0) { $0 + $1.estimatedDurationMs }
+    }
+
+    /// "0.52 s est." as shown under the macro name in the canvas header.
+    var estimatedDurationLabel: String {
+        String(format: "%.2f s est.", Double(estimatedDurationMs) / 1000)
+    }
+}
