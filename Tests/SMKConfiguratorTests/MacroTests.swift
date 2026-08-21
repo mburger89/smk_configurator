@@ -148,8 +148,9 @@ struct MacroTests {
         #expect(MacroStep.keystroke(mods: [.leftGUI], key: .b, holdMs: 40).compiledSize == 5)
         #expect(MacroStep.delay(ms: 400).compiledSize == 3)
         #expect(MacroStep.layer(op: .momentary, n: 1).compiledSize == 3)
-        // 3 header bytes + one byte per UTF-8 byte of payload
-        #expect(MacroStep.text("abc", delivery: .keystrokes, msPerChar: 12).compiledSize == 6)
+        // 4 header bytes (opcode + delivery + msPerChar + length) + one byte
+        // per UTF-8 byte of payload
+        #expect(MacroStep.text("abc", delivery: .keystrokes, msPerChar: 12).compiledSize == 7)
         // 4 header bytes + the body's own size
         #expect(MacroStep.repeatBlock(count: 2, steps: [.delay(ms: 5)]).compiledSize == 7)
         // An unexecutable step costs nothing on the board
@@ -158,8 +159,8 @@ struct MacroTests {
 
     @Test("text steps are sized in UTF-8 bytes, not characters")
     func textSizedInUTF8Bytes() {
-        // "é" is two UTF-8 bytes
-        #expect(MacroStep.text("é", delivery: .keystrokes, msPerChar: 12).compiledSize == 5)
+        // "é" is two UTF-8 bytes; 4 header bytes + 2 payload bytes
+        #expect(MacroStep.text("é", delivery: .keystrokes, msPerChar: 12).compiledSize == 6)
     }
 
     @Test("a macro's size is its header plus its steps")
@@ -235,5 +236,79 @@ struct MacroTests {
             steps: [.delay(ms: 250), .delay(ms: 250)]
         )
         #expect(macro.canvasSummary == "macro:5 · 2 steps · 0.50 s est.")
+    }
+
+    // MARK: - Bytecode overflow validation
+
+    @Test("a text payload at the 255-byte one-byte length maximum does not overflow")
+    func textPayloadAtMaximumDoesNotOverflow() {
+        let step = MacroStep.text(String(repeating: "x", count: 255), delivery: .keystrokes, msPerChar: 12)
+        #expect(step.overflows.isEmpty)
+    }
+
+    @Test("a text payload over the 255-byte one-byte length maximum overflows")
+    func textPayloadOverMaximumOverflows() {
+        let step = MacroStep.text(String(repeating: "x", count: 256), delivery: .keystrokes, msPerChar: 12)
+        #expect(step.overflows == [.textPayloadTooLong(byteCount: 256)])
+    }
+
+    @Test("a text payload's overflow check counts UTF-8 bytes, not characters")
+    func textPayloadOverflowCountsUTF8Bytes() {
+        // 128 "é" characters is 256 UTF-8 bytes, over the 255-byte maximum
+        let step = MacroStep.text(String(repeating: "é", count: 128), delivery: .keystrokes, msPerChar: 12)
+        #expect(step.overflows == [.textPayloadTooLong(byteCount: 256)])
+    }
+
+    @Test("an oversized text payload nested inside a repeat block is still caught")
+    func nestedOversizedTextPayloadOverflows() {
+        let oversized = MacroStep.text(String(repeating: "x", count: 300), delivery: .keystrokes, msPerChar: 12)
+        let step = MacroStep.repeatBlock(count: 2, steps: [.delay(ms: 5), oversized])
+        #expect(step.overflows == [.textPayloadTooLong(byteCount: 300)])
+    }
+
+    @Test("a macro name at the 255-byte one-byte length maximum does not overflow")
+    func macroNameAtMaximumDoesNotOverflow() {
+        let macro = MacroDefinition(id: 1, name: String(repeating: "n", count: 255), steps: [])
+        #expect(macro.overflows.isEmpty)
+    }
+
+    @Test("a macro name over the 255-byte one-byte length maximum overflows")
+    func macroNameOverMaximumOverflows() {
+        let macro = MacroDefinition(id: 1, name: String(repeating: "n", count: 256), steps: [])
+        #expect(macro.overflows == [.macroNameTooLong(byteCount: 256)])
+    }
+
+    @Test("a macro with 255 steps does not overflow the one-byte step count")
+    func macroAtMaximumStepCountDoesNotOverflow() {
+        let macro = MacroDefinition(id: 1, name: "n", steps: Array(repeating: .delay(ms: 1), count: 255))
+        #expect(macro.overflows.isEmpty)
+    }
+
+    @Test("a macro with more than 255 steps overflows the one-byte step count")
+    func macroOverMaximumStepCountOverflows() {
+        let macro = MacroDefinition(id: 1, name: "n", steps: Array(repeating: .delay(ms: 1), count: 256))
+        #expect(macro.overflows == [.tooManySteps(count: 256)])
+    }
+
+    @Test("a macro's overflows report every violation at once, not just the first")
+    func macroReportsAllOverflowsAtOnce() {
+        let macro = MacroDefinition(
+            id: 1,
+            name: String(repeating: "n", count: 256),
+            steps: [.text(String(repeating: "x", count: 300), delivery: .keystrokes, msPerChar: 12)]
+        )
+        #expect(macro.overflows.count == 2)
+        #expect(macro.overflows.contains(.macroNameTooLong(byteCount: 256)))
+        #expect(macro.overflows.contains(.textPayloadTooLong(byteCount: 300)))
+    }
+
+    @Test("a well-formed macro has no overflows and is compilable")
+    func wellFormedMacroIsCompilable() {
+        let macro = MacroDefinition(
+            id: 1, name: "ok",
+            steps: [.text("hello", delivery: .keystrokes, msPerChar: 12), .delay(ms: 5)]
+        )
+        #expect(macro.overflows.isEmpty)
+        #expect(macro.isCompilable)
     }
 }

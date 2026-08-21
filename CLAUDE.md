@@ -55,14 +55,84 @@ This app is written against a specific version of `~/esp/SMK` and several places
 - `defaultKeymapURL` (`EditorState.swift`) points at `~/esp/SMK/keymap.json` — the reference file this app is pointed at by default.
 - `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` — **generated**, do not edit. The custom GATT upload service's UUIDs, produced together with the firmware's `Sources/components/smk_ble_uuids.h` by `~/esp/SMK/generate_ble_uuids.sh` from `~/esp/SMK/ble_upload_uuids.json`. Regenerate in both repos and commit both. `BLEUploadUUIDsTests` pins the values.
 - **Macros** (`Model/Macro.swift`) are carried in `keymap.json` under an
-  optional top-level `"macros"` array and uploaded with the layers. Three
-  things must stay in lockstep with the firmware, and none of them exists on
-  the firmware side yet (see
-  `docs/superpowers/specs/2026-08-20-macro-creation-design.md`, sub-project 3):
-  the `macro:N` action token in `ActionToken`/`KeyAction`; the step schema
-  parsed from `"macros"`; and `MacroStep.compiledSize`'s byte widths, which
-  are the contract behind the editor's byte meter — if the firmware's player
-  uses different widths, the meter lies.
+  optional top-level `"macros"` array and uploaded with the layers. None of
+  this exists on the firmware side yet (see
+  `docs/superpowers/specs/2026-08-20-macro-creation-design.md`, sub-project
+  3). A firmware author implementing the macro player needs all of the
+  following — not just the byte-width table in `MacroStep.compiledSize`'s
+  doc comment, which omits the opcode values, endianness, bit packing, and
+  keycode derivation a byte-for-byte implementation needs:
+
+  - **JSON schema.** A macro is `{ "id": Int, "name": String, "steps": [...] }`.
+    Each step object has a `"t"` field selecting its shape (`CodingKeys` in
+    `MacroStep` names every JSON field below, since they otherwise appear
+    nowhere but that enum):
+    - `{"t":"key","k":"key:<name>","mods":["leftShift",...],"hold":<ms>}` —
+      `"k"` is optional (a modifiers-only chord omits it) and reuses the
+      `key:` string `ActionToken` already parses, naming a `KeyName`.
+    - `{"t":"text","s":"<string>","delivery":"keystrokes"|"paste","cpm":<msPerChar>}`
+      — `"delivery"` defaults to `"keystrokes"` when absent.
+    - `{"t":"delay","ms":<ms>}`
+    - `{"t":"layer","op":"mo"|"tg","n":<layer index>}`
+    - `{"t":"rpt","count":<n>,"steps":[...]}` — does not nest; a `"rpt"`
+      whose own `"steps"` contains another `"rpt"` is invalid, and the
+      editor preserves it unexecuted rather than running it.
+    A step whose `"t"` is unrecognized, or whose known fields don't resolve
+    in this build (an unknown key name, an unrecognized modifier anywhere in
+    `"mods"`, an unrecognized `"delivery"`/`"op"`), round-trips through the
+    editor unexecuted rather than being dropped or silently normalized —
+    `MacroStep.raw`. A per-macro field this build doesn't know (e.g. a
+    future `"enabled"`) round-trips the same way.
+
+  - **Bytecode layout and opcodes.** The layout is `MacroStep.compiledSize`'s
+    doc comment; the opcode byte each step's `"t"` compiles to is only
+    defined here:
+
+    | step | opcode | layout |
+    |---|---|---|
+    | keystroke | `0x01` | `opcode(1) + mods(1) + keycode(1) + holdMs(2)` = 5 |
+    | delay | `0x02` | `opcode(1) + ms(2)` = 3 |
+    | layer | `0x03` | `opcode(1) + op(1) + index(1)` = 3 |
+    | text | `0x04` | `opcode(1) + delivery(1) + msPerChar(1) + length(1) + payload` = 4 + n |
+    | repeat | `0x05` | `opcode(1) + count(1) + bodyLength(2) + body` = 4 + body |
+
+    A compiled macro is `id(1) + nameLength(1) + name + stepCount(1) + steps`.
+    All multi-byte fields (`holdMs`, `ms`, `bodyLength`) are **little-endian**
+    — the native byte order of both supported MCUs (RP2040 is Cortex-M0+,
+    ESP32-C6 is RISC-V; both little-endian), so neither port needs a
+    byte-swap.
+
+  - **`mods` bit packing.** `ModifierName`'s eight cases, in their
+    `CaseIterable` declaration order (`leftCtrl, leftShift, leftAlt,
+    leftGUI, rightCtrl, rightShift, rightAlt, rightGUI`), are bits 0–7 of
+    the `mods` byte, LSB first. That is the same order and layout as the
+    modifier byte of a standard USB HID keyboard report, so a firmware
+    `mods` byte can be OR'd directly into a HID report rather than remapped.
+
+  - **`keycode` derivation.** `keycode(1)` is `KeyName.hidUsage`
+    (`KeyCodesGenerated.swift`) — the same HID usage ID sent in a keyboard
+    report. `0x00` (HID "no key") when a keystroke step has no `"k"`.
+
+  - **`delivery` byte.** `0x00` = `"keystrokes"` (type each character),
+    `0x01` = `"paste"`. This byte exists precisely so the editor's
+    keystrokes/paste toggle has somewhere to land on the wire; a layout
+    without it would make that toggle a UI-only no-op.
+
+  - **`op` byte.** `0x00` = `"mo"` (momentary), `0x01` = `"tg"` (toggle).
+
+  - **One-byte field maxima.** `length`, `nameLength`, and `stepCount` are
+    each one byte, so a text payload, a macro name, and a macro's top-level
+    step count each cap at 255 (UTF-8 bytes for the first two). The editor
+    enforces this on its side via `MacroStep.overflows` /
+    `MacroDefinition.overflows` (`MacroDefinition.isCompilable` is the
+    all-clear check) and is expected to block flashing anything that
+    overflows — firmware should still reject rather than silently truncate
+    if a real board ever receives one anyway.
+
+  `ActionToken`'s `macro:N` token and the `CAPS` capacity command
+  (`MacroCapacity`) don't exist on the firmware side yet either, and need
+  their own implementations; they aren't part of the bytecode contract
+  above.
 - `MacroCapacity.floor` is what the editor assumes before any board has
   reported its real capacity via the (not yet implemented) `CAPS` command.
   It is a deliberate under-promise, not a target.

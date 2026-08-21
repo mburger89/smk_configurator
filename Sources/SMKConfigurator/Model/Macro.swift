@@ -270,28 +270,85 @@ private struct DynamicCodingKey: CodingKey {
     init?(intValue: Int) { nil }
 }
 
+/// A way a `MacroStep` or `MacroDefinition` would overflow a one-byte field
+/// in the on-board bytecode layout (see `MacroStep.compiledSize`'s doc
+/// comment for the full layout). The JSON model itself has no such limits
+/// (a `String` can be any length), so nothing else catches this before the
+/// firmware would receive a length byte that has wrapped around.
+enum MacroOverflow: Equatable, Hashable {
+    /// A `.text` step's payload exceeds `MacroStep.maxTextPayloadBytes`
+    /// (255), the most the one-byte `length` field can express.
+    case textPayloadTooLong(byteCount: Int)
+    /// A macro's `name` exceeds `MacroDefinition.maxNameBytes` (255), the
+    /// most the one-byte `nameLength` field can express.
+    case macroNameTooLong(byteCount: Int)
+    /// A macro has more top-level steps than `MacroDefinition.maxStepCount`
+    /// (255), the most the one-byte `stepCount` field can express.
+    case tooManySteps(count: Int)
+
+    /// A human-readable description the UI can show as-is.
+    var message: String {
+        switch self {
+        case .textPayloadTooLong(let byteCount):
+            return "Text payload is \(byteCount) bytes; the board format allows at most \(MacroStep.maxTextPayloadBytes)."
+        case .macroNameTooLong(let byteCount):
+            return "Macro name is \(byteCount) bytes; the board format allows at most \(MacroDefinition.maxNameBytes)."
+        case .tooManySteps(let count):
+            return "Macro has \(count) steps; the board format allows at most \(MacroDefinition.maxStepCount)."
+        }
+    }
+}
+
 // MARK: - Compiled size
 
 /// The on-board bytecode layout. These widths are the contract between this
 /// editor's byte meter and the firmware's macro player; changing one without
 /// the other makes the meter lie. See contract C3 in
-/// `docs/superpowers/specs/2026-08-20-macro-creation-design.md`.
+/// `docs/superpowers/specs/2026-08-20-macro-creation-design.md`, and
+/// `CLAUDE.md`'s "Firmware coupling" section for the full wire-format
+/// contract (opcode values, endianness, modifier bit order, keycode
+/// derivation) this table summarizes.
 ///
-///   keystroke   opcode(1) + mods(1) + keycode(1) + holdMs(2)      = 5
-///   delay       opcode(1) + ms(2)                                 = 3
-///   layer       opcode(1) + op(1) + index(1)                      = 3
-///   text        opcode(1) + msPerChar(1) + length(1) + payload    = 3 + n
-///   repeat      opcode(1) + count(1) + bodyLength(2) + body       = 4 + body
-///   macro       id(1) + nameLength(1) + name + stepCount(1)       = 3 + name + steps
+///   keystroke   opcode(1) + mods(1) + keycode(1) + holdMs(2)              = 5
+///   delay       opcode(1) + ms(2)                                         = 3
+///   layer       opcode(1) + op(1) + index(1)                              = 3
+///   text        opcode(1) + delivery(1) + msPerChar(1) + length(1)
+///               + payload                                                 = 4 + n
+///   repeat      opcode(1) + count(1) + bodyLength(2) + body               = 4 + body
+///   macro       id(1) + nameLength(1) + name + stepCount(1)               = 3 + name + steps
+///
+/// `length(1)`, `nameLength(1)`, and `stepCount(1)` are one-byte fields, so
+/// each has a hard 255 maximum the JSON model doesn't otherwise enforce --
+/// see `MacroStep.overflows` and `MacroDefinition.overflows` below.
 extension MacroStep {
+    /// The largest UTF-8 byte count a `.text` step's payload can have: the
+    /// on-board layout's `length` field is one byte.
+    static let maxTextPayloadBytes = 255
+
     var compiledSize: Int {
         switch self {
         case .keystroke: return 5
         case .delay: return 3
         case .layer: return 3
-        case .text(let s, _, _): return 3 + s.utf8.count
+        case .text(let s, _, _): return 4 + s.utf8.count
         case .repeatBlock(_, let steps): return 4 + steps.reduce(0) { $0 + $1.compiledSize }
         case .raw: return 0 // never compiled, so it costs no board memory
+        }
+    }
+
+    /// Every way this step (or, for `.repeatBlock`, a step nested inside it)
+    /// would overflow a one-byte bytecode field the on-board layout can't
+    /// express. Empty for a step that compiles cleanly. `.raw` never
+    /// overflows -- it is never compiled, so it never reaches the firmware.
+    var overflows: [MacroOverflow] {
+        switch self {
+        case .text(let s, _, _):
+            let n = s.utf8.count
+            return n > Self.maxTextPayloadBytes ? [.textPayloadTooLong(byteCount: n)] : []
+        case .repeatBlock(_, let steps):
+            return steps.flatMap(\.overflows)
+        default:
+            return []
         }
     }
 
@@ -349,9 +406,42 @@ extension MacroStep {
 }
 
 extension MacroDefinition {
+    /// The largest UTF-8 byte count a macro's `name` can have: the on-board
+    /// layout's `nameLength` field is one byte.
+    static let maxNameBytes = 255
+
+    /// The largest number of top-level steps a macro can have: the on-board
+    /// layout's `stepCount` field is one byte. (Steps nested inside a
+    /// `.repeatBlock` aren't counted against this -- the block's body has
+    /// its own two-byte `bodyLength`, not a step count.)
+    static let maxStepCount = 255
+
     var compiledSize: Int {
         3 + name.utf8.count + steps.reduce(0) { $0 + $1.compiledSize }
     }
+
+    /// Every way this macro would overflow a one-byte bytecode field the
+    /// on-board layout can't express: its own `name`/`steps.count`, plus
+    /// anything reported by its steps (e.g. an oversized `.text` payload,
+    /// including one nested inside a `.repeatBlock`). Empty for a macro
+    /// that compiles cleanly. The UI should consult this (or
+    /// `isCompilable`) before offering to flash.
+    var overflows: [MacroOverflow] {
+        var result: [MacroOverflow] = []
+        let nameBytes = name.utf8.count
+        if nameBytes > Self.maxNameBytes {
+            result.append(.macroNameTooLong(byteCount: nameBytes))
+        }
+        if steps.count > Self.maxStepCount {
+            result.append(.tooManySteps(count: steps.count))
+        }
+        result.append(contentsOf: steps.flatMap(\.overflows))
+        return result
+    }
+
+    /// Whether this macro's compiled form fits the on-board bytecode
+    /// layout's one-byte fields. Equivalent to `overflows.isEmpty`.
+    var isCompilable: Bool { overflows.isEmpty }
 
     var estimatedDurationMs: Int {
         steps.reduce(0) { $0 + $1.estimatedDurationMs }
