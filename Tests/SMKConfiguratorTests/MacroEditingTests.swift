@@ -267,4 +267,9 @@ struct MacroEditingTests {
         #expect(row.triggerLabel == "Unbound")
         #expect(row.layerLabel == "—")
     }
+
+    @Test("the inspector offers three tabs in design order")
+    func inspectorTabs() {
+        #expect(MacroInspectorTab.allCases.map(\.label) == ["Step", "Macro", "Timing"])
+    }
 }

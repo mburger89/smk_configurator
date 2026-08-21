@@ -98,7 +98,14 @@ struct ContentView: View {
         case .device:
             DeviceListColumnView()
         case .macros:
-            EmptyView()
+            switch editor.macroWorkspace {
+            case .library:
+                // The library table (`mainContent`, below) takes the whole
+                // body in this sub-state; there is no list column.
+                EmptyView()
+            case .editor:
+                MacroStepPaletteView()
+            }
         }
     }
 
@@ -115,8 +122,72 @@ struct ContentView: View {
         case .device:
             DeviceMainContentView()
         case .macros:
+            switch editor.macroWorkspace {
+            case .library:
+                MacroLibraryView()
+            case .editor:
+                macroEditorContent
+            }
+        }
+    }
+
+    /// MACROS mode's step editor Main content: the canvas header, a
+    /// reorder/delete hint above the step list, the sequence itself, and
+    /// the add-step card. `EmptyView()` when `editor.currentMacro` is nil,
+    /// which shouldn't happen while `macroWorkspace` is `.editor` but is
+    /// safer than force-unwrapping (see `MacroCanvasHeaderView`'s doc
+    /// comment for the same defensive choice).
+    @ViewBuilder
+    private var macroEditorContent: some View {
+        if let macro = editor.currentMacro {
+            VStack(alignment: .leading, spacing: 0) {
+                MacroCanvasHeaderView()
+                Text("Select a step to reorder or delete")
+                    .font(.system(size: 11))
+                    .foregroundColor(chrome.textTertiary)
+                    .padding(EdgeInsets(top: 0, bottom: 8, leading: 16, trailing: 16))
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(macro.steps.indices, id: \.self) { index in
+                            MacroStepRowView(
+                                step: macro.steps[index],
+                                index: index,
+                                isSelected: editor.selectedStepIndex == index,
+                                onSelect: { editor.selectedStepIndex = index },
+                                onMoveUp: { editor.moveStep(from: index, to: index - 1) },
+                                onMoveDown: { editor.moveStep(from: index, to: index + 1) },
+                                onDelete: { editor.deleteStep(at: index) }
+                            )
+                        }
+                    }
+                    .padding(EdgeInsets(top: 0, bottom: 12, leading: 16, trailing: 16))
+                }
+                addStepCard
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(chrome.canvas)
+        } else {
             EmptyView()
         }
+    }
+
+    /// The dashed-card substitute for the handoff's drag-to-append drop
+    /// zone (see the design spec's interaction substitution table) --
+    /// always appends a fresh keystroke step at the very end, independent
+    /// of the current selection, complementing the palette's
+    /// insert-after-selection placement.
+    private var addStepCard: some View {
+        TapTarget(
+            background: chrome.pillBackground.opacity(0.6),
+            cornerRadius: 8,
+            action: { editor.appendStep(MacroStepType.keystroke.makeStep()) }
+        ) {
+            Text("Add a step")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(chrome.textPrimary)
+        }
+        .frame(height: 44)
+        .padding(EdgeInsets(top: 0, bottom: 12, leading: 16, trailing: 16))
     }
 
     @ViewBuilder
@@ -143,7 +214,12 @@ struct ContentView: View {
         case .device:
             DeviceInspectorView()
         case .macros:
-            EmptyView()
+            switch editor.macroWorkspace {
+            case .library:
+                EmptyView()
+            case .editor:
+                MacroInspectorView()
+            }
         }
     }
 
