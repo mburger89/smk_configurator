@@ -25,7 +25,8 @@ struct KeyboardBoardView: View {
                             col: slot.col,
                             widthUnits: slot.widthUnits,
                             theme: theme,
-                            interactive: interactive
+                            interactive: interactive,
+                            macroName: editor.macroName(for:)
                         )
                     }
                 }
