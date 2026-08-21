@@ -205,13 +205,22 @@ struct MacroLibraryView: View {
     }
 }
 
-/// One row in `MacroLibraryView`'s table: the row itself is one `TapTarget`
-/// (opens the macro), with a hover-revealed delete glyph as a sibling in a
-/// gesture-free `ZStack` -- the same shape `KeyListColumnView.layerRow`
-/// uses, and for the same reason: `TapTarget` can't contain an `if`
-/// (`UIStyle.swift:98`) and a second, independent tap target can't nest
-/// inside a first, so select and delete have to be siblings under a shared
-/// parent that itself carries no gesture.
+/// One row in `MacroLibraryView`'s table: a raw `ZStack` (fill +
+/// content) with `.onHover` chained directly in front of `.onTapGesture`
+/// on that *same* view, plus a hover-revealed delete glyph as a sibling
+/// in an outer, gesture-free `ZStack` -- exactly the shape
+/// `KeyListColumnView.layerRow` uses (see its doc comment in
+/// `KeyModeViews.swift`), and for the same reason: this row used to wrap
+/// its content in `TapTarget` (whose `body` applies `.onTapGesture`
+/// itself, `UIStyle.swift:110-120`) and chain `.onHover` onto that
+/// `TapTarget` from outside. That put hover on a *different*,
+/// outer-wrapping view from the tap gesture and broke click delivery to
+/// the row entirely -- not just the nested trash glyph's. Building the
+/// row directly out of `ZStack` keeps hover and tap on one view, the way
+/// `layerRow`/`designRow`/`themeRow` all do; the delete glyph still can't
+/// nest inside that same view (a second, independent tap target can't
+/// live inside a first), so it stays a sibling under the outer `ZStack`,
+/// which itself carries no gesture.
 private struct MacroLibraryRowView: View {
     var row: MacroLibraryRow
     var chrome: Chrome
@@ -227,7 +236,9 @@ private struct MacroLibraryRowView: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            TapTarget(background: chrome.column, cornerRadius: 6, action: open) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(chrome.column)
                 HStack(spacing: 0) {
                     cell(row.name, width: 240, weight: .semibold, color: chrome.textPrimary)
                     cell(row.triggerLabel, width: 130, color: row.isBound ? chrome.textSecondary : chrome.textTertiary)
@@ -242,6 +253,7 @@ private struct MacroLibraryRowView: View {
                 .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
             }
             .onHover { hovering in isHovered = hovering }
+            .onTapGesture(perform: open)
 
             if isHovered {
                 Text("🗑")
