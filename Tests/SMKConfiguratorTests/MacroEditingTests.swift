@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SMKConfigurator
 
@@ -296,5 +297,42 @@ struct MacroEditingTests {
     @Test("the inspector offers three tabs in design order")
     func inspectorTabs() {
         #expect(MacroInspectorTab.allCases.map(\.label) == ["Step", "Macro", "Timing"])
+    }
+
+    @Test("loading a keymap from disk closes any open macro workspace")
+    func loadResetsMacroWorkspace() throws {
+        let e = editor()
+        e.createMacro()
+        e.appendStep(.delay(ms: 1))
+        #expect(e.macroWorkspace != .library)
+        #expect(e.selectedStepIndex != nil)
+
+        let doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["none"]]]
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacroEditingTests-\(UUID().uuidString).json")
+        try JSONEncoder().encode(doc).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        e.load(from: url)
+
+        #expect(e.macroWorkspace == .library)
+        #expect(e.selectedStepIndex == nil)
+    }
+
+    @Test("starting a new document closes any open macro workspace")
+    func newDocumentResetsMacroWorkspace() {
+        let e = editor()
+        e.createMacro()
+        e.appendStep(.delay(ms: 1))
+        #expect(e.macroWorkspace != .library)
+        #expect(e.selectedStepIndex != nil)
+
+        e.newDocument()
+
+        #expect(e.macroWorkspace == .library)
+        #expect(e.selectedStepIndex == nil)
     }
 }

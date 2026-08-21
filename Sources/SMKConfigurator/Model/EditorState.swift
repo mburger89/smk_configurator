@@ -187,6 +187,13 @@ class EditorState {
             fileURL = url
             currentLayer = 0
             clampPendingLayerIndex()
+            // The macro workspace (and whichever step it had selected) can
+            // reference a macro id from the *previous* document -- e.g. a
+            // step editor left open on macro 3 when the newly loaded file
+            // has no macros at all, which would leave currentMacro nil and
+            // strand the UI on a dead editor pane.
+            macroWorkspace = .library
+            selectedStepIndex = nil
             isDirty = false
             loadError = nil
             activeDesign = availableDesigns.first { $0.matrix == doc.matrix }
@@ -216,6 +223,11 @@ class EditorState {
         fileURL = nil
         currentLayer = 0
         clampPendingLayerIndex()
+        // Same reasoning as load(from:) -- a fresh blank document has no
+        // macros, so any macro workspace/step selection left over from
+        // before must not survive the swap.
+        macroWorkspace = .library
+        selectedStepIndex = nil
         isDirty = false
     }
 
