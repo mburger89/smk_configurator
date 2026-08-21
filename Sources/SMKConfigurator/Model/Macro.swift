@@ -285,6 +285,23 @@ enum MacroOverflow: Equatable, Hashable {
     /// A macro has more top-level steps than `MacroDefinition.maxStepCount`
     /// (255), the most the one-byte `stepCount` field can express.
     case tooManySteps(count: Int)
+    /// A `.repeatBlock`'s `count` exceeds `MacroStep.maxRepeatCount` (255),
+    /// the most the one-byte `count` field can express. UI sliders bound
+    /// this, but a decoded file isn't bound by the UI.
+    case repeatCountTooLarge(count: Int)
+    /// A `.text` step's `msPerChar` exceeds `MacroStep.maxMsPerChar` (255),
+    /// the most the one-byte `msPerChar` field can express. UI sliders bound
+    /// this, but a decoded file isn't bound by the UI.
+    case textMsPerCharTooLarge(value: Int)
+    /// A macro's `id` exceeds `MacroDefinition.maxID` (255), the most the
+    /// one-byte `id` field can express.
+    case macroIdTooLarge(id: Int)
+    /// A `.layer` step's target index exceeds `MacroStep.maxLayerIndex`
+    /// (255), the most the one-byte `index` field can express. Distinct from
+    /// `EditorState.maxLayerCount` (16) -- that's the editor's own layer
+    /// ceiling; this is the wider limit the wire format's single byte
+    /// imposes on a value a decoded file isn't otherwise bound by.
+    case layerIndexTooLarge(index: Int)
 
     /// A human-readable description the UI can show as-is.
     var message: String {
@@ -295,6 +312,14 @@ enum MacroOverflow: Equatable, Hashable {
             return "Macro name is \(byteCount) bytes; the board format allows at most \(MacroDefinition.maxNameBytes)."
         case .tooManySteps(let count):
             return "Macro has \(count) steps; the board format allows at most \(MacroDefinition.maxStepCount)."
+        case .repeatCountTooLarge(let count):
+            return "Repeat count is \(count); the board format allows at most \(MacroStep.maxRepeatCount)."
+        case .textMsPerCharTooLarge(let value):
+            return "Text step's ms-per-char is \(value); the board format allows at most \(MacroStep.maxMsPerChar)."
+        case .macroIdTooLarge(let id):
+            return "Macro id \(id) exceeds the board format's maximum of \(MacroDefinition.maxID)."
+        case .layerIndexTooLarge(let index):
+            return "Layer step targets layer \(index); the board format allows at most \(MacroStep.maxLayerIndex)."
         }
     }
 }
@@ -324,6 +349,15 @@ extension MacroStep {
     /// The largest UTF-8 byte count a `.text` step's payload can have: the
     /// on-board layout's `length` field is one byte.
     static let maxTextPayloadBytes = 255
+    /// The largest value a `.text` step's `msPerChar` can have: the on-board
+    /// layout's `msPerChar` field is one byte.
+    static let maxMsPerChar = 255
+    /// The largest value a `.repeatBlock`'s `count` can have: the on-board
+    /// layout's `count` field is one byte.
+    static let maxRepeatCount = 255
+    /// The largest layer index a `.layer` step can target: the on-board
+    /// layout's `index` field is one byte.
+    static let maxLayerIndex = 255
 
     var compiledSize: Int {
         switch self {
@@ -342,11 +376,25 @@ extension MacroStep {
     /// overflows -- it is never compiled, so it never reaches the firmware.
     var overflows: [MacroOverflow] {
         switch self {
-        case .text(let s, _, _):
+        case .text(let s, _, let msPerChar):
+            var result: [MacroOverflow] = []
             let n = s.utf8.count
-            return n > Self.maxTextPayloadBytes ? [.textPayloadTooLong(byteCount: n)] : []
-        case .repeatBlock(_, let steps):
-            return steps.flatMap(\.overflows)
+            if n > Self.maxTextPayloadBytes {
+                result.append(.textPayloadTooLong(byteCount: n))
+            }
+            if msPerChar > Self.maxMsPerChar {
+                result.append(.textMsPerCharTooLarge(value: msPerChar))
+            }
+            return result
+        case .layer(_, let n):
+            return n > Self.maxLayerIndex ? [.layerIndexTooLarge(index: n)] : []
+        case .repeatBlock(let count, let steps):
+            var result: [MacroOverflow] = []
+            if count > Self.maxRepeatCount {
+                result.append(.repeatCountTooLarge(count: count))
+            }
+            result.append(contentsOf: steps.flatMap(\.overflows))
+            return result
         default:
             return []
         }
@@ -415,6 +463,9 @@ extension MacroDefinition {
     /// `.repeatBlock` aren't counted against this -- the block's body has
     /// its own two-byte `bodyLength`, not a step count.)
     static let maxStepCount = 255
+    /// The largest value a macro's `id` (its slot number) can have: the
+    /// on-board layout's `id` field is one byte.
+    static let maxID = 255
 
     var compiledSize: Int {
         3 + name.utf8.count + steps.reduce(0) { $0 + $1.compiledSize }
@@ -428,6 +479,9 @@ extension MacroDefinition {
     /// `isCompilable`) before offering to flash.
     var overflows: [MacroOverflow] {
         var result: [MacroOverflow] = []
+        if id > Self.maxID {
+            result.append(.macroIdTooLarge(id: id))
+        }
         let nameBytes = name.utf8.count
         if nameBytes > Self.maxNameBytes {
             result.append(.macroNameTooLong(byteCount: nameBytes))

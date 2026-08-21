@@ -248,7 +248,26 @@ class EditorState {
     /// `isSendingToDevice` flips or the Task is created, so an oversized
     /// payload never touches a transport and the guard is observable without
     /// awaiting anything.
+    ///
+    /// Before either of those, every macro is checked against
+    /// `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
+    /// step's `msPerChar`, a `.repeatBlock`'s `count`, a macro's `id`, a
+    /// `.layer` step's target index, plus the three checks the compiled/JSON
+    /// guards already imply for name/step-count/payload length) can hold a
+    /// value up to 255 no matter what the compiled-size or JSON-size meters
+    /// say — a 300-count repeat is a handful of compiled bytes and JSON
+    /// characters, small enough to sail through both of those, but wraps
+    /// around in the one byte the firmware reads it into. UI sliders keep
+    /// this from happening via the editor, but a decoded `keymap.json` isn't
+    /// bound by the UI, so this guard runs synchronously here too, before
+    /// `isSendingToDevice` flips or the Task is created — same reasoning as
+    /// the JSON-size guard below.
     func sendToDevice() {
+        let overflows = document.macroList.flatMap(\.overflows)
+        guard overflows.isEmpty else {
+            loadError = overflows.map(\.message).joined(separator: " ")
+            return
+        }
         guard macroBudget.canFlash else {
             loadError = macroBudget.blockReason
             return

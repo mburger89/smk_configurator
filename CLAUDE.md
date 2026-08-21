@@ -120,14 +120,23 @@ This app is written against a specific version of `~/esp/SMK` and several places
 
   - **`op` byte.** `0x00` = `"mo"` (momentary), `0x01` = `"tg"` (toggle).
 
-  - **One-byte field maxima.** `length`, `nameLength`, and `stepCount` are
-    each one byte, so a text payload, a macro name, and a macro's top-level
-    step count each cap at 255 (UTF-8 bytes for the first two). The editor
-    enforces this on its side via `MacroStep.overflows` /
-    `MacroDefinition.overflows` (`MacroDefinition.isCompilable` is the
-    all-clear check) and is expected to block flashing anything that
-    overflows — firmware should still reject rather than silently truncate
-    if a real board ever receives one anyway.
+  - **One-byte field maxima.** `length`, `nameLength`, `stepCount`,
+    `count` (repeat), `msPerChar` (text), `id` (macro header), and `index`
+    (layer) are each one byte, so a text payload, a macro name, a macro's
+    top-level step count, a repeat count, a text step's ms-per-char, a
+    macro's slot id, and a layer step's target layer each cap at 255
+    (UTF-8 bytes for the first two). The editor enforces this on its side
+    via `MacroStep.overflows` / `MacroDefinition.overflows`
+    (`MacroDefinition.isCompilable` is the all-clear check), consulted in
+    `EditorState.sendToDevice()` alongside the compiled-bytecode capacity
+    guard and the JSON-size guard — any macro with a nonempty `overflows`
+    blocks the upload and surfaces `MacroOverflow.message` before a
+    transport is ever touched. UI sliders keep the editor itself from
+    producing an overflowing value, but a hand-edited or decoded
+    `keymap.json` isn't bound by the UI, which is why this is checked again
+    at upload time rather than trusted from the editing surface — firmware
+    should still reject rather than silently truncate if a real board ever
+    receives one anyway.
 
   `ActionToken`'s `macro:N` token and the `CAPS` capacity command
   (`MacroCapacity`) don't exist on the firmware side yet either, and need

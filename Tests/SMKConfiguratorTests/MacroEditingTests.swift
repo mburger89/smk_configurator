@@ -265,6 +265,26 @@ struct MacroEditingTests {
         #expect(message.contains("4085"))
     }
 
+    @Test("a macro that overflows a one-byte bytecode field is refused even though it's within capacity and JSON size")
+    func sendToDeviceRefusesOverflowingMacro() {
+        let e = editor()
+        // A repeat count of 300 doesn't fit MacroStep's one-byte `count`
+        // field, but the macro is tiny -- comfortably under both the
+        // compiled-bytecode budget and the JSON upload limit -- so neither
+        // of the other two guards would catch it. Only the overflow check
+        // can.
+        e.document.macros = [
+            MacroDefinition(id: 0, name: "m", steps: [.repeatBlock(count: 300, steps: [.delay(ms: 1)])]),
+        ]
+        #expect(e.macroBudget.canFlash == true)
+
+        e.sendToDevice()
+
+        #expect(e.isSendingToDevice == false)
+        let expected = MacroOverflow.repeatCountTooLarge(count: 300).message
+        #expect(e.loadError == expected)
+    }
+
     @Test("a library row derives its trigger from wherever the macro is bound")
     func rowFindsTrigger() {
         var doc = KeymapDocument(
