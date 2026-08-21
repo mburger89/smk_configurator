@@ -224,7 +224,10 @@ private struct MacroStepTypeRow: View {
 /// Task 12's Step tab), unlike Designs/Themes' separate draft-then-Save
 /// flow, so there is no pending edit for this button to flush -- it reads
 /// as the primary "I'm done, take me back" action instead. "Test run" has
-/// no backing behavior yet; Task 13 wires it to a timing trace in the
+/// no backing behavior yet, so it renders dimmed/disabled with a `.help()`
+/// explaining why -- same convention as this file's "Record from board"
+/// and `MacroLibraryView`'s "Record new" -- rather than looking clickable
+/// and doing nothing; Task 13 wires it to a real timing trace in the
 /// inspector's Timing tab.
 struct MacroCanvasHeaderView: View {
     @Environment(EditorState.self) var editor
@@ -245,18 +248,19 @@ struct MacroCanvasHeaderView: View {
                 Text(macro.name)
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundColor(chrome.textPrimary)
-                Text(metadataLabel(for: macro))
+                Text(macro.canvasSummary)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(chrome.textSecondary)
             }
             Spacer()
-            TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: {}) {
+            TapTarget(background: chrome.pillBackground.opacity(0.4), cornerRadius: 6, action: {}) {
                 Text("Test run")
                     .font(.system(size: 12))
-                    .foregroundColor(chrome.textPrimary)
+                    .foregroundColor(chrome.textPrimary.opacity(0.4))
             }
             .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
             .fixedSize()
+            .help("Test run isn't available yet. It will walk the macro's steps and write a timing trace without sending keystrokes.")
             TapTarget(background: chrome.accent, cornerRadius: 6, action: editor.closeMacro) {
                 Text("Save")
                     .font(.system(size: 12, weight: .semibold))
@@ -266,9 +270,5 @@ struct MacroCanvasHeaderView: View {
             .fixedSize()
         }
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
-    }
-
-    private func metadataLabel(for macro: MacroDefinition) -> String {
-        "macro:\(macro.id) · \(macro.steps.count) steps · \(macro.estimatedDurationLabel)"
     }
 }

@@ -268,4 +268,13 @@ extension MacroDefinition {
     var estimatedDurationLabel: String {
         String(format: "%.2f s est.", Double(estimatedDurationMs) / 1000)
     }
+
+    /// "macro:5 · 2 steps · 0.50 s est." -- the canvas header's metadata
+    /// line, under the macro name. Named distinctly from `MacroStep`'s own
+    /// `metadataLabel` (a sequence row's right-aligned string) since the two
+    /// are unrelated strings for different views that happened to want the
+    /// same generic name.
+    var canvasSummary: String {
+        "macro:\(id) · \(steps.count) steps · \(estimatedDurationLabel)"
+    }
 }

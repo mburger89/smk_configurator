@@ -149,4 +149,14 @@ struct MacroTests {
         #expect(MacroStep.repeatBlock(count: 2, steps: [.delay(ms: 1), .delay(ms: 2)]).payloadSummary
                 == "Repeat 2 steps 2 times")
     }
+
+    @Test("the canvas summary names the macro, its step count, and its estimated duration")
+    func canvasSummary() {
+        let macro = MacroDefinition(
+            id: 5,
+            name: "Discord push-to-talk",
+            steps: [.delay(ms: 250), .delay(ms: 250)]
+        )
+        #expect(macro.canvasSummary == "macro:5 · 2 steps · 0.50 s est.")
+    }
 }
