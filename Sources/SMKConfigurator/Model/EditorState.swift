@@ -35,8 +35,21 @@ let firmwareVersionLabel = "v0.9.0"
 /// design/theme/layer/key, matrix values, theme role hex values) still lives
 /// on `EditorState` exactly as before -- this only changes navigation.
 enum RailMode: String, CaseIterable, Identifiable {
-    case key, designs, themes, device
+    case key, designs, themes, device, macros
     var id: String { rawValue }
+}
+
+/// Macros mode is the only rail mode with sub-states: the library takes the
+/// whole workspace, and opening a macro swaps it for the step editor. Every
+/// other rail mode renders one fixed layout.
+enum MacroWorkspace: Equatable, Hashable {
+    case library
+    case editor(id: Int)
+
+    var openMacroID: Int? {
+        if case .editor(let id) = self { return id }
+        return nil
+    }
 }
 
 /// Light/Dark/System, set via the `View ▸ Appearance` menu (see `App.swift`)
@@ -85,6 +98,15 @@ class EditorState {
     var showAdvanced: Bool
     /// The physical key the Key inspector is currently showing, if any.
     var selectedKeyPosition: KeyPosition? = KeyPosition(row: 0, col: 0)
+
+    /// Which of the MACROS workspace's two layouts (library vs. editor) is
+    /// showing.
+    var macroWorkspace: MacroWorkspace = .library
+    /// Which step the inspector is editing, or nil when the macro is empty.
+    var selectedStepIndex: Int? = nil
+    /// The last capacity a board reported, or the floor profile until one does.
+    var macroCapacity: MacroCapacity = .floor
+    var macroCapacitySource: MacroCapacitySource = .floor
 
     /// Light/Dark/System override for the whole app, applied via
     /// `.preferredColorScheme` at the app root (`App.swift`). Plain stored
@@ -501,5 +523,107 @@ class EditorState {
             loadError = "Couldn't \(errorContext): \(error.localizedDescription)"
             return false
         }
+    }
+
+    // MARK: - Macro editing
+
+    var macroBudget: MacroBudget {
+        MacroBudget(capacity: macroCapacity,
+                    source: macroCapacitySource,
+                    macros: document.macroList)
+    }
+
+    /// The macro currently open in the editor, if any. Named `currentMacro`
+    /// rather than `openMacro` because a property and a method cannot share
+    /// an identifier — `openMacro(id:)` below is the verb.
+    var currentMacro: MacroDefinition? {
+        guard let id = macroWorkspace.openMacroID else { return nil }
+        return document.macroList.first { $0.id == id }
+    }
+
+    /// The name for `macro:<id>`, used by `KeyCapView` — the one token whose
+    /// label isn't self-contained. Nil when the slot holds no macro, so the
+    /// keycap can fall back to the token's own "M<id>".
+    func macroName(for id: Int) -> String? {
+        document.macroList.first { $0.id == id }?.name
+    }
+
+    func createMacro() {
+        let macro = MacroDefinition(id: document.nextMacroID, name: "New macro", steps: [])
+        document.macros = document.macroList + [macro]
+        macroWorkspace = .editor(id: macro.id)
+        selectedStepIndex = nil
+        isDirty = true
+    }
+
+    func openMacro(id: Int) {
+        macroWorkspace = .editor(id: id)
+        selectedStepIndex = document.macroList.first { $0.id == id }?.steps.isEmpty == false ? 0 : nil
+    }
+
+    func closeMacro() {
+        macroWorkspace = .library
+        selectedStepIndex = nil
+    }
+
+    /// Always a library-level action (the library list's per-row delete), so
+    /// it always returns to the library afterward — even if some other
+    /// macro happened to be open in the editor, not just the deleted one.
+    func deleteMacro(id: Int) {
+        document.macros = document.macroList.filter { $0.id != id }
+        if document.macroList.isEmpty { document.macros = nil }
+        closeMacro()
+        isDirty = true
+    }
+
+    func updateMacro(_ macro: MacroDefinition) {
+        guard let index = document.macroList.firstIndex(where: { $0.id == macro.id }) else { return }
+        var list = document.macroList
+        list[index] = macro
+        document.macros = list
+        isDirty = true
+    }
+
+    /// Applies `transform` to the macro currently open, if any.
+    private func mutateOpenMacro(_ transform: (inout MacroDefinition) -> Void) {
+        guard var macro = currentMacro else { return }
+        transform(&macro)
+        updateMacro(macro)
+    }
+
+    func appendStep(_ step: MacroStep) {
+        mutateOpenMacro { $0.steps.append(step) }
+        selectedStepIndex = (currentMacro?.steps.count ?? 1) - 1
+    }
+
+    /// Inserts after the selected step, which is how a position is chosen
+    /// without drag-and-drop. With nothing selected, appends.
+    func insertStepAfterSelection(_ step: MacroStep) {
+        guard let selected = selectedStepIndex, currentMacro != nil else {
+            appendStep(step)
+            return
+        }
+        let target = selected + 1
+        mutateOpenMacro { $0.steps.insert(step, at: min(target, $0.steps.count)) }
+        selectedStepIndex = target
+    }
+
+    func moveStep(from source: Int, to destination: Int) {
+        guard let macro = currentMacro,
+              macro.steps.indices.contains(source),
+              macro.steps.indices.contains(destination)
+        else { return }
+        mutateOpenMacro {
+            let step = $0.steps.remove(at: source)
+            $0.steps.insert(step, at: destination)
+        }
+        selectedStepIndex = destination
+    }
+
+    func deleteStep(at index: Int) {
+        guard let macro = currentMacro, macro.steps.indices.contains(index) else { return }
+        mutateOpenMacro { $0.steps.remove(at: index) }
+        let remaining = currentMacro?.steps.count ?? 0
+        selectedStepIndex = remaining == 0 ? nil : min(index, remaining - 1)
     }
 }

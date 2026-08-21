@@ -97,6 +97,8 @@ struct ContentView: View {
             ThemeListColumnView(draft: $themeDraft, selectTheme: loadThemeDraft, newTheme: newThemeDraft)
         case .device:
             DeviceListColumnView()
+        case .macros:
+            EmptyView()
         }
     }
 
@@ -112,6 +114,8 @@ struct ContentView: View {
             ThemeMainContentView(draft: themeDraft)
         case .device:
             DeviceMainContentView()
+        case .macros:
+            EmptyView()
         }
     }
 
@@ -138,6 +142,8 @@ struct ContentView: View {
             )
         case .device:
             DeviceInspectorView()
+        case .macros:
+            EmptyView()
         }
     }
 
