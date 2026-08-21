@@ -40,6 +40,83 @@ struct MacroTests {
         #expect(steps[1]["intensity"] as? Int == 3)
     }
 
+    @Test("a keystroke naming a key this build's vocabulary doesn't have is preserved whole, not silently stripped of its key")
+    func unresolvableKeyNamePreservesWholeStep() throws {
+        let json = """
+        {"id":1,"name":"n","steps":[{"t":"key","k":"key:hyper","mods":["leftShift"],"hold":40}]}
+        """
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.steps.count == 1)
+
+        let reencoded = try JSONEncoder().encode(macro)
+        let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
+        let steps = object["steps"] as! [[String: Any]]
+        #expect(steps.count == 1)
+        #expect(steps[0]["t"] as? String == "key")
+        #expect(steps[0]["k"] as? String == "key:hyper")
+        #expect(steps[0]["mods"] as? [String] == ["leftShift"])
+        #expect(steps[0]["hold"] as? Int == 40)
+    }
+
+    @Test("an unrecognized modifier in a mods array does not destroy the recognized modifiers alongside it")
+    func unknownModifierPreservesWholeStep() throws {
+        let json = """
+        {"id":1,"name":"n","steps":[{"t":"key","k":"key:a","mods":["leftShift","hyper"],"hold":40}]}
+        """
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.steps.count == 1)
+
+        let reencoded = try JSONEncoder().encode(macro)
+        let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
+        let steps = object["steps"] as! [[String: Any]]
+        #expect(steps[0]["mods"] as? [String] == ["leftShift", "hyper"])
+        #expect(steps[0]["k"] as? String == "key:a")
+    }
+
+    @Test("an unrecognized text delivery value is preserved rather than normalized to keystrokes")
+    func unknownDeliveryPreservesWholeStep() throws {
+        let json = """
+        {"id":1,"name":"n","steps":[{"t":"text","s":"hi","delivery":"clipboard","cpm":12}]}
+        """
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.steps.count == 1)
+
+        let reencoded = try JSONEncoder().encode(macro)
+        let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
+        let steps = object["steps"] as! [[String: Any]]
+        #expect(steps[0]["delivery"] as? String == "clipboard")
+        #expect(steps[0]["s"] as? String == "hi")
+    }
+
+    @Test("an unrecognized layer op value is preserved rather than normalized to momentary")
+    func unknownLayerOpPreservesWholeStep() throws {
+        let json = """
+        {"id":1,"name":"n","steps":[{"t":"layer","op":"osl","n":2}]}
+        """
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.steps.count == 1)
+
+        let reencoded = try JSONEncoder().encode(macro)
+        let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
+        let steps = object["steps"] as! [[String: Any]]
+        #expect(steps[0]["op"] as? String == "osl")
+        #expect(steps[0]["n"] as? Int == 2)
+    }
+
+    @Test("an unknown per-macro field (e.g. a future build's 'enabled' flag) is preserved rather than dropped on save")
+    func unknownMacroFieldIsPreserved() throws {
+        let json = """
+        {"id":1,"name":"n","steps":[],"enabled":false}
+        """
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+
+        let reencoded = try JSONEncoder().encode(macro)
+        let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
+        #expect(object["enabled"] as? Bool == false)
+        #expect(object["id"] as? Int == 1)
+        #expect(object["name"] as? String == "n")
+    }
+
     @Test("a nested repeat block is kept verbatim rather than treated as one")
     func nestedRepeatBecomesRaw() throws {
         let json = #"{"id":1,"name":"n","steps":[{"t":"rpt","count":2,"steps":[{"t":"rpt","count":3,"steps":[]}]}]}"#

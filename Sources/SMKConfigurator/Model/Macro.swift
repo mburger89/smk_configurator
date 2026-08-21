@@ -95,23 +95,72 @@ enum MacroStep: Codable, Equatable, Hashable, Identifiable {
         }
         switch t {
         case "key":
-            let mods = (try? c.decode([ModifierName].self, forKey: .mods)) ?? []
-            let keyString = try? c.decode(String.self, forKey: .k)
-            let key = keyString.flatMap { s -> KeyName? in
-                guard s.hasPrefix("key:") else { return nil }
-                return KeyName(rawValue: String(s.dropFirst(4)))
+            // A "mods" array containing even one modifier outside this
+            // build's vocabulary must not silently drop the whole array
+            // (including the modifiers it *does* recognize) -- the whole
+            // step is preserved instead. Same principle for "k": a key
+            // string this build can't resolve must not be silently stripped
+            // down to a modifiers-only chord.
+            let mods: [ModifierName]
+            if c.contains(.mods) {
+                guard let decodedMods = try? c.decode([ModifierName].self, forKey: .mods) else {
+                    self = .raw(try JSONValue(from: decoder))
+                    return
+                }
+                mods = decodedMods
+            } else {
+                mods = []
             }
+
+            let key: KeyName?
+            if c.contains(.k) {
+                guard let keyString = try? c.decode(String.self, forKey: .k),
+                      keyString.hasPrefix("key:"),
+                      let resolved = KeyName(rawValue: String(keyString.dropFirst(4)))
+                else {
+                    self = .raw(try JSONValue(from: decoder))
+                    return
+                }
+                key = resolved
+            } else {
+                key = nil
+            }
+
             self = .keystroke(mods: mods, key: key,
                               holdMs: (try? c.decode(Int.self, forKey: .hold)) ?? 40)
         case "text":
+            // An unrecognized delivery value (e.g. a future build's
+            // "clipboard") must not silently normalize to "keystrokes" --
+            // that would change what the step does when replayed.
+            let delivery: TextDelivery
+            if c.contains(.delivery) {
+                guard let decoded = try? c.decode(TextDelivery.self, forKey: .delivery) else {
+                    self = .raw(try JSONValue(from: decoder))
+                    return
+                }
+                delivery = decoded
+            } else {
+                delivery = .keystrokes
+            }
             self = .text((try? c.decode(String.self, forKey: .s)) ?? "",
-                         delivery: (try? c.decode(TextDelivery.self, forKey: .delivery)) ?? .keystrokes,
+                         delivery: delivery,
                          msPerChar: (try? c.decode(Int.self, forKey: .cpm)) ?? 12)
         case "delay":
             self = .delay(ms: (try? c.decode(Int.self, forKey: .ms)) ?? 0)
         case "layer":
-            self = .layer(op: (try? c.decode(LayerOp.self, forKey: .op)) ?? .momentary,
-                          n: (try? c.decode(Int.self, forKey: .n)) ?? 0)
+            // Same reasoning as "delivery" above: an unrecognized op (e.g. a
+            // future "osl") must not silently normalize to "momentary".
+            let op: LayerOp
+            if c.contains(.op) {
+                guard let decoded = try? c.decode(LayerOp.self, forKey: .op) else {
+                    self = .raw(try JSONValue(from: decoder))
+                    return
+                }
+                op = decoded
+            } else {
+                op = .momentary
+            }
+            self = .layer(op: op, n: (try? c.decode(Int.self, forKey: .n)) ?? 0)
         case "rpt":
             let inner = (try? c.decode([MacroStep].self, forKey: .steps)) ?? []
             // Repeat blocks don't nest — the firmware's player uses a single
@@ -170,11 +219,55 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
     var name: String
     var steps: [MacroStep]
 
+    /// Any per-macro field this build doesn't have a model property for --
+    /// e.g. a future build's "enabled" flag. Carried through unchanged on
+    /// save, same lossless principle as `MacroStep.raw`: this build not
+    /// knowing a field must not mean it gets to delete it.
+    private var unknownFields: [String: JSONValue] = [:]
+
     init(id: Int, name: String, steps: [MacroStep]) {
         self.id = id
         self.name = name
         self.steps = steps
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, steps
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        steps = try c.decode([MacroStep].self, forKey: .steps)
+
+        let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)
+        for key in dynamic.allKeys where CodingKeys(stringValue: key.stringValue) == nil {
+            unknownFields[key.stringValue] = try dynamic.decode(JSONValue.self, forKey: key)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(steps, forKey: .steps)
+
+        var dynamic = encoder.container(keyedBy: DynamicCodingKey.self)
+        for (key, value) in unknownFields {
+            guard let codingKey = DynamicCodingKey(stringValue: key) else { continue }
+            try dynamic.encode(value, forKey: codingKey)
+        }
+    }
+}
+
+/// A `CodingKey` that accepts any string, used to enumerate and re-emit
+/// JSON object fields `MacroDefinition`'s `CodingKeys` doesn't name.
+private struct DynamicCodingKey: CodingKey {
+    var stringValue: String
+    var intValue: Int? { nil }
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
 }
 
 // MARK: - Compiled size
