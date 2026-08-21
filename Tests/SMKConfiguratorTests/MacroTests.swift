@@ -106,4 +106,47 @@ struct MacroTests {
         // 40 + 400 + (4 * 12) + (3 * 10)
         #expect(macro.estimatedDurationMs == 518)
     }
+
+    @Test("each step type summarizes its own payload and metadata")
+    func rowSummaries() {
+        let key = MacroStep.keystroke(mods: [.leftGUI, .leftShift], key: .b, holdMs: 40)
+        #expect(key.payloadSummary == "LGUI + LSft + B")
+        #expect(key.metadataLabel == "hold 40 ms")
+
+        let delay = MacroStep.delay(ms: 400)
+        #expect(delay.payloadSummary == "Wait 400 ms")
+        #expect(delay.metadataLabel == "")
+
+        let text = MacroStep.text("deploy --env staging", delivery: .keystrokes, msPerChar: 12)
+        #expect(text.payloadSummary == "\"deploy --env staging\"")
+        #expect(text.metadataLabel == "20 chars")
+
+        let layer = MacroStep.layer(op: .momentary, n: 1)
+        #expect(layer.payloadSummary == "Momentary layer 1 while running")
+        #expect(layer.metadataLabel == "MO1")
+
+        let rpt = MacroStep.repeatBlock(count: 3, steps: [.delay(ms: 5)])
+        #expect(rpt.payloadSummary == "Repeat 1 step 3 times")
+        #expect(rpt.metadataLabel == "3×")
+    }
+
+    @Test("a modifiers-only chord summarizes without a trailing separator")
+    func modifierOnlySummary() {
+        let step = MacroStep.keystroke(mods: [.leftShift], key: nil, holdMs: 40)
+        #expect(step.payloadSummary == "LSft")
+    }
+
+    @Test("an unknown step says it can't be edited rather than rendering blank")
+    func rawSummary() {
+        let step = MacroStep.raw(.object(["t": .string("hologram")]))
+        #expect(step.payloadSummary == "Unsupported step (kept on save)")
+    }
+
+    @Test("a one-step repeat block is singular, many are plural")
+    func repeatPluralization() {
+        #expect(MacroStep.repeatBlock(count: 2, steps: []).payloadSummary
+                == "Repeat 0 steps 2 times")
+        #expect(MacroStep.repeatBlock(count: 2, steps: [.delay(ms: 1), .delay(ms: 2)]).payloadSummary
+                == "Repeat 2 steps 2 times")
+    }
 }

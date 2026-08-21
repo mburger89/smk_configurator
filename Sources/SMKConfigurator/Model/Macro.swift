@@ -216,6 +216,45 @@ extension MacroStep {
     }
 }
 
+// MARK: - Row display
+
+extension MacroStep {
+    /// The middle column of a sequence row.
+    var payloadSummary: String {
+        switch self {
+        case .keystroke(let mods, let key, _):
+            let parts = mods.map(\.displayLabel) + (key.map { [$0.displayLabel] } ?? [])
+            return parts.joined(separator: " + ")
+        case .text(let s, _, _):
+            return "\"\(s)\""
+        case .delay(let ms):
+            return "Wait \(ms) ms"
+        case .layer(let op, let n):
+            return op == .momentary
+                ? "Momentary layer \(n) while running"
+                : "Toggle layer \(n)"
+        case .repeatBlock(let count, let steps):
+            let noun = steps.count == 1 ? "step" : "steps"
+            return "Repeat \(steps.count) \(noun) \(count) times"
+        case .raw:
+            return "Unsupported step (kept on save)"
+        }
+    }
+
+    /// The right-aligned metadata of a sequence row. Empty when the payload
+    /// already says everything.
+    var metadataLabel: String {
+        switch self {
+        case .keystroke(_, _, let holdMs): return "hold \(holdMs) ms"
+        case .text(let s, _, _): return "\(s.count) chars"
+        case .delay: return ""
+        case .layer(let op, let n): return "\(op.rawValue.uppercased())\(n)"
+        case .repeatBlock(let count, _): return "\(count)×"
+        case .raw: return ""
+        }
+    }
+}
+
 extension MacroDefinition {
     var compiledSize: Int {
         3 + name.utf8.count + steps.reduce(0) { $0 + $1.compiledSize }
