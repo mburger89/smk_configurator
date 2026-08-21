@@ -31,7 +31,7 @@ macOS is the only platform actually runnable/verifiable from a normal dev machin
 
 **MVVM with a single observable model.** `EditorState` (`Model/EditorState.swift`) is the one `@ObservableObject` for the whole app — document state, file I/O, device upload, design/theme management, and UI state (drawer height, selected key, appearance mode) all live on it as plain stored properties (no `didSet`, since `@ObservableObject` skips properties with accessors — mutating helper methods persist to `UserDefaults` explicitly instead, e.g. `setDrawerHeight(_:)`, `setAppearanceMode(_:)`). It's installed once in `App.swift` via `.environment(editor)` and read everywhere via `@Environment(EditorState.self)`.
 
-**Four-pane layout driven by one enum.** `RailMode` (`.key`/`.designs`/`.themes`/`.device`) selects which icon rail tab is active and drives what the list/main/inspector columns render — see the `switch editor.railMode` in each of `ContentView`'s three column properties. Design/theme editing happens inline (not in modal sheets): `ContentView` owns `designDraft`/`themeDraft` scratch copies that mirror the selected design/theme until explicitly saved, mimicking an edit-then-Save/Cancel flow without a sheet.
+**Four-pane layout driven by one enum.** `RailMode` (`.key`/`.designs`/`.themes`/`.device`/`.macros`) selects which icon rail tab is active and drives what the list/main/inspector columns render — see the `switch editor.railMode` in each of `ContentView`'s three column properties. Design/theme editing happens inline (not in modal sheets): `ContentView` owns `designDraft`/`themeDraft` scratch copies that mirror the selected design/theme until explicitly saved, mimicking an edit-then-Save/Cancel flow without a sheet. `.macros` is the one rail mode with sub-states of its own: `MacroWorkspace` (`.library`/`.editor(id:)`) swaps the whole list/main/inspector layout between the macro library table and the step editor, because a macro is a document-within-the-document — opening one to edit it needs its own canvas and inspector, not just a different list selection — where every other rail mode renders one fixed layout regardless of what's selected.
 
 **Model layer** (`Model/`):
 - `KeymapDocument` — mirrors the firmware's `keymap.json` schema exactly (`LayerEngine.loadKeymap` in the SMK repo). Cells are raw strings (`"key:a"`, `"mo:1"`, `"trans"`, `"none"`, etc.), not a parsed enum, so save is always lossless even for tokens the UI doesn't specifically render.
@@ -54,6 +54,18 @@ This app is written against a specific version of `~/esp/SMK` and several places
 - `EditorState.maxLayerCount` — the firmware's layer ceiling (16), not an editor preference: `LayerEngine`'s `toggledLayers`/`momentaryCounts` are sized `count: 16` and `isLayerActive` rejects anything `>= 16`.
 - `defaultKeymapURL` (`EditorState.swift`) points at `~/esp/SMK/keymap.json` — the reference file this app is pointed at by default.
 - `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` — **generated**, do not edit. The custom GATT upload service's UUIDs, produced together with the firmware's `Sources/components/smk_ble_uuids.h` by `~/esp/SMK/generate_ble_uuids.sh` from `~/esp/SMK/ble_upload_uuids.json`. Regenerate in both repos and commit both. `BLEUploadUUIDsTests` pins the values.
+- **Macros** (`Model/Macro.swift`) are carried in `keymap.json` under an
+  optional top-level `"macros"` array and uploaded with the layers. Three
+  things must stay in lockstep with the firmware, and none of them exists on
+  the firmware side yet (see
+  `docs/superpowers/specs/2026-08-20-macro-creation-design.md`, sub-project 3):
+  the `macro:N` action token in `ActionToken`/`KeyAction`; the step schema
+  parsed from `"macros"`; and `MacroStep.compiledSize`'s byte widths, which
+  are the contract behind the editor's byte meter — if the firmware's player
+  uses different widths, the meter lies.
+- `MacroCapacity.floor` is what the editor assumes before any board has
+  reported its real capacity via the (not yet implemented) `CAPS` command.
+  It is a deliberate under-promise, not a target.
 
 When editing model/device code, check whether the change needs a matching change on the firmware side (or vice versa) before assuming it's editor-only.
 
