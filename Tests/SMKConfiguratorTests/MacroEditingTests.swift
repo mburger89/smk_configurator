@@ -238,6 +238,32 @@ struct MacroEditingTests {
         #expect(e.loadError == nil)
     }
 
+    @Test("a document that is green on the compiled-bytecode meter but whose JSON exceeds the upload limit is refused, blaming macros")
+    func sendToDeviceRefusesOversizedJSONEvenWithinByteBudget() throws {
+        let e = editor()
+        // 8 macros x 12 keystroke steps: 512 compiled bytes (comfortably
+        // under the 1024-byte floor budget, so the meter reads green) but
+        // ~4498 bytes of upload JSON, past KeymapUploader.maxPayloadLength
+        // (4085). This is exactly the gap MacroBudget's compiled-bytecode
+        // meter can't see.
+        for id in 0..<8 {
+            e.document.macros = (e.document.macros ?? []) + [
+                MacroDefinition(
+                    id: id, name: "m",
+                    steps: (0..<12).map { _ in .keystroke(mods: [], key: .a, holdMs: 40) }
+                ),
+            ]
+        }
+        #expect(e.macroBudget.canFlash == true) // green on the compiled meter...
+
+        e.sendToDevice()
+
+        #expect(e.isSendingToDevice == false)
+        let message = try #require(e.loadError)
+        #expect(message.contains("macro"))
+        #expect(message.contains("4085"))
+    }
+
     @Test("a library row derives its trigger from wherever the macro is bound")
     func rowFindsTrigger() {
         var doc = KeymapDocument(

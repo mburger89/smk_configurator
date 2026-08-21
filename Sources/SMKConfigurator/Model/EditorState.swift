@@ -226,12 +226,38 @@ class EditorState {
     /// Tries USB (RP2040) first, then BLE (ESP32-C6), and pushes
     /// document.layers to whichever responds. Matrix data isn't sent — the
     /// firmware's matrix stays compiled-in (see the design spec).
+    ///
+    /// `macroBudget` gates on *compiled bytecode* against the board's macro
+    /// memory, but the wire format is JSON, capped at
+    /// `KeymapUploader.maxPayloadLength` — roughly an 8:1 size ratio (one
+    /// keystroke step is 5 compiled bytes but ~43 JSON bytes), so a document
+    /// can read green on the byte meter and still be far too big to upload.
+    /// The JSON is built and size-checked here, synchronously, before
+    /// `isSendingToDevice` flips or the Task is created, so an oversized
+    /// payload never touches a transport and the guard is observable without
+    /// awaiting anything.
     func sendToDevice() {
         guard macroBudget.canFlash else {
             loadError = macroBudget.blockReason
             return
         }
         guard !isSendingToDevice else { return }
+        let json: String
+        do {
+            json = try encodeUploadJSON(layers: document.layers, macros: document.macros)
+        } catch {
+            loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
+            return
+        }
+        let byteCount = json.utf8.count
+        guard byteCount <= KeymapUploader.maxPayloadLength else {
+            loadError = "Keymap upload is \(byteCount) bytes, over the "
+                + "\(KeymapUploader.maxPayloadLength)-byte device limit — likely "
+                + "from macros (they upload as JSON, not compiled bytecode, so "
+                + "the macro meter can read green while the upload is still too "
+                + "big). Trim macro steps or delete unused macros."
+            return
+        }
         isSendingToDevice = true
         Task { [self] in
             defer {
@@ -240,7 +266,6 @@ class EditorState {
                 refreshDeviceStatus()
             }
             do {
-                let json = try encodeUploadJSON(layers: document.layers, macros: document.macros)
                 if let usb = try? USBRawHIDTransport() {
                     try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
                         self?.uploadProgress = phase
