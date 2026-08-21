@@ -30,4 +30,9 @@ struct IconLoaderTests {
     func fallbackLabelIsNonEmpty(icon: AppIcon) {
         #expect(!icon.fallbackLabel.isEmpty, "\(icon.rawValue) has no fallbackLabel")
     }
+
+    @Test("the macros rail icon has a fallback label")
+    func macrosHasFallbackLabel() {
+        #expect(AppIcon.macros.fallbackLabel == "MAC")
+    }
 }

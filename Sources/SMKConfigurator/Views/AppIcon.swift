@@ -1,12 +1,12 @@
 import Foundation
 import SwiftCrossUI
 
-/// The 10 platform-native icons used by the icon rail and titlebar
+/// The 11 platform-native icons used by the icon rail and titlebar
 /// toolbar. Each case name is also the exact PNG filename (without
 /// extension) under `Resources/<Platform>/Icons/<light|dark>/` --
 /// see `Scripts/generate-icons.sh`.
 enum AppIcon: String, CaseIterable {
-    case key, designs, themes, device
+    case key, designs, themes, device, macros
     case newDoc, open, save, saveAs, importFile, exportFile
 
     /// Short text shown instead of the icon if `IconLoader.url` can't
@@ -21,6 +21,7 @@ enum AppIcon: String, CaseIterable {
         case .designs: return "DSN"
         case .themes: return "THM"
         case .device: return "DEV"
+        case .macros: return "MAC"
         case .newDoc: return "N"
         case .open: return "O"
         case .save: return "S"
