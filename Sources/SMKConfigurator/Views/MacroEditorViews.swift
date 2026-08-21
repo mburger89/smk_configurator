@@ -274,23 +274,11 @@ struct MacroCanvasHeaderView: View {
                     .foregroundColor(chrome.textSecondary)
             }
             Spacer()
-            TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: {
+            ToolbarPill(label: "Test run") {
                 editor.macroInspectorTab = .timing
-            }) {
-                Text("Test run")
-                    .font(.system(size: 12))
-                    .foregroundColor(chrome.textPrimary)
             }
-            .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
-            .fixedSize()
             .help("Walks the macro's steps and shows the timing trace in the inspector. Doesn't send keystrokes.")
-            TapTarget(background: chrome.accent, cornerRadius: 6, action: editor.closeMacro) {
-                Text("Save")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-            .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
-            .fixedSize()
+            ToolbarPill(label: "Save", isAccent: true, action: editor.closeMacro)
         }
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
     }

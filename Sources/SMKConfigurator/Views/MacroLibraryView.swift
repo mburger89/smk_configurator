@@ -108,22 +108,10 @@ struct MacroLibraryView: View {
             // Recording macros from the board is a later project -- this
             // stays disabled rather than implying a capability that doesn't
             // exist yet. See Task 13 for the final wording.
-            TapTarget(background: chrome.pillBackground.opacity(0.4), cornerRadius: 6, action: {}) {
-                Text("Record new")
-                    .font(.system(size: 12))
-                    .foregroundColor(chrome.textPrimary.opacity(0.4))
-            }
-            .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
-            .fixedSize()
-            .help("Recording macros from the board isn't implemented yet.")
+            ToolbarPill(label: "Record new", isEnabled: false, action: {})
+                .help("Recording macros from the board isn't implemented yet.")
 
-            TapTarget(background: chrome.accent, cornerRadius: 6, action: editor.createMacro) {
-                Text("New macro")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-            .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
-            .fixedSize()
+            ToolbarPill(label: "New macro", isAccent: true, action: editor.createMacro)
         }
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
     }
