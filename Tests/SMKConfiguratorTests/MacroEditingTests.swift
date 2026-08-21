@@ -238,4 +238,33 @@ struct MacroEditingTests {
         #expect(e.isSendingToDevice == true)
         #expect(e.loadError == nil)
     }
+
+    @Test("a library row derives its trigger from wherever the macro is bound")
+    func rowFindsTrigger() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1, 2], colsAreDriven: 1),
+            layers: [[["none", "macro:3"]]]
+        )
+        doc.macros = [MacroDefinition(id: 3, name: "Build", steps: [.delay(ms: 5)])]
+
+        let row = MacroLibraryRow(macro: doc.macroList[0], document: doc)
+        #expect(row.name == "Build")
+        #expect(row.stepCount == 1)
+        #expect(row.isBound)
+        #expect(row.layerLabel == "Layer 0")
+    }
+
+    @Test("an unbound macro says so rather than inventing a trigger")
+    func rowHandlesUnbound() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["none"]]]
+        )
+        doc.macros = [MacroDefinition(id: 3, name: "Orphan", steps: [])]
+
+        let row = MacroLibraryRow(macro: doc.macroList[0], document: doc)
+        #expect(row.isBound == false)
+        #expect(row.triggerLabel == "Unbound")
+        #expect(row.layerLabel == "—")
+    }
 }
