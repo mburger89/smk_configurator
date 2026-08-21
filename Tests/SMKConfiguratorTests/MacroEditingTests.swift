@@ -92,7 +92,7 @@ struct MacroEditingTests {
         #expect(e.selectedStepIndex == nil)
     }
 
-    @Test("deleting a macro frees its slot and returns to the library")
+    @Test("deleting a macro frees its slot for reuse")
     func deleteMacroFreesSlot() {
         let e = editor()
         e.createMacro()   // id 0
@@ -101,7 +101,24 @@ struct MacroEditingTests {
         e.deleteMacro(id: 0)
         #expect(e.document.macroList.map(\.id) == [1])
         #expect(e.document.nextMacroID == 0)
+    }
+
+    @Test("deleting the macro being edited closes the editor")
+    func deletingOpenMacroClosesEditor() {
+        let e = editor()
+        e.createMacro()   // id 0, now open
+        e.deleteMacro(id: 0)
         #expect(e.macroWorkspace == .library)
+    }
+
+    @Test("deleting a different macro leaves the open one alone")
+    func deletingOtherMacroKeepsEditorOpen() {
+        let e = editor()
+        e.createMacro()   // id 0
+        e.closeMacro()
+        e.createMacro()   // id 1, now open
+        e.deleteMacro(id: 0)
+        #expect(e.macroWorkspace == .editor(id: 1))
     }
 
     @Test("macroName resolves a slot to its name for keycap display")

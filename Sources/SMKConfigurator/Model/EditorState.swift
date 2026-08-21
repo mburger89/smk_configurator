@@ -574,13 +574,13 @@ class EditorState {
         selectedStepIndex = nil
     }
 
-    /// Always a library-level action (the library list's per-row delete), so
-    /// it always returns to the library afterward — even if some other
-    /// macro happened to be open in the editor, not just the deleted one.
+    /// Closes the editor only when the macro being edited is the one that
+    /// just vanished -- not on every deletion. Deleting a macro other than
+    /// the one currently open must leave that editor alone.
     func deleteMacro(id: Int) {
         document.macros = document.macroList.filter { $0.id != id }
         if document.macroList.isEmpty { document.macros = nil }
-        closeMacro()
+        if macroWorkspace.openMacroID == id { closeMacro() }
         isDirty = true
     }
 
