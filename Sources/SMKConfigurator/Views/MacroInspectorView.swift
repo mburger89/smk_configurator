@@ -37,8 +37,17 @@ struct MacroInspectorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             tabRow
-            content
-            Spacer(minLength: 0)
+            // A plain `Spacer`-terminated `VStack` was enough back when
+            // every tab's content was a few short fields, but the keystroke
+            // key chooser and the repeat block's nested step list can both
+            // run well past the column's own height (a grouped key palette
+            // in particular -- see `MacroKeyChooserView`), so this now
+            // scrolls rather than silently clipping or forcing the window
+            // taller. Same idea as `PaletteDrawerView`'s own vertical
+            // `ScrollView` for the same reason.
+            ScrollView(.vertical) {
+                content
+            }
         }
         .padding(EdgeInsets(top: 14, bottom: 14, leading: 15, trailing: 15))
         .frame(width: 248)
@@ -189,6 +198,18 @@ struct MacroInspectorView: View {
 /// C4 contract ("nothing in the UI claims a capability the build does not
 /// have"), so the toggle is wired to a real field instead: a text step's
 /// delivery mode.
+///
+/// The keystroke case's key/modifier choosers (`MacroKeyChooserView`,
+/// `MacroModifierChooserView`, below) are the one exception to "native
+/// controls only": `KeyName` is several hundred cases, and a `Picker` shows
+/// each option as flat `"\(value)"` text (see `layerOpLabels`'s label table
+/// a few cases down for the same limitation), so a flat `Picker` over it
+/// would be unusable. These reuse this codebase's other established custom
+/// control -- the hand-rolled `ZStack` + `onTapGesture` chip
+/// (`PaletteChip`/`KeyCapView`/`DesignCellView`, see `TapTarget`'s doc
+/// comment in `UIStyle.swift`) -- grouped the same way `PaletteDrawerView`
+/// groups the identical `KeyName.allGroups` vocabulary for KEY mode's
+/// palette, rather than inventing a third taxonomy.
 private struct MacroStepEditorView: View {
     var step: MacroStep
     var chrome: Chrome
@@ -223,13 +244,45 @@ private struct MacroStepEditorView: View {
 
     // MARK: - Keystroke
 
+    /// `Picker`'s built-in style would dump `KeyName`'s several hundred
+    /// cases as a flat list -- unusable, per the design brief. Instead this
+    /// mirrors `PaletteDrawerView`'s own solution to the identical problem:
+    /// `KeyName.allGroups`' generated sections (Letters, Numbers, Editing &
+    /// Punctuation, ...), each a horizontally-scrolling row of chips, inside
+    /// one vertically-scrolling column (`MacroKeyChooserView`). Modifiers are
+    /// a small, fixed 8-value multi-select (`MacroModifierChooserView`) --
+    /// unlike the KEY-mode palette's `ModifierName` chips (which arm one
+    /// modifier as its own standalone key press), a keystroke step's `mods`
+    /// is a set that rides along with `key`, so tapping toggles membership
+    /// rather than replacing a single selection.
     private func keystrokeEditor(mods: [ModifierName], key: KeyName?, holdMs: Int) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                SectionHeader(title: "Keys")
-                Text(step.payloadSummary)
-                    .font(.system(size: 13))
+                SectionHeader(title: "Key")
+                Text(key?.displayLabel ?? "No key selected")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(chrome.textPrimary)
+                MacroKeyChooserView(
+                    chrome: chrome,
+                    selectedKey: key,
+                    onSelect: { newKey in update(.keystroke(mods: mods, key: newKey, holdMs: holdMs)) }
+                )
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                SectionHeader(title: "Modifiers")
+                MacroModifierChooserView(
+                    chrome: chrome,
+                    selectedMods: mods,
+                    onToggle: { mod in
+                        var newMods = mods
+                        if let existing = newMods.firstIndex(of: mod) {
+                            newMods.remove(at: existing)
+                        } else {
+                            newMods.append(mod)
+                        }
+                        update(.keystroke(mods: newMods, key: key, holdMs: holdMs))
+                    }
+                )
             }
             VStack(alignment: .leading, spacing: 4) {
                 SectionHeader(title: "Hold")
@@ -352,5 +405,126 @@ private struct MacroStepEditorView: View {
                 .font(.system(size: 11))
                 .foregroundColor(chrome.textTertiary)
         }
+    }
+}
+
+/// A vertically-scrolling column of `KeyName.allGroups`' sections, each a
+/// horizontally-scrolling row of key chips -- the Step tab's key chooser.
+/// Deliberately reuses the exact grouping `PaletteDrawerView` uses for KEY
+/// mode's own palette (`KeyName.allGroups`) rather than inventing a second
+/// taxonomy, and the exact chip visual (`PaletteChip`'s fill/border/selected
+/// styling) reimplemented locally since `PaletteChip` itself is `private` to
+/// `PaletteDrawerView.swift` and keyed off `editor.selectedToken` (the
+/// KEY-mode "armed chip" concept), which has nothing to do with a macro
+/// step's `key: KeyName?` field.
+private struct MacroKeyChooserView: View {
+    var chrome: Chrome
+    var selectedKey: KeyName?
+    var onSelect: (KeyName) -> Void
+
+    /// Tall enough to show a couple of sections at once without the picker
+    /// dominating the whole 248pt-wide inspector column -- the rest scrolls,
+    /// same trade `PaletteDrawerView` makes for the full board palette.
+    private static let height: Double = 168
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(KeyName.allGroups, id: \.title) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(group.title.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(chrome.textTertiary)
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 6) {
+                                ForEach(group.keys, id: \.self) { candidate in
+                                    MacroChip(
+                                        label: candidate.displayLabel,
+                                        isSelected: selectedKey == candidate,
+                                        chrome: chrome,
+                                        action: { onSelect(candidate) }
+                                    )
+                                }
+                            }
+                        }
+                        .frame(height: MacroChip.height + 6)
+                    }
+                }
+            }
+            .padding(6)
+        }
+        .frame(height: Self.height)
+        .background(RoundedRectangle(cornerRadius: 6).fill(chrome.surface))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6).stroke(chrome.dividerLight, style: StrokeStyle(width: 1))
+        }
+    }
+}
+
+/// The Step tab's modifier multi-select: all eight `ModifierName` cases as
+/// toggleable chips, four to a row (fixed chunking, not a wrap layout --
+/// this codebase has reverted `GeometryReader`-based wrap before). Every
+/// chip whose modifier is in `selectedMods` reads as selected simultaneously,
+/// unlike `MacroKeyChooserView` where exactly one (or none) is.
+private struct MacroModifierChooserView: View {
+    var chrome: Chrome
+    var selectedMods: [ModifierName]
+    var onToggle: (ModifierName) -> Void
+
+    private static let columns = 4
+
+    private var rows: [[ModifierName]] {
+        stride(from: 0, to: ModifierName.allCases.count, by: Self.columns).map {
+            Array(ModifierName.allCases[$0..<min($0 + Self.columns, ModifierName.allCases.count)])
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(rows.indices, id: \.self) { rowIndex in
+                HStack(spacing: 6) {
+                    ForEach(rows[rowIndex], id: \.self) { mod in
+                        MacroChip(
+                            label: mod.displayLabel,
+                            isSelected: selectedMods.contains(mod),
+                            chrome: chrome,
+                            action: { onToggle(mod) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One small chip shared by `MacroKeyChooserView` and
+/// `MacroModifierChooserView` -- fill + label + a selected-state border,
+/// built the same hand-rolled `ZStack` + `onTapGesture` way `PaletteChip`
+/// (`PaletteDrawerView.swift`) is, rather than through `TapTarget`:
+/// `TapTarget`'s border is always a fixed 1pt stroke (`UIStyle.swift`), and
+/// the selected state here needs a heavier 2pt ring the same way
+/// `PaletteChip`'s does.
+private struct MacroChip: View {
+    var label: String
+    var isSelected: Bool
+    var chrome: Chrome
+    var action: () -> Void
+
+    static let height: Double = 22
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(chrome.chipBackground)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(chrome.textPrimary)
+        }
+        .frame(width: 36, height: Self.height)
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isSelected ? chrome.accent : chrome.chipBorder, style: StrokeStyle(width: isSelected ? 2 : 1))
+        }
+        .onTapGesture(perform: action)
     }
 }
