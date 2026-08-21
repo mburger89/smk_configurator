@@ -82,15 +82,30 @@ struct PaletteDrawerView: View {
             + scrollBarReserve
     }
 
+    /// One chip per saved macro, in slot order.
+    static func macroTokens(for document: KeymapDocument) -> [ActionToken] {
+        document.macroList.sorted { $0.id < $1.id }.map { .macro($0.id) }
+    }
+
+    /// The MACROS section is deliberately fixed at one horizontally-scrolling
+    /// row no matter how many macros exist -- including zero, where it still
+    /// renders (as "No macros yet.") rather than disappearing. `maxHeight`
+    /// and `contentHeight` here are static and feed
+    /// `ContentView.minWindowHeight`; a section that grew with the document,
+    /// or that appeared/disappeared based on it, would make the window's
+    /// minimum height depend on how many macros the user happens to own.
+    static let macroSectionHeight: Double = sectionHeight(rows: 1)
+
     /// Sum of every section's rendered height, derived from `keySections`
-    /// rather than hand-enumerated, plus the Layers & Special row, the gaps
-    /// between sections, and the outer padding.
+    /// rather than hand-enumerated, plus the Layers & Special row, the
+    /// MACROS row, the gaps between sections, and the outer padding.
     private static var contentHeight: Double {
         let sections = keySections
         let sectionsHeight = sections.reduce(0.0) { $0 + sectionHeight(rows: $1.rows) }
         let layersAndSpecial = sectionTitleHeight + sectionTitleSpacing + layersRowHeight + scrollBarReserve
-        let sectionGaps = Double(sections.count) * sectionSpacing
-        return sectionsHeight + layersAndSpecial + sectionGaps + 2 * outerPadding
+        // +1 section gap: MACROS is an additional section beyond `sections.count`.
+        let sectionGaps = Double(sections.count + 1) * sectionSpacing
+        return sectionsHeight + layersAndSpecial + macroSectionHeight + sectionGaps + 2 * outerPadding
     }
 
     /// Safety margin over `contentHeight` covering font-metric variance on
@@ -138,6 +153,7 @@ struct PaletteDrawerView: View {
                 ForEach(Self.keySections, id: \.title) { s in
                     section(s.title, tokens: s.tokens, rows: s.rows)
                 }
+                macroSection
             }
             .padding(10)
         }
@@ -230,6 +246,38 @@ struct PaletteDrawerView: View {
         .background(RoundedRectangle(cornerRadius: 6).fill(chrome.chipBackground.opacity(0.5)))
         .overlay {
             RoundedRectangle(cornerRadius: 6).stroke(chrome.chipBorder, style: StrokeStyle(width: 1))
+        }
+    }
+
+    /// One saved-macro chip per macro, exactly like a generated key
+    /// section, except this one is document-driven rather than
+    /// manifest-driven. Deliberately fixed at one row regardless of how
+    /// many macros exist (see `macroSectionHeight`) -- including zero,
+    /// where it still renders ("No macros yet.") rather than disappearing,
+    /// since a section that appears/disappears would also change the
+    /// drawer's height, which is the thing `macroSectionHeight` being a
+    /// `static let` exists to prevent.
+    private var macroSection: some View {
+        let tokens = Self.macroTokens(for: editor.document)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("MACROS")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(chrome.textTertiary)
+            if tokens.isEmpty {
+                Text("No macros yet.")
+                    .font(.system(size: 11))
+                    .foregroundColor(chrome.textTertiary)
+                    .frame(height: Self.chipRowHeight + Self.scrollBarReserve, alignment: .leading)
+            } else {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(tokens) { token in
+                            PaletteChip(token: token)
+                        }
+                    }
+                }
+                .frame(height: Self.chipRowHeight + Self.scrollBarReserve)
+            }
         }
     }
 }

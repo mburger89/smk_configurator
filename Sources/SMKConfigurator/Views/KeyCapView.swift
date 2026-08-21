@@ -20,6 +20,12 @@ struct KeyCapView: View {
     var widthUnits: Double
     var theme: KeyboardTheme? = nil
     var interactive: Bool = true
+    /// Resolves `macro:<id>` to the macro's name. Every other token's
+    /// `displayLabel` is self-sufficient ("A", "Ctrl", "MO1"...); `.macro(n)`
+    /// is the one that needs the document, so this stays optional and nil by
+    /// default -- existing call sites are untouched and fall back to the
+    /// token's own "M<id>" label.
+    var macroName: ((Int) -> String?)? = nil
 
     static let unit: Double = 46
     /// Column gap -- also used directly as `KeyboardBoardView`'s row
@@ -35,11 +41,17 @@ struct KeyCapView: View {
         let activeTheme = theme ?? editor.activeTheme
         let isArmed = interactive && editor.selectedToken == token && token != .none
         let isInspected = interactive && editor.selectedKeyPosition == KeyPosition(row: row, col: col)
+        let label: String = {
+            if case .macro(let n) = token, let resolved = macroName?(n) {
+                return resolved
+            }
+            return token.displayLabel
+        }()
 
         ZStack {
             RoundedRectangle(cornerRadius: 6)
                 .fill(activeTheme.background(for: token))
-            Text(token.displayLabel)
+            Text(label)
                 .font(.system(size: 12))
                 .foregroundColor(activeTheme.keyText.color)
         }
