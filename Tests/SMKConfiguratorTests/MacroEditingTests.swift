@@ -158,4 +158,84 @@ struct MacroEditingTests {
         let json = try e.encodeUploadJSON(layers: e.document.layers, macros: nil)
         #expect(json.contains("\"macros\"") == false)
     }
+
+    @Test("inserting after a stale, out-of-range selection still clamps in bounds")
+    func insertClampsStaleSelection() {
+        let e = editor()
+        e.createMacro()
+        e.appendStep(.delay(ms: 1))
+        e.appendStep(.delay(ms: 2))
+        e.selectedStepIndex = 10 // stale -- further out than the array ever was
+        e.insertStepAfterSelection(.delay(ms: 3))
+        #expect(e.document.macroList[0].steps == [.delay(ms: 1), .delay(ms: 2), .delay(ms: 3)])
+        #expect(e.selectedStepIndex == 2)
+    }
+
+    @Test("appending does nothing when no macro is open")
+    func appendStepNoopWithoutOpenMacro() {
+        let e = editor()
+        e.appendStep(.delay(ms: 1))
+        #expect(e.selectedStepIndex == nil)
+        #expect(e.document.macroList.isEmpty)
+    }
+
+    @Test("opening a macro with steps selects the first one")
+    func openMacroSelectsFirstStep() {
+        let e = editor()
+        e.createMacro() // id 0
+        e.appendStep(.delay(ms: 1))
+        e.closeMacro()
+        e.openMacro(id: 0)
+        #expect(e.macroWorkspace == .editor(id: 0))
+        #expect(e.selectedStepIndex == 0)
+    }
+
+    @Test("opening an empty macro leaves the selection nil")
+    func openMacroEmptyLeavesSelectionNil() {
+        let e = editor()
+        e.createMacro() // id 0, empty
+        e.closeMacro()
+        e.openMacro(id: 0)
+        #expect(e.macroWorkspace == .editor(id: 0))
+        #expect(e.selectedStepIndex == nil)
+    }
+
+    @Test("opening a macro id that doesn't exist is a no-op")
+    func openMacroNonexistentIsNoop() {
+        let e = editor()
+        e.openMacro(id: 42)
+        #expect(e.macroWorkspace == .library)
+        #expect(e.selectedStepIndex == nil)
+    }
+
+    @Test("an over-capacity document refuses to upload and reports why")
+    func sendToDeviceRefusesOverCapacity() {
+        let e = editor()
+        e.macroCapacity = MacroCapacity(macroBytes: 4, macroSlots: 8)
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "too big for four bytes",
+                                      steps: [.delay(ms: 1), .delay(ms: 2)]))
+        #expect(e.macroBudget.canFlash == false)
+
+        e.sendToDevice()
+
+        #expect(e.isSendingToDevice == false)
+        #expect(e.loadError == e.macroBudget.blockReason)
+    }
+
+    @Test("a document within capacity still proceeds to upload")
+    func sendToDeviceProceedsWithinCapacity() {
+        let e = editor()
+        #expect(e.macroBudget.canFlash == true)
+
+        e.sendToDevice()
+
+        // Only the synchronous portion of sendToDevice() is observed here --
+        // the guard passed and the in-flight flag flipped before any
+        // transport work was scheduled. The async body then goes on to
+        // touch real USB/BLE transports, which this test deliberately
+        // does not await (see task-6-report.md for why).
+        #expect(e.isSendingToDevice == true)
+        #expect(e.loadError == nil)
+    }
 }

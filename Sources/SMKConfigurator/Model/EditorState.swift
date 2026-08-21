@@ -222,6 +222,10 @@ class EditorState {
     /// document.layers to whichever responds. Matrix data isn't sent — the
     /// firmware's matrix stays compiled-in (see the design spec).
     func sendToDevice() {
+        guard macroBudget.canFlash else {
+            loadError = macroBudget.blockReason
+            return
+        }
         guard !isSendingToDevice else { return }
         isSendingToDevice = true
         Task { [self] in
@@ -564,9 +568,14 @@ class EditorState {
         isDirty = true
     }
 
+    /// No-op for an id with no macro -- a view should never call this with an
+    /// id it didn't get from `document.macroList`, but landing in an editor
+    /// for a macro that doesn't exist (where `currentMacro` then resolves to
+    /// nil) is worse than silently doing nothing.
     func openMacro(id: Int) {
+        guard let macro = document.macroList.first(where: { $0.id == id }) else { return }
         macroWorkspace = .editor(id: id)
-        selectedStepIndex = document.macroList.first { $0.id == id }?.steps.isEmpty == false ? 0 : nil
+        selectedStepIndex = macro.steps.isEmpty ? nil : 0
     }
 
     func closeMacro() {
@@ -600,6 +609,7 @@ class EditorState {
     }
 
     func appendStep(_ step: MacroStep) {
+        guard currentMacro != nil else { return }
         mutateOpenMacro { $0.steps.append(step) }
         selectedStepIndex = (currentMacro?.steps.count ?? 1) - 1
     }
@@ -613,7 +623,11 @@ class EditorState {
         }
         let target = selected + 1
         mutateOpenMacro { $0.steps.insert(step, at: min(target, $0.steps.count)) }
-        selectedStepIndex = target
+        // Clamp against the post-mutation state, not the unclamped `target`
+        // -- a stale `selectedStepIndex` (e.g. left over from a larger macro)
+        // must not leave the selection pointing past the array's new end.
+        let remaining = currentMacro?.steps.count ?? 0
+        selectedStepIndex = remaining == 0 ? nil : min(target, remaining - 1)
     }
 
     func moveStep(from source: Int, to destination: Int) {
