@@ -388,9 +388,71 @@ private struct MacroStepEditorView: View {
 
     // MARK: - Repeat block
 
+    /// Delegates to a stateful sibling view (`RepeatBlockContentsEditorView`)
+    /// rather than staying a computed property, since authoring the block's
+    /// contents needs its own local "which nested step is being edited"
+    /// selection -- see that type's doc comment for why this had to be
+    /// self-contained rather than reusing the top-level sequence view.
     private func repeatEditor(count: Int, steps: [MacroStep]) -> some View {
-        let noun = steps.count == 1 ? "step" : "steps"
-        return VStack(alignment: .leading, spacing: 14) {
+        RepeatBlockContentsEditorView(
+            count: count,
+            steps: steps,
+            chrome: chrome,
+            maxLayerIndex: maxLayerIndex,
+            update: update
+        )
+    }
+}
+
+/// The Step tab's editor for a `.repeatBlock`'s own contents: the repeat
+/// count slider (unchanged from before), a list of the steps already inside
+/// the block, an ADD STEP palette to append more, and -- when a nested step
+/// is tapped -- that step's own editor rendered inline.
+///
+/// This is the fix for the finding that a repeat block "can never be given
+/// contents": the honest alternative (removing RPT from the palette
+/// entirely, like "Record from board") was rejected because it's avoidable
+/// here. Making the *top-level* sequence view (`ContentView.macroEditorContent`,
+/// `MacroStepRowView`) walk into a nested block would need a selection path
+/// that survives across the list/inspector split and touches `EditorState`
+/// (`selectedStepIndex` is a single `Int?`, not a path) -- out of scope for
+/// this fix's file boundary (`EditorState.swift`/`ContentView.swift` belong
+/// to sibling tasks). But nothing about authoring a block's contents
+/// actually requires that: `update(.repeatBlock(count:steps:))` already
+/// hands back the *entire* replacement step, nested `steps` array included,
+/// so this view can splice a nested edit/insert/delete into that array and
+/// call `update` directly, entirely self-contained inside the Step tab --
+/// no new `EditorState` surface, no change to the sequence view. Reuses
+/// `MacroStepRowView` (the same row the top-level sequence view renders) for
+/// the nested list, and `MacroStepTypeRow` (the same row the top-level ADD
+/// STEP palette renders) for the nested add-step list, so a repeat block's
+/// contents read as a miniature version of the top-level editor rather than
+/// a bespoke one.
+///
+/// Nesting stays one level deep by construction: `MacroStepType.available(
+/// insideRepeatBlock: true)` excludes `.repeatBlock` from the nested ADD
+/// STEP list, matching the model's own rule (`Macro.swift`'s decoder strips
+/// a genuinely nested `rpt` to `.raw` rather than ever producing a nested
+/// `.repeatBlock`) that repeat blocks don't nest -- the firmware's player
+/// uses a single loop counter, not a stack.
+private struct RepeatBlockContentsEditorView: View {
+    var count: Int
+    var steps: [MacroStep]
+    var chrome: Chrome
+    var maxLayerIndex: Int
+    /// Replaces the whole `.repeatBlock` step -- same contract as
+    /// `MacroStepEditorView.update`, just at one more level of nesting.
+    var update: (MacroStep) -> Void
+
+    /// Which of `steps` is open for editing below the list, if any. Purely
+    /// local UI state -- there is no model-level concept of a "selected
+    /// nested step" (see the type doc comment), and there doesn't need to
+    /// be one: closing this pane and reopening the block starts back at the
+    /// list, which is an acceptable trade for not touching `EditorState`.
+    @State private var editingIndex: Int? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 SectionHeader(title: "Repeat count")
                 Slider(
@@ -401,10 +463,93 @@ private struct MacroStepEditorView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(chrome.textTertiary)
             }
-            Text("\(steps.count) \(noun) inside")
-                .font(.system(size: 11))
-                .foregroundColor(chrome.textTertiary)
+            if let editingIndex, steps.indices.contains(editingIndex) {
+                nestedStepEditor(index: editingIndex)
+            } else {
+                stepsList
+                addStepSection
+            }
         }
+    }
+
+    private var stepsList: some View {
+        let noun = steps.count == 1 ? "step" : "steps"
+        return VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(title: "\(steps.count) \(noun) inside")
+            if steps.isEmpty {
+                Text("No steps yet -- add one below.")
+                    .font(.system(size: 11))
+                    .foregroundColor(chrome.textTertiary)
+            } else {
+                ForEach(steps.indices, id: \.self) { index in
+                    MacroStepRowView(
+                        step: steps[index],
+                        index: index,
+                        isSelected: false,
+                        onSelect: { editingIndex = index },
+                        onMoveUp: { moveNested(from: index, to: index - 1) },
+                        onMoveDown: { moveNested(from: index, to: index + 1) },
+                        onDelete: { deleteNested(at: index) }
+                    )
+                }
+            }
+        }
+    }
+
+    private var addStepSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionHeader(title: "Add step")
+            ForEach(MacroStepType.available(insideRepeatBlock: true)) { type in
+                MacroStepTypeRow(type: type, chrome: chrome) {
+                    var newSteps = steps
+                    newSteps.append(type.makeStep())
+                    update(.repeatBlock(count: count, steps: newSteps))
+                    editingIndex = newSteps.count - 1
+                }
+            }
+        }
+    }
+
+    private func nestedStepEditor(index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionHeader(title: "Step \(index + 1) of \(steps.count)")
+                Spacer(minLength: 4)
+                Text("Back to list")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(chrome.accent)
+                    .onTapGesture { editingIndex = nil }
+            }
+            MacroStepEditorView(
+                step: steps[index],
+                chrome: chrome,
+                maxLayerIndex: maxLayerIndex,
+                update: { newStep in
+                    var newSteps = steps
+                    newSteps[index] = newStep
+                    update(.repeatBlock(count: count, steps: newSteps))
+                }
+            )
+            InspectorButton(label: "Delete step", isDestructive: true) {
+                deleteNested(at: index)
+            }
+        }
+    }
+
+    private func moveNested(from source: Int, to destination: Int) {
+        guard steps.indices.contains(source), steps.indices.contains(destination) else { return }
+        var newSteps = steps
+        let step = newSteps.remove(at: source)
+        newSteps.insert(step, at: destination)
+        update(.repeatBlock(count: count, steps: newSteps))
+    }
+
+    private func deleteNested(at index: Int) {
+        guard steps.indices.contains(index) else { return }
+        var newSteps = steps
+        newSteps.remove(at: index)
+        update(.repeatBlock(count: count, steps: newSteps))
+        editingIndex = nil
     }
 }
 

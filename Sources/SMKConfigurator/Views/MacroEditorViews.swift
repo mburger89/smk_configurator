@@ -184,7 +184,12 @@ struct MacroStepPaletteView: View {
 /// separate view (rather than a method on `MacroStepPaletteView`) so the
 /// `TapTarget` background stays a value passed in, per the
 /// no-branching-inside-`TapTarget` rule (`UIStyle.swift:98`).
-private struct MacroStepTypeRow: View {
+///
+/// Not `private` -- `MacroInspectorView`'s repeat-block editor (Step tab)
+/// reuses this exact row to offer the same "tap a type to insert it" palette
+/// for a repeat block's own contents, so the top-level ADD STEP list and a
+/// repeat block's nested ADD STEP list can never visually drift apart.
+struct MacroStepTypeRow: View {
     var type: MacroStepType
     var chrome: Chrome
     var insert: () -> Void
