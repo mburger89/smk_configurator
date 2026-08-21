@@ -55,22 +55,29 @@ struct KeymapDocument: Codable, Equatable {
         }
     }
 
-    /// Rewrites every `mo:`/`tg:` cell in every layer so it still names the
-    /// same physical layer after the layer at `index` has been removed from
-    /// `layers`. Without this, deleting a layer silently breaks every
-    /// reference above it: the firmware's `getAction` only walks
-    /// `0..<keymaps.count` and `isLayerActive` only reports layers it has,
-    /// so an off-by-one `mo:`/`tg:` becomes a permanently dead key.
+    /// Rewrites every `mo:`/`tg:` cell in every layer, and every macro
+    /// `.layer` step, so each still names the same physical layer after the
+    /// layer at `index` has been removed from `layers`. Without this,
+    /// deleting a layer silently breaks every reference above it: the
+    /// firmware's `getAction` only walks `0..<keymaps.count` and
+    /// `isLayerActive` only reports layers it has, so an off-by-one
+    /// `mo:`/`tg:` (or macro `.layer` step) becomes a permanently dead
+    /// action.
     ///
     /// - references *below* `index` are untouched,
     /// - references *above* it shift down by one,
-    /// - references *to* it become `none` -- the layer they named no longer
-    ///   exists, and `none` says that honestly rather than leaving a token
-    ///   that can never fire.
+    /// - references *to* it are handled differently per shape: a keymap
+    ///   cell always names exactly one action, so it becomes `none` -- that
+    ///   says honestly that the key does nothing, rather than leaving a
+    ///   token that can never fire. A macro step has no "none" equivalent
+    ///   (there's no opcode that means "do nothing"), and unlike a cell, a
+    ///   macro's step list is a free sequence that can simply shrink -- so
+    ///   the dangling `.layer` step is dropped outright rather than kept
+    ///   around as an inert entry the UI can't meaningfully render.
     ///
-    /// Cells that aren't layer references (including `.raw` tokens this app
-    /// doesn't understand) are left byte-for-byte alone, preserving the
-    /// lossless-save guarantee above.
+    /// Cells/steps that aren't layer references (including `.raw` tokens
+    /// this app doesn't understand) are left byte-for-byte alone, preserving
+    /// the lossless-save guarantee above.
     mutating func renumberLayerReferences(afterRemoving index: Int) {
         for layer in layers.indices {
             for row in layers[layer].indices {
@@ -81,6 +88,30 @@ struct KeymapDocument: Codable, Equatable {
                     ) else { continue }
                     layers[layer][row][col] = rewritten
                 }
+            }
+        }
+        guard !macroList.isEmpty else { return }
+        macros = macroList.map { macro in
+            var rewritten = macro
+            rewritten.steps = Self.renumberedSteps(macro.steps, afterRemoving: index)
+            return rewritten
+        }
+    }
+
+    /// Applies the same "below untouched / above shifts down / at-index
+    /// dropped" rule to one macro's step list, recursing into
+    /// `.repeatBlock` bodies (the only step shape that nests other steps).
+    private static func renumberedSteps(_ steps: [MacroStep], afterRemoving index: Int) -> [MacroStep] {
+        steps.compactMap { step in
+            switch step {
+            case .layer(let op, let n):
+                if n > index { return .layer(op: op, n: n - 1) }
+                if n == index { return nil }
+                return step
+            case .repeatBlock(let count, let inner):
+                return .repeatBlock(count: count, steps: renumberedSteps(inner, afterRemoving: index))
+            default:
+                return step
             }
         }
     }
