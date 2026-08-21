@@ -34,8 +34,6 @@ struct MacroInspectorView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
-    @State private var tab: MacroInspectorTab = .step
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             tabRow
@@ -52,13 +50,13 @@ struct MacroInspectorView: View {
         HStack(spacing: 6) {
             ForEach(MacroInspectorTab.allCases) { candidate in
                 TapTarget(
-                    background: candidate == tab ? chrome.accent : chrome.pillBackground,
+                    background: candidate == editor.macroInspectorTab ? chrome.accent : chrome.pillBackground,
                     cornerRadius: 6,
-                    action: { tab = candidate }
+                    action: { editor.macroInspectorTab = candidate }
                 ) {
                     Text(candidate.label)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(candidate == tab ? .white : chrome.textPrimary)
+                        .foregroundColor(candidate == editor.macroInspectorTab ? .white : chrome.textPrimary)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 28)
@@ -69,7 +67,7 @@ struct MacroInspectorView: View {
     @ViewBuilder
     private var content: some View {
         if let macro = editor.currentMacro {
-            switch tab {
+            switch editor.macroInspectorTab {
             case .step: stepTab(macro: macro)
             case .macro: macroTab(macro: macro)
             case .timing: timingTab(macro: macro)
@@ -166,6 +164,9 @@ struct MacroInspectorView: View {
                     }
                 }
             }
+            Text("Test run estimates timing only. It doesn't send keystrokes.")
+                .font(.system(size: 11))
+                .foregroundColor(chrome.textTertiary)
         }
     }
 }

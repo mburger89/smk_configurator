@@ -72,4 +72,13 @@ struct MacroCapacityTests {
                                 source: .device, macros: [])
         #expect(empty.fillFraction == 0.0)
     }
+
+    @Test("a budget that can't flash explains why in one sentence")
+    func blockReasonIsAFullSentence() {
+        let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 0, macroSlots: 0),
+                                 source: .device, macros: [])
+        let reason = budget.blockReason
+        #expect(reason?.hasSuffix(".") == true)
+        #expect(reason?.isEmpty == false)
+    }
 }

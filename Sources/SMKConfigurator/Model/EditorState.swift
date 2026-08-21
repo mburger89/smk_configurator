@@ -104,6 +104,11 @@ class EditorState {
     var macroWorkspace: MacroWorkspace = .library
     /// Which step the inspector is editing, or nil when the macro is empty.
     var selectedStepIndex: Int? = nil
+    /// Which tab of `MacroInspectorView` is showing. Lives here rather than
+    /// as local `@State` on the inspector because `MacroCanvasHeaderView`'s
+    /// "Test run" button (a sibling view, not an ancestor) needs to switch it
+    /// to `.timing` -- there's no shared ancestor closer than `EditorState`.
+    var macroInspectorTab: MacroInspectorTab = .step
     /// The last capacity a board reported, or the floor profile until one does.
     var macroCapacity: MacroCapacity = .floor
     var macroCapacitySource: MacroCapacitySource = .floor

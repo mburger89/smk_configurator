@@ -118,10 +118,14 @@ struct MacroStepPaletteView: View {
         }
     }
 
-    /// Recording macros from the board is a later project -- this stays
-    /// disabled rather than implying a capability that doesn't exist yet.
-    /// See Task 13 for the final wording; matches the library table's
-    /// "Record new" button (`MacroLibraryView.header`).
+    /// Recording macros from the board is a later project (sub-project 4 --
+    /// no device→host event channel exists in either transport) -- this
+    /// stays disabled rather than implying a capability that doesn't exist
+    /// yet, per contract C4. Matches the library table's "Record new" button
+    /// (`MacroLibraryView.header`). The helper line beneath the button is the
+    /// honest replacement for the design handoff's "Captured events append as
+    /// steps and keep their measured gaps." -- that line describes behaviour
+    /// this build does not have.
     private var captureSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionHeader(title: "Capture")
@@ -132,6 +136,9 @@ struct MacroStepPaletteView: View {
             }
             .frame(height: 30)
             .help("Recording macros from the board isn't implemented yet.")
+            Text("Recording from the board isn't available yet.")
+                .font(.system(size: 11))
+                .foregroundColor(chrome.textTertiary)
         }
     }
 
@@ -164,6 +171,11 @@ struct MacroStepPaletteView: View {
             Text(budget.summaryLabel(slot: slot))
                 .font(.system(size: 11))
                 .foregroundColor(chrome.textTertiary)
+            if let blockReason = budget.blockReason {
+                Text(blockReason)
+                    .font(.system(size: 11))
+                    .foregroundColor(chrome.dangerText)
+            }
         }
     }
 }
@@ -223,12 +235,16 @@ private struct MacroStepTypeRow: View {
 /// already committed live via `editor.updateMacro(_:)` as they happen (see
 /// Task 12's Step tab), unlike Designs/Themes' separate draft-then-Save
 /// flow, so there is no pending edit for this button to flush -- it reads
-/// as the primary "I'm done, take me back" action instead. "Test run" has
-/// no backing behavior yet, so it renders dimmed/disabled with a `.help()`
-/// explaining why -- same convention as this file's "Record from board"
-/// and `MacroLibraryView`'s "Record new" -- rather than looking clickable
-/// and doing nothing; Task 13 wires it to a real timing trace in the
-/// inspector's Timing tab.
+/// as the primary "I'm done, take me back" action instead. "Test run" is a
+/// real, working button -- unlike "Record from board"/"Record new", which
+/// stay genuinely disabled because they need capabilities this build lacks,
+/// walking the macro's steps and computing a timing trace needs nothing new:
+/// `MacroInspectorView`'s Timing tab already renders `estimatedDurationMs`
+/// per step. So "Test run" just switches the shared
+/// `editor.macroInspectorTab` to `.timing`, where that trace -- and its
+/// "doesn't send keystrokes" disclaimer -- live (see C4 in the design spec:
+/// this is the one deferred-sounding control that has a genuine
+/// implementation, not just an honest disabled state).
 struct MacroCanvasHeaderView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.colorScheme) private var colorScheme
@@ -253,14 +269,16 @@ struct MacroCanvasHeaderView: View {
                     .foregroundColor(chrome.textSecondary)
             }
             Spacer()
-            TapTarget(background: chrome.pillBackground.opacity(0.4), cornerRadius: 6, action: {}) {
+            TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: {
+                editor.macroInspectorTab = .timing
+            }) {
                 Text("Test run")
                     .font(.system(size: 12))
-                    .foregroundColor(chrome.textPrimary.opacity(0.4))
+                    .foregroundColor(chrome.textPrimary)
             }
             .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
             .fixedSize()
-            .help("Test run isn't available yet. It will walk the macro's steps and write a timing trace without sending keystrokes.")
+            .help("Walks the macro's steps and shows the timing trace in the inspector. Doesn't send keystrokes.")
             TapTarget(background: chrome.accent, cornerRadius: 6, action: editor.closeMacro) {
                 Text("Save")
                     .font(.system(size: 12, weight: .semibold))
