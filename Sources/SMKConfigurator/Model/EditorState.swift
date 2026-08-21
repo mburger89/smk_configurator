@@ -231,7 +231,7 @@ class EditorState {
                 refreshDeviceStatus()
             }
             do {
-                let json = try encodeLayersJSON(document.layers)
+                let json = try encodeUploadJSON(layers: document.layers, macros: document.macros)
                 if let usb = try? USBRawHIDTransport() {
                     try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
                         self?.uploadProgress = phase
@@ -278,9 +278,17 @@ class EditorState {
         #endif
     }
 
-    private func encodeLayersJSON(_ layers: [[[String]]]) throws -> String {
-        struct LayersPayload: Encodable { let layers: [[[String]]] }
-        let data = try JSONEncoder().encode(LayersPayload(layers: layers))
+    /// The JSON the board receives. Matrix data is deliberately absent — the
+    /// firmware's matrix stays compiled in — but macros travel with the
+    /// layers, since one upload has to leave the board self-consistent.
+    /// `macros` is omitted entirely when nil, so a macro-free keymap uploads
+    /// byte-identically to how it did before macros existed.
+    func encodeUploadJSON(layers: [[[String]]], macros: [MacroDefinition]?) throws -> String {
+        struct UploadPayload: Encodable {
+            let layers: [[[String]]]
+            let macros: [MacroDefinition]?
+        }
+        let data = try JSONEncoder().encode(UploadPayload(layers: layers, macros: macros))
         guard let json = String(data: data, encoding: .utf8) else {
             throw DeviceTransportError.encodingFailed
         }

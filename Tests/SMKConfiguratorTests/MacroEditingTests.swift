@@ -123,4 +123,22 @@ struct MacroEditingTests {
         #expect(e.macroBudget.usedBytes == 8)
         #expect(e.macroBudget.usedSlots == 1)
     }
+
+    @Test("the upload payload carries macros alongside layers")
+    func uploadPayloadIncludesMacros() throws {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "Hi", steps: [.delay(ms: 5)]))
+
+        let json = try e.encodeUploadJSON(layers: e.document.layers, macros: e.document.macros)
+        #expect(json.contains("\"macros\""))
+        #expect(json.contains("\"layers\""))
+    }
+
+    @Test("a document with no macros uploads no macros key")
+    func uploadOmitsAbsentMacros() throws {
+        let e = editor()
+        let json = try e.encodeUploadJSON(layers: e.document.layers, macros: nil)
+        #expect(json.contains("\"macros\"") == false)
+    }
 }
