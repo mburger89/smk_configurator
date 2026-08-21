@@ -52,15 +52,26 @@ struct MacroLibraryRow: Identifiable, Equatable {
 struct MacroLibraryView: View {
     @Environment(EditorState.self) var editor
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.presentAlert) private var presentAlert
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     private var rows: [MacroLibraryRow] {
         editor.document.macroList.map { MacroLibraryRow(macro: $0, document: editor.document) }
     }
 
+    /// Whole-set capacity warning (contract C2: "warns in the library row
+    /// and status bar"). Deliberately the same reason surfaced by the step
+    /// editor's SLOT section (`MacroBudget.blockReason`) so this is the one
+    /// place in the app you don't have to be in the step editor to see it.
+    /// `StatusBarView.swift` is out of scope this round -- see the report.
+    private var capacityWarning: String? { editor.macroBudget.blockReason }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if let capacityWarning {
+                capacityBanner(capacityWarning)
+            }
             columnHeader
             if rows.isEmpty {
                 emptyState
@@ -68,9 +79,13 @@ struct MacroLibraryView: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(rows) { row in
-                            MacroLibraryRowView(row: row, chrome: chrome) {
-                                editor.openMacro(id: row.id)
-                            }
+                            MacroLibraryRowView(
+                                row: row,
+                                chrome: chrome,
+                                isOverCapacity: capacityWarning != nil,
+                                open: { editor.openMacro(id: row.id) },
+                                delete: { confirmDelete(row) }
+                            )
                         }
                     }
                     .padding(EdgeInsets(top: 8, bottom: 12, leading: 16, trailing: 16))
@@ -120,6 +135,19 @@ struct MacroLibraryView: View {
             + "\(budget.usedSlots) of \(budget.capacity.macroSlots) slots\(estimate)"
     }
 
+    /// Library-level half of contract C2's "warns in the library row and
+    /// status bar" -- shown whenever the current macro set can't be
+    /// flashed, using the same wording the step editor's SLOT section
+    /// already shows (`MacroBudget.blockReason`), so the two never disagree.
+    private func capacityBanner(_ reason: String) -> some View {
+        Text(reason)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(chrome.dangerText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(EdgeInsets(top: 6, bottom: 6, leading: 16, trailing: 16))
+            .background(chrome.dangerText.opacity(0.12))
+    }
+
     private var columnHeader: some View {
         HStack(spacing: 0) {
             columnLabel("MACRO", width: 240)
@@ -129,6 +157,37 @@ struct MacroLibraryView: View {
             columnLabel("BYTES", width: 90)
         }
         .padding(EdgeInsets(top: 6, bottom: 6, leading: 16, trailing: 16))
+    }
+
+    /// Confirms before deleting, warning strongly when the macro is bound.
+    /// Slot ids are reused (`KeymapDocument.nextMacroID` hands out the
+    /// lowest free one), and `macro:N` tokens on keys are raw strings that
+    /// nobody rewrites when a macro is deleted -- so the next macro created
+    /// after this one can land back in this exact slot, and the bound key
+    /// would then silently run *that* macro instead, with no error and no
+    /// visual difference (`KeyCapView` resolves its label from whatever
+    /// macro currently occupies the id at render time). That failure mode
+    /// is silent and easy to miss, so the warning names the exact key/layer
+    /// and spells out the consequence rather than a generic "are you sure".
+    private func confirmDelete(_ row: MacroLibraryRow) {
+        Task {
+            if row.isBound {
+                await presentAlert(
+                    "\u{201c}\(row.name)\u{201d} is bound to \(row.triggerLabel) on \(row.layerLabel). "
+                    + "Deleting it leaves that key pointing at an empty slot -- and if you create "
+                    + "another macro afterward, it may silently reuse this slot and run on that key "
+                    + "instead. Delete anyway?"
+                ) {
+                    Button("Delete Anyway") { editor.deleteMacro(id: row.id) }
+                    Button("Cancel") {}
+                }
+            } else {
+                await presentAlert("Delete \u{201c}\(row.name)\u{201d}?") {
+                    Button("Delete") { editor.deleteMacro(id: row.id) }
+                    Button("Cancel") {}
+                }
+            }
+        }
     }
 
     private func columnLabel(_ title: String, width: Double) -> some View {
@@ -146,25 +205,52 @@ struct MacroLibraryView: View {
     }
 }
 
-/// One tappable row in `MacroLibraryView`'s table. A separate view (rather
-/// than a method on `MacroLibraryView`) so the `TapTarget` background can be
-/// passed in as a value per the no-branching-inside-`TapTarget` rule
-/// (`UIStyle.swift:98`).
+/// One row in `MacroLibraryView`'s table: the row itself is one `TapTarget`
+/// (opens the macro), with a hover-revealed delete glyph as a sibling in a
+/// gesture-free `ZStack` -- the same shape `KeyListColumnView.layerRow`
+/// uses, and for the same reason: `TapTarget` can't contain an `if`
+/// (`UIStyle.swift:98`) and a second, independent tap target can't nest
+/// inside a first, so select and delete have to be siblings under a shared
+/// parent that itself carries no gesture.
 private struct MacroLibraryRowView: View {
     var row: MacroLibraryRow
     var chrome: Chrome
+    /// Whole-set capacity overage (not something one row alone caused --
+    /// slots/bytes are cumulative across the document, so there's no sound
+    /// way to blame a single macro). Colors the byte count on every row
+    /// uniformly rather than singling one out.
+    var isOverCapacity: Bool
     var open: () -> Void
+    var delete: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
-        TapTarget(background: chrome.column, cornerRadius: 6, action: open) {
-            HStack(spacing: 0) {
-                cell(row.name, width: 240, weight: .semibold, color: chrome.textPrimary)
-                cell(row.triggerLabel, width: 130, color: row.isBound ? chrome.textSecondary : chrome.textTertiary)
-                cell("\(row.stepCount)", width: 90, color: chrome.textSecondary)
-                cell(row.layerLabel, width: 110, color: chrome.textSecondary)
-                cell("\(row.byteCount)", width: 90, color: chrome.textSecondary)
+        ZStack(alignment: .trailing) {
+            TapTarget(background: chrome.column, cornerRadius: 6, action: open) {
+                HStack(spacing: 0) {
+                    cell(row.name, width: 240, weight: .semibold, color: chrome.textPrimary)
+                    cell(row.triggerLabel, width: 130, color: row.isBound ? chrome.textSecondary : chrome.textTertiary)
+                    cell("\(row.stepCount)", width: 90, color: chrome.textSecondary)
+                    cell(row.layerLabel, width: 110, color: chrome.textSecondary)
+                    cell("\(row.byteCount)", width: 90, color: isOverCapacity ? chrome.dangerText : chrome.textSecondary)
+                    Spacer(minLength: 0)
+                    // Reserved space so the hover-revealed trash glyph below
+                    // never overlaps the BYTES column's text.
+                    Color.clear.frame(width: 28)
+                }
+                .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
             }
-            .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
+            .onHover { hovering in isHovered = hovering }
+
+            if isHovered {
+                Text("🗑")
+                    .font(.system(size: 11))
+                    .foregroundColor(chrome.dangerText)
+                    .padding(.trailing, 20)
+                    .onTapGesture(perform: delete)
+                    .help("Delete this macro")
+            }
         }
         .frame(height: 40)
     }
