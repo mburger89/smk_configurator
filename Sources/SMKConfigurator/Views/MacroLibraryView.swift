@@ -122,12 +122,11 @@ struct MacroLibraryView: View {
 
     private var columnHeader: some View {
         HStack(spacing: 0) {
-            columnLabel("MACRO", width: 200)
-            columnLabel("TRIGGER", width: 100)
-            columnLabel("KIND", width: 80)
-            columnLabel("STEPS", width: 70)
-            columnLabel("LAYER", width: 90)
-            columnLabel("BYTES", width: 70)
+            columnLabel("MACRO", width: 240)
+            columnLabel("TRIGGER", width: 130)
+            columnLabel("STEPS", width: 90)
+            columnLabel("LAYER", width: 110)
+            columnLabel("BYTES", width: 90)
         }
         .padding(EdgeInsets(top: 6, bottom: 6, leading: 16, trailing: 16))
     }
@@ -159,12 +158,11 @@ private struct MacroLibraryRowView: View {
     var body: some View {
         TapTarget(background: chrome.column, cornerRadius: 6, action: open) {
             HStack(spacing: 0) {
-                cell(row.name, width: 200, weight: .semibold, color: chrome.textPrimary)
-                cell(row.triggerLabel, width: 100, color: row.isBound ? chrome.textSecondary : chrome.textTertiary)
-                cell("Key", width: 80, color: chrome.textSecondary)
-                cell("\(row.stepCount)", width: 70, color: chrome.textSecondary)
-                cell(row.layerLabel, width: 90, color: chrome.textSecondary)
-                cell("\(row.byteCount)", width: 70, color: chrome.textSecondary)
+                cell(row.name, width: 240, weight: .semibold, color: chrome.textPrimary)
+                cell(row.triggerLabel, width: 130, color: row.isBound ? chrome.textSecondary : chrome.textTertiary)
+                cell("\(row.stepCount)", width: 90, color: chrome.textSecondary)
+                cell(row.layerLabel, width: 110, color: chrome.textSecondary)
+                cell("\(row.byteCount)", width: 90, color: chrome.textSecondary)
             }
             .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
         }
