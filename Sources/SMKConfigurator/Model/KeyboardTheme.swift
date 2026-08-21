@@ -55,6 +55,7 @@ struct KeyboardTheme: Codable, Equatable, Identifiable {
         case .modifier: return modifierBackground.color
         case .momentaryLayer, .toggleLayer: return layerBackground.color
         case .toggleConnection: return specialBackground.color
+        case .macro: return specialBackground.color
         case .raw: return Color(red: 1, green: 0, blue: 0)
         case .key: return keyBackground.color
         }
