@@ -15,6 +15,26 @@ struct KeymapDocument: Codable, Equatable {
     /// layer -> row -> col -> raw action string (e.g. "key:a", "mod:leftShift", "mo:1", "trans", "none")
     var layers: [[[String]]]
 
+    /// Macros, added by this editor and read by the firmware's macro player.
+    ///
+    /// Optional rather than defaulted-empty on purpose: a `keymap.json`
+    /// written before macros existed must not gain a `"macros": []` key
+    /// merely from being opened and saved. `JSONEncoder` omits a nil
+    /// optional entirely, so the lossless-save guarantee holds.
+    var macros: [MacroDefinition]?
+
+    /// `macros` with nil read as empty, for call sites that only read.
+    var macroList: [MacroDefinition] { macros ?? [] }
+
+    /// The lowest unused slot number, so deleting a macro frees its slot for
+    /// reuse rather than leaving a permanent hole.
+    var nextMacroID: Int {
+        let used = Set(macroList.map(\.id))
+        var candidate = 0
+        while used.contains(candidate) { candidate += 1 }
+        return candidate
+    }
+
     /// A fresh, empty keymap sized for `design`: one layer, every cell
     /// (including gaps, which the firmware never reads since no switch
     /// exists there) set to "none". Keeping a full rectangular grid, gaps

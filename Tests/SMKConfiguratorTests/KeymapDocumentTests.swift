@@ -74,4 +74,53 @@ struct KeymapDocumentTests {
         let shrunk = layer.reshaped(to: small)
         #expect(shrunk == [["key:a"]])
     }
+
+    @Test("a document with no macros key does not gain one on save")
+    func absentMacrosKeyStaysAbsent() throws {
+        let json = """
+        {"matrix":{"rows":[0],"cols":[1],"colsAreDriven":1},"layers":[[["key:a"]]]}
+        """
+        let doc = try JSONDecoder().decode(KeymapDocument.self, from: Data(json.utf8))
+        #expect(doc.macros == nil)
+
+        let data = try JSONEncoder().encode(doc)
+        let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(object["macros"] == nil)
+    }
+
+    @Test("macros survive a document round-trip")
+    func macrosRoundTrip() throws {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["key:a"]]]
+        )
+        doc.macros = [MacroDefinition(id: 0, name: "Hi", steps: [.delay(ms: 5)])]
+
+        let data = try JSONEncoder().encode(doc)
+        let decoded = try JSONDecoder().decode(KeymapDocument.self, from: data)
+        #expect(decoded.macros == doc.macros)
+    }
+
+    @Test("macroList reads nil as empty")
+    func macroListTreatsNilAsEmpty() {
+        let doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["key:a"]]]
+        )
+        #expect(doc.macroList.isEmpty)
+    }
+
+    @Test("nextMacroID fills the lowest free slot")
+    func nextMacroIDFillsGaps() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["key:a"]]]
+        )
+        #expect(doc.nextMacroID == 0)
+        doc.macros = [
+            MacroDefinition(id: 0, name: "a", steps: []),
+            MacroDefinition(id: 2, name: "c", steps: []),
+        ]
+        #expect(doc.nextMacroID == 1)
+    }
 }
