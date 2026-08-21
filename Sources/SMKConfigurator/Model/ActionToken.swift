@@ -74,7 +74,7 @@ enum ActionToken: Equatable, Identifiable, Hashable {
 // the vocabulary it dispatches into is generated.
 
 /// Matches `Modifier.fromCString` exactly.
-enum ModifierName: String, CaseIterable, Hashable {
+enum ModifierName: String, CaseIterable, Hashable, Codable {
     case leftCtrl, leftShift, leftAlt, leftGUI
     case rightCtrl, rightShift, rightAlt, rightGUI
 
