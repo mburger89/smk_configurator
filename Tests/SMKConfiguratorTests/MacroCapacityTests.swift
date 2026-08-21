@@ -44,6 +44,17 @@ struct MacroCapacityTests {
         #expect(budget.blockReason == "This board has no macro memory.")
     }
 
+    @Test("a board reporting zero macro memory doesn't block an otherwise macro-free keymap")
+    func zeroCapacityWithNoMacrosStillFlashes() {
+        // Regression: `blockReason` used to key off `macroBytes == 0` alone,
+        // so a small-flash board that legitimately reports zero macro bytes
+        // could never receive even an ordinary keymap with no macros in it.
+        let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 0, macroSlots: 0),
+                                 source: .device, macros: [])
+        #expect(budget.canFlash)
+        #expect(budget.blockReason == nil)
+    }
+
     @Test("exceeding the byte budget blocks flashing and names the overage")
     func overBudgetBlocksFlash() {
         let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 50, macroSlots: 32),
@@ -76,9 +87,30 @@ struct MacroCapacityTests {
     @Test("a budget that can't flash explains why in one sentence")
     func blockReasonIsAFullSentence() {
         let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 0, macroSlots: 0),
-                                 source: .device, macros: [])
+                                 source: .device, macros: [macro(0, bytes: 20)])
         let reason = budget.blockReason
         #expect(reason?.hasSuffix(".") == true)
         #expect(reason?.isEmpty == false)
+    }
+
+    @Test("blockReason under the never-connected floor says its numbers are estimated")
+    func blockReasonUnderFloorIsHonestAboutItsSource() {
+        // The floor's numbers are a made-up under-promise, not anything a
+        // board reported. `summaryLabel`/`budgetSummary` already say
+        // "(estimated)" for exactly this reason; `blockReason` is the one
+        // string of the three that actually blocks an action, so it must
+        // not read as though a real board was consulted.
+        let macros = (0..<(MacroCapacity.floor.macroSlots + 1)).map { macro($0, bytes: 10) }
+        let budget = MacroBudget(capacity: .floor, source: .floor, macros: macros)
+        #expect(budget.canFlash == false)
+        #expect(budget.blockReason?.contains("estimated") == true)
+    }
+
+    @Test("blockReason from a real device report says nothing about being estimated")
+    func blockReasonFromDeviceIsNotLabelledEstimated() {
+        let macros = (0..<3).map { macro($0, bytes: 10) }
+        let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 8192, macroSlots: 2),
+                                 source: .device, macros: macros)
+        #expect(budget.blockReason?.contains("estimated") == false)
     }
 }

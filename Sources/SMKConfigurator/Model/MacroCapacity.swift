@@ -56,15 +56,29 @@ struct MacroBudget: Equatable {
 
     /// Why flashing is unavailable, or nil when it's fine. Never blocks
     /// editing or saving to disk — only the upload.
+    ///
+    /// Guarded on `usedSlots > 0` throughout: a board that reports zero
+    /// macro memory (small-flash parts are allowed to) must still accept an
+    /// otherwise macro-free keymap. Blocking on capacity alone, regardless
+    /// of whether anything actually needs that capacity, would regress
+    /// ordinary flashing the day such a board first reports in.
+    ///
+    /// Also honest about `source == .floor`: those numbers are
+    /// `MacroCapacity.floor`, a made-up under-promise, not anything a board
+    /// has ever confirmed. `summaryLabel`/`budgetSummary` already say
+    /// "(estimated)" for the same reason — this is the one of the three
+    /// that actually blocks an action, so it can't afford to read as though
+    /// a real board was consulted.
     var blockReason: String? {
-        if capacity.macroBytes == 0 || capacity.macroSlots == 0 {
-            return "This board has no macro memory."
+        let estimate = source == .floor ? " (estimated)" : ""
+        if usedSlots > 0 && (capacity.macroBytes == 0 || capacity.macroSlots == 0) {
+            return "This board has no macro memory\(estimate)."
         }
         if usedSlots > capacity.macroSlots {
-            return "This board has \(capacity.macroSlots) macro slots; \(usedSlots) macros are defined."
+            return "This board has \(capacity.macroSlots) macro slots\(estimate); \(usedSlots) macros are defined."
         }
         if usedBytes > capacity.macroBytes {
-            return "Macros exceed this board's memory by \(usedBytes - capacity.macroBytes) bytes."
+            return "Macros exceed this board's memory by \(usedBytes - capacity.macroBytes) bytes\(estimate)."
         }
         return nil
     }
