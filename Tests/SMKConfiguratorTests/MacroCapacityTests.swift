@@ -3,9 +3,15 @@ import Testing
 
 @Suite("Macro capacity degrades and improves with whatever the board reports")
 struct MacroCapacityTests {
+    /// Builds a macro whose `compiledSize` is exactly `bytes`. Derives the
+    /// fixed overhead (macro header + name + the `.text` step's own header)
+    /// from an empty-payload macro rather than hardcoding it, so this stays
+    /// correct if the bytecode layout's byte counts ever change -- as they
+    /// already have once this session (delivery byte added to `.text`).
     private func macro(_ id: Int, bytes: Int) -> MacroDefinition {
-        // 3 header bytes + 1 name byte + text step (3 + n) == bytes
-        let payload = String(repeating: "x", count: max(0, bytes - 7))
+        let overhead = MacroDefinition(id: id, name: "n",
+                                       steps: [.text("", delivery: .keystrokes, msPerChar: 12)]).compiledSize
+        let payload = String(repeating: "x", count: max(0, bytes - overhead))
         return MacroDefinition(id: id, name: "n",
                                steps: [.text(payload, delivery: .keystrokes, msPerChar: 12)])
     }
