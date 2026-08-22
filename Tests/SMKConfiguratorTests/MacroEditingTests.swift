@@ -142,22 +142,23 @@ struct MacroEditingTests {
         #expect(e.macroBudget.usedSlots == 1)
     }
 
-    @Test("the upload payload carries macros alongside layers")
-    func uploadPayloadIncludesMacros() throws {
+    @Test("compiling a document with macros produces bytes whose macroCount header byte is non-zero")
+    func compiledPayloadIncludesMacroCount() throws {
         let e = editor()
         e.createMacro()
         e.updateMacro(MacroDefinition(id: 0, name: "Hi", steps: [.delay(ms: 5)]))
 
-        let json = try e.encodeUploadJSON(layers: e.document.layers, macros: e.document.macros)
-        #expect(json.contains("\"macros\""))
-        #expect(json.contains("\"layers\""))
+        let bytes = try e.compileForUpload()
+        // Header layout (see compileKeymap): rowCount, colCount,
+        // colsAreDriven, layerCount, macroCount, reserved.
+        #expect(bytes[4] != 0)
     }
 
-    @Test("a document with no macros uploads no macros key")
-    func uploadOmitsAbsentMacros() throws {
+    @Test("a document with no macros compiles a payload whose macroCount header byte is zero")
+    func compiledPayloadOmitsAbsentMacros() throws {
         let e = editor()
-        let json = try e.encodeUploadJSON(layers: e.document.layers, macros: nil)
-        #expect(json.contains("\"macros\"") == false)
+        let bytes = try e.compileForUpload()
+        #expect(bytes[4] == 0)
     }
 
     @Test("inserting after a stale, out-of-range selection still clamps in bounds")
@@ -239,23 +240,25 @@ struct MacroEditingTests {
         #expect(e.loadError == nil)
     }
 
-    @Test("a document that is green on the compiled-bytecode meter but whose JSON exceeds the upload limit is refused, blaming macros")
-    func sendToDeviceRefusesOversizedJSONEvenWithinByteBudget() throws {
+    @Test("a document that is green on the macro-only budget but whose full compiled payload exceeds the upload limit is refused, blaming macros")
+    func sendToDeviceRefusesOversizedCompiledPayloadEvenWithinMacroByteBudget() throws {
         let e = editor()
-        // 8 macros x 12 keystroke steps: 512 compiled bytes (comfortably
-        // under the 1024-byte floor budget, so the meter reads green) but
-        // ~4498 bytes of upload JSON, past KeymapUploader.maxPayloadLength
-        // (4085). This is exactly the gap MacroBudget's compiled-bytecode
-        // meter can't see.
-        for id in 0..<8 {
-            e.document.macros = (e.document.macros ?? []) + [
-                MacroDefinition(
-                    id: id, name: "m",
-                    steps: (0..<12).map { _ in .keystroke(mods: [], key: .a, holdMs: 40) }
-                ),
-            ]
+        // MacroBudget only ever sums MacroDefinition.compiledSize -- it
+        // never adds in the layers sharing the same wire budget. So a
+        // capacity generous enough to call 5 macros x 200 keystroke steps
+        // (5 x 1003 = 5015 compiled macro bytes) green still lets the *full*
+        // compiled document (those macros plus the layer/matrix header)
+        // sail past KeymapUploader.maxPayloadLength (4085) -- exactly the
+        // gap the macro-only meter can't see now that the wire format is
+        // compiled bytecode instead of JSON.
+        e.macroCapacity = MacroCapacity(macroBytes: 6000, macroSlots: 16)
+        e.document.macros = (0..<5).map { id in
+            MacroDefinition(
+                id: id, name: "",
+                steps: (0..<200).map { _ in .keystroke(mods: [], key: .a, holdMs: 40) }
+            )
         }
-        #expect(e.macroBudget.canFlash == true) // green on the compiled meter...
+        #expect(e.macroBudget.canFlash == true) // green on the macro-only meter...
 
         e.sendToDevice()
 
@@ -263,6 +266,18 @@ struct MacroEditingTests {
         let message = try #require(e.loadError)
         #expect(message.contains("macro"))
         #expect(message.contains("4085"))
+    }
+
+    @Test("a document with an unrecognized token makes sendToDevice report the compiler's message and never construct a transport")
+    func sendToDeviceRefusesUnrecognizedToken() throws {
+        let e = editor()
+        e.document.layers[0][0][0] = "totally-bogus-token"
+
+        e.sendToDevice()
+
+        #expect(e.isSendingToDevice == false)
+        let message = try #require(e.loadError)
+        #expect(message.contains("totally-bogus-token"))
     }
 
     @Test("a macro that overflows a one-byte bytecode field is refused even though it's within capacity and JSON size")

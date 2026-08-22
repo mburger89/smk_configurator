@@ -267,15 +267,18 @@ class EditorState {
     /// document.layers to whichever responds. Matrix data isn't sent — the
     /// firmware's matrix stays compiled-in (see the design spec).
     ///
-    /// `macroBudget` gates on *compiled bytecode* against the board's macro
-    /// memory, but the wire format is JSON, capped at
-    /// `KeymapUploader.maxPayloadLength` — roughly an 8:1 size ratio (one
-    /// keystroke step is 5 compiled bytes but ~43 JSON bytes), so a document
-    /// can read green on the byte meter and still be far too big to upload.
-    /// The JSON is built and size-checked here, synchronously, before
-    /// `isSendingToDevice` flips or the Task is created, so an oversized
-    /// payload never touches a transport and the guard is observable without
-    /// awaiting anything.
+    /// `macroBudget` gates *macro* compiled bytecode against the board's
+    /// macro memory, but the wire format is now the same compiled bytecode
+    /// for the *whole* document — matrix, every layer's cells, and macros —
+    /// capped at `KeymapUploader.maxPayloadLength`. `macroBudget` only
+    /// counts macro bytes, not the layers sharing that same budget, so a
+    /// document can still read green on the macro meter while the full
+    /// compiled payload is too big (e.g. many layers on a large matrix, or
+    /// macros that individually fit the meter's ceiling but push the total
+    /// past it). The payload is compiled and size-checked here,
+    /// synchronously, before `isSendingToDevice` flips or the Task is
+    /// created, so an oversized payload never touches a transport and the
+    /// guard is observable without awaiting anything.
     ///
     /// Before either of those, every macro is checked against
     /// `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
@@ -301,20 +304,23 @@ class EditorState {
             return
         }
         guard !isSendingToDevice else { return }
-        let json: String
+        let payload: [UInt8]
         do {
-            json = try encodeUploadJSON(layers: document.layers, macros: document.macros)
+            payload = try compileForUpload()
+        } catch let compileError as KeymapCompileError {
+            loadError = compileError.description
+            return
         } catch {
             loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
             return
         }
-        let byteCount = json.utf8.count
-        guard byteCount <= KeymapUploader.maxPayloadLength else {
-            loadError = "Keymap upload is \(byteCount) bytes, over the "
-                + "\(KeymapUploader.maxPayloadLength)-byte device limit — likely "
-                + "from macros (they upload as JSON, not compiled bytecode, so "
-                + "the macro meter can read green while the upload is still too "
-                + "big). Trim macro steps or delete unused macros."
+        guard payload.count <= KeymapUploader.maxPayloadLength else {
+            loadError = "Keymap upload is \(payload.count) bytes, over the "
+                + "\(KeymapUploader.maxPayloadLength)-byte device limit — the "
+                + "macro meter only tracks macro bytes, not the layers sharing "
+                + "the same budget, so it can read green while the compiled "
+                + "keymap is still too big. Trim macro steps, delete unused "
+                + "macros, or remove layers."
             return
         }
         isSendingToDevice = true
@@ -334,7 +340,7 @@ class EditorState {
                     if let report = try? await KeymapUploader.queryCapacity(using: usb) {
                         applyDeviceCapacity(report, deviceKey: EditorState.usbDeviceKey)
                     }
-                    try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
+                    try await KeymapUploader.upload(payload: payload, using: usb) { [weak self] phase in
                         self?.uploadProgress = phase
                     }
                 } else {
@@ -344,7 +350,7 @@ class EditorState {
                     if let report = try? await KeymapUploader.queryCapacity(using: ble) {
                         applyDeviceCapacity(report, deviceKey: bleDeviceKey)
                     }
-                    try await KeymapUploader.upload(json: json, using: ble) { [weak self] phase in
+                    try await KeymapUploader.upload(payload: payload, using: ble) { [weak self] phase in
                         self?.uploadProgress = phase
                     }
                     #else
@@ -382,21 +388,17 @@ class EditorState {
         #endif
     }
 
-    /// The JSON the board receives. Matrix data is deliberately absent — the
-    /// firmware's matrix stays compiled in — but macros travel with the
-    /// layers, since one upload has to leave the board self-consistent.
-    /// `macros` is omitted entirely when nil, so a macro-free keymap uploads
-    /// byte-identically to how it did before macros existed.
-    func encodeUploadJSON(layers: [[[String]]], macros: [MacroDefinition]?) throws -> String {
-        struct UploadPayload: Encodable {
-            let layers: [[[String]]]
-            let macros: [MacroDefinition]?
-        }
-        let data = try JSONEncoder().encode(UploadPayload(layers: layers, macros: macros))
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw DeviceTransportError.encodingFailed
-        }
-        return json
+    /// The bytes the board receives: `compileKeymap(document)`'s binary
+    /// payload (matrix, every layer's cells, and macros, all as fixed-width
+    /// bytecode — see `Model/KeymapCompiler.swift`). Matrix *electrical*
+    /// config (GPIO rows/cols) is included so the firmware can validate the
+    /// payload against its own compiled-in matrix, but the firmware's matrix
+    /// itself stays compiled in; macros travel alongside layers, since one
+    /// upload has to leave the board self-consistent. Can throw
+    /// `KeymapCompileError` for a token this build has no binary tag for, or
+    /// a parameter that doesn't fit the wire format's one-byte fields.
+    func compileForUpload() throws -> [UInt8] {
+        try compileKeymap(document)
     }
 
     // MARK: - Keymap editing

@@ -56,11 +56,10 @@ enum KeymapUploader {
     }
 
     static func upload(
-        json: String,
+        payload bytes: [UInt8],
         using transport: DeviceTransport,
         progress: (@MainActor (UploadPhase) -> Void)? = nil
     ) async throws {
-        let bytes = Array(json.utf8)
         guard bytes.count <= maxPayloadLength else {
             throw DeviceTransportError.payloadTooLarge
         }
