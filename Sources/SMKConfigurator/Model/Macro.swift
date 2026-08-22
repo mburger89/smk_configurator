@@ -62,6 +62,24 @@ enum LayerOp: String, Codable, Equatable, Hashable, CaseIterable {
     case toggle = "tg"
 }
 
+/// Distinguishes "absent" from "present but the wrong JSON type" while
+/// decoding an optional field with a default.
+///
+/// A bare `(try? c.decode(T.self, forKey: key)) ?? default` -- the pattern
+/// this replaces -- collapses both cases into the same fallback, which is
+/// exactly the silent-coercion gap `MacroStep.init(from:)` guards against:
+/// a hand-edited `{"ms":"200"}` must not quietly become `{"ms":0}` on the
+/// next save just because a missing `"ms"` legitimately defaults to `0`.
+/// Returns `default` when `key` is absent, the decoded value when present
+/// and well-typed, or `nil` when present with the wrong type -- callers
+/// treat `nil` as a signal to preserve the whole step as `.raw` instead.
+extension KeyedDecodingContainer {
+    func decodeIfPresentOrDefault<T: Decodable>(_ type: T.Type, forKey key: Key, default def: T) throws -> T? {
+        guard contains(key) else { return def }
+        return try? decode(T.self, forKey: key)
+    }
+}
+
 /// One step of a macro. Mirrors the `steps` schema in
 /// `docs/superpowers/specs/2026-08-20-macro-creation-design.md` (C1).
 ///
@@ -135,8 +153,15 @@ enum MacroStep: Codable, Equatable, Hashable, Identifiable {
                 key = nil
             }
 
-            self = .keystroke(mods: mods, key: key,
-                              holdMs: (try? c.decode(Int.self, forKey: .hold)) ?? 40)
+            // "hold" is present-but-wrong-type-sensitive too: a string like
+            // "40" must not be silently coerced to the 40 default just
+            // because that happens to be the same number -- the file said
+            // something different from what would be written back.
+            guard let holdMs = try c.decodeIfPresentOrDefault(Int.self, forKey: .hold, default: 40) else {
+                self = .raw(try JSONValue(from: decoder))
+                return
+            }
+            self = .keystroke(mods: mods, key: key, holdMs: holdMs)
         case "text":
             // An unrecognized delivery value (e.g. a future build's
             // "clipboard") must not silently normalize to "keystrokes" --
@@ -151,11 +176,19 @@ enum MacroStep: Codable, Equatable, Hashable, Identifiable {
             } else {
                 delivery = .keystrokes
             }
-            self = .text((try? c.decode(String.self, forKey: .s)) ?? "",
-                         delivery: delivery,
-                         msPerChar: (try? c.decode(Int.self, forKey: .cpm)) ?? 12)
+            guard let s = try c.decodeIfPresentOrDefault(String.self, forKey: .s, default: ""),
+                  let msPerChar = try c.decodeIfPresentOrDefault(Int.self, forKey: .cpm, default: 12)
+            else {
+                self = .raw(try JSONValue(from: decoder))
+                return
+            }
+            self = .text(s, delivery: delivery, msPerChar: msPerChar)
         case "delay":
-            self = .delay(ms: (try? c.decode(Int.self, forKey: .ms)) ?? 0)
+            guard let ms = try c.decodeIfPresentOrDefault(Int.self, forKey: .ms, default: 0) else {
+                self = .raw(try JSONValue(from: decoder))
+                return
+            }
+            self = .delay(ms: ms)
         case "layer":
             // Same reasoning as "delivery" above: an unrecognized op (e.g. a
             // future "osl") must not silently normalize to "momentary".
@@ -169,9 +202,16 @@ enum MacroStep: Codable, Equatable, Hashable, Identifiable {
             } else {
                 op = .momentary
             }
-            self = .layer(op: op, n: (try? c.decode(Int.self, forKey: .n)) ?? 0)
+            guard let n = try c.decodeIfPresentOrDefault(Int.self, forKey: .n, default: 0) else {
+                self = .raw(try JSONValue(from: decoder))
+                return
+            }
+            self = .layer(op: op, n: n)
         case "rpt":
-            let inner = (try? c.decode([MacroStep].self, forKey: .steps)) ?? []
+            guard let inner = try c.decodeIfPresentOrDefault([MacroStep].self, forKey: .steps, default: []) else {
+                self = .raw(try JSONValue(from: decoder))
+                return
+            }
             // Repeat blocks don't nest — the firmware's player uses a single
             // loop counter, not a stack. A nested block written by some other
             // tool is kept verbatim so saving can't destroy it, but it is
@@ -180,7 +220,11 @@ enum MacroStep: Codable, Equatable, Hashable, Identifiable {
             if nests {
                 self = .raw(try JSONValue(from: decoder))
             } else {
-                self = .repeatBlock(count: (try? c.decode(Int.self, forKey: .count)) ?? 1, steps: inner)
+                guard let count = try c.decodeIfPresentOrDefault(Int.self, forKey: .count, default: 1) else {
+                    self = .raw(try JSONValue(from: decoder))
+                    return
+                }
+                self = .repeatBlock(count: count, steps: inner)
             }
         default:
             self = .raw(try JSONValue(from: decoder))

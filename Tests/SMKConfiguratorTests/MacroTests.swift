@@ -103,6 +103,111 @@ struct MacroTests {
         #expect(steps[0]["n"] as? Int == 2)
     }
 
+    // MARK: - Mistyped (present but wrong JSON type) fields
+
+    /// Decodes `json`'s single macro step and asserts it was preserved whole
+    /// as `.raw` -- not silently coerced to some default -- then asserts the
+    /// re-encoded JSON still carries the exact original field value. This is
+    /// the mistyped-field analogue of `unknownStepIsPreserved` et al. above:
+    /// same lossless guarantee, but the trigger is a present field of the
+    /// wrong JSON type rather than an unrecognized value or step type.
+    private func assertMistypedFieldPreservesStep(
+        json: String, checkField: String, expected: (Any?) -> Bool,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws {
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.steps.count == 1, sourceLocation: sourceLocation)
+        if case .raw = macro.steps[0] {
+            // expected
+        } else {
+            Issue.record("a mistyped field must decode as .raw, not a coerced default", sourceLocation: sourceLocation)
+        }
+
+        let reencoded = try JSONEncoder().encode(macro)
+        let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
+        let steps = object["steps"] as! [[String: Any]]
+        #expect(expected(steps[0][checkField]), sourceLocation: sourceLocation)
+    }
+
+    @Test("a delay step's ms as a string is preserved rather than silently becoming 0")
+    func mistypedDelayMsPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"delay","ms":"200"}]}"#,
+            checkField: "ms", expected: { $0 as? String == "200" }
+        )
+    }
+
+    @Test("a text step's s as a number is preserved rather than silently becoming an empty string")
+    func mistypedTextStringPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"text","s":123}]}"#,
+            checkField: "s", expected: { $0 as? Int == 123 }
+        )
+    }
+
+    @Test("a text step's cpm as a string is preserved rather than silently becoming the 12ms default")
+    func mistypedTextMsPerCharPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"text","s":"hi","cpm":"12"}]}"#,
+            checkField: "cpm", expected: { $0 as? String == "12" }
+        )
+    }
+
+    @Test("a layer step's n as a string is preserved rather than silently becoming layer 0")
+    func mistypedLayerNPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"layer","n":"2"}]}"#,
+            checkField: "n", expected: { $0 as? String == "2" }
+        )
+    }
+
+    @Test("a repeat step's count as a string is preserved rather than silently becoming 1")
+    func mistypedRepeatCountPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"rpt","count":"3","steps":[]}]}"#,
+            checkField: "count", expected: { $0 as? String == "3" }
+        )
+    }
+
+    @Test("a repeat step's steps as a non-array is preserved rather than silently becoming empty")
+    func mistypedRepeatStepsPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"rpt","count":2,"steps":"oops"}]}"#,
+            checkField: "steps", expected: { $0 as? String == "oops" }
+        )
+    }
+
+    @Test("a keystroke step's hold as a string is preserved even though the default happens to be a plausible value")
+    func mistypedKeystrokeHoldPreservesWholeStep() throws {
+        try assertMistypedFieldPreservesStep(
+            json: #"{"id":1,"name":"n","steps":[{"t":"key","k":"key:a","hold":"40"}]}"#,
+            checkField: "hold", expected: { $0 as? String == "40" }
+        )
+    }
+
+    @Test("a missing optional field still takes its documented default rather than being flagged as mistyped")
+    func missingOptionalFieldStillDefaults() throws {
+        // Absence is legitimate JSON existing files rely on -- only a
+        // *present* field of the wrong type must trip the .raw guard.
+        let json = """
+        {"id":1,"name":"n","steps":[
+            {"t":"delay"},
+            {"t":"text","s":"hi"},
+            {"t":"layer"},
+            {"t":"rpt","steps":[]},
+            {"t":"key","k":"key:a"}
+        ]}
+        """
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.steps == [
+            .delay(ms: 0),
+            .text("hi", delivery: .keystrokes, msPerChar: 12),
+            .layer(op: .momentary, n: 0),
+            .repeatBlock(count: 1, steps: []),
+            .keystroke(mods: [], key: .a, holdMs: 40),
+        ])
+    }
+
     @Test("an unknown per-macro field (e.g. a future build's 'enabled' flag) is preserved rather than dropped on save")
     func unknownMacroFieldIsPreserved() throws {
         let json = """
