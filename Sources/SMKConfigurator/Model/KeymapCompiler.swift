@@ -47,6 +47,11 @@ enum KeymapCompileError: Error, Equatable, CustomStringConvertible {
     /// `EditorState.maxLayerCount`) even though the raw number would
     /// otherwise fit in a byte.
     case parameterOutOfRange(token: String, value: Int, limit: Int)
+    /// A cell somewhere in the document failed to compile -- wraps the
+    /// per-cell failure (`reason`, that error's own `description`) with
+    /// where it lives, so the message names both the token and its
+    /// layer/row/column rather than just the token.
+    case invalidCell(layer: Int, row: Int, col: Int, token: String, reason: String)
 
     var description: String {
         switch self {
@@ -54,6 +59,8 @@ enum KeymapCompileError: Error, Equatable, CustomStringConvertible {
             return "Cannot compile \"\(token)\": the firmware has no binary tag for this token."
         case .parameterOutOfRange(let token, let value, let limit):
             return "Cannot compile \"\(token)\": parameter \(value) exceeds the maximum of \(limit) the one-byte wire field allows."
+        case .invalidCell(let layer, let row, let col, let token, let reason):
+            return "Layer \(layer), row \(row), col \(col) (\"\(token)\"): \(reason)"
         }
     }
 }
@@ -175,4 +182,178 @@ private func oneByteParameter(_ value: Int, token: ActionToken) throws -> UInt8 
             token: token.canonicalString, value: value, limit: Int(UInt8.max))
     }
     return UInt8(value)
+}
+
+// MARK: - Whole-document compile
+
+/// Same one-byte range check as `oneByteParameter(_:token:)` above, but for
+/// a header/matrix/macro field that has no `ActionToken` to name -- these
+/// take a plain description string instead, reusing `.parameterOutOfRange`
+/// rather than adding a parallel error case for a field that doesn't fit.
+private func oneBytePayloadField(_ value: Int, describedAs description: String) throws -> UInt8 {
+    guard value >= 0, value <= Int(UInt8.max) else {
+        throw KeymapCompileError.parameterOutOfRange(token: description, value: value, limit: Int(UInt8.max))
+    }
+    return UInt8(value)
+}
+
+/// Same idea as `oneBytePayloadField(_:describedAs:)`, for the little-endian
+/// two-byte fields (`holdMs`, `ms`, `bodyLength`).
+private func twoByteLEPayloadField(_ value: Int, describedAs description: String) throws -> (UInt8, UInt8) {
+    guard value >= 0, value <= Int(UInt16.max) else {
+        throw KeymapCompileError.parameterOutOfRange(token: description, value: value, limit: Int(UInt16.max))
+    }
+    let widened = UInt16(value)
+    return (UInt8(widened & 0xFF), UInt8((widened >> 8) & 0xFF))
+}
+
+/// `ModifierName`'s bits OR'd together -- a keystroke step's `mods` is a
+/// chord, not a single modifier, but the wire byte packs the same way
+/// `modifierBit(_:)` packs one.
+private func modifierBits(_ mods: [ModifierName]) -> UInt8 {
+    mods.reduce(UInt8(0)) { $0 | modifierBit($1) }
+}
+
+/// Encodes one macro step to the bytes `~/esp/SMK/Sources/SMKCore/
+/// KeymapBinary.swift`'s `decodeMacroStep` reads back (that file,
+/// lines 250-332). Opcode values, field order, and endianness all match
+/// that decoder and the format spec's step table.
+///
+/// `.raw` -- a step this build doesn't recognize, kept only so saving a
+/// file never drops it -- is never sent to the firmware: it emits no bytes
+/// at all, matching `MacroStep.compiledSize`'s `.raw` case (which returns 0
+/// for the same reason, see that doc comment in Model/Macro.swift). Callers
+/// must exclude `.raw` steps when computing a stepCount/body byte range,
+/// not just when writing bytes -- see `compiledMacroSteps(_:)`.
+private func encodeMacroStep(_ step: MacroStep, describedAs macroDescription: String) throws -> [UInt8] {
+    switch step {
+    case .keystroke(let mods, let key, let holdMs):
+        let (lo, hi) = try twoByteLEPayloadField(holdMs, describedAs: "\(macroDescription) keystroke holdMs")
+        return [0x01, modifierBits(mods), key?.hidUsage ?? 0, lo, hi]
+
+    case .delay(let ms):
+        let (lo, hi) = try twoByteLEPayloadField(ms, describedAs: "\(macroDescription) delay ms")
+        return [0x02, lo, hi]
+
+    case .layer(let op, let n):
+        let index = try oneBytePayloadField(n, describedAs: "\(macroDescription) layer index")
+        return [0x03, op == .momentary ? 0x00 : 0x01, index]
+
+    case .text(let s, let delivery, let msPerChar):
+        let payload = Array(s.utf8)
+        let length = try oneBytePayloadField(payload.count, describedAs: "\(macroDescription) text length")
+        let msPerCharByte = try oneBytePayloadField(msPerChar, describedAs: "\(macroDescription) text msPerChar")
+        let deliveryByte: UInt8 = delivery == .keystrokes ? 0x00 : 0x01
+        return [0x04, deliveryByte, msPerCharByte, length] + payload
+
+    case .repeatBlock(let count, let steps):
+        let repeatCount = try oneBytePayloadField(count, describedAs: "\(macroDescription) repeat count")
+        // Nested repeat blocks can't occur -- the model refuses them at
+        // decode -- so `steps` here never itself contains a `.repeatBlock`.
+        var body: [UInt8] = []
+        for inner in compiledMacroSteps(steps) {
+            let innerBytes = try encodeMacroStep(inner, describedAs: macroDescription)
+            assert(innerBytes.count == inner.compiledSize,
+                   "encoded \(innerBytes.count) bytes for a repeat-body step whose compiledSize is \(inner.compiledSize)")
+            body.append(contentsOf: innerBytes)
+        }
+        let (lenLo, lenHi) = try twoByteLEPayloadField(body.count, describedAs: "\(macroDescription) repeat bodyLength")
+        return [0x05, repeatCount, lenLo, lenHi] + body
+
+    case .raw:
+        return []
+    }
+}
+
+/// `steps` with `.raw` entries removed -- the ones that actually reach the
+/// wire, and therefore the ones a `stepCount`/body byte range must count.
+private func compiledMacroSteps(_ steps: [MacroStep]) -> [MacroStep] {
+    steps.filter { if case .raw = $0 { return false } else { return true } }
+}
+
+/// Encodes one macro to `id(1) + nameLength(1) + name + stepCount(1) +
+/// steps` -- the layout `~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`'s
+/// `decodeMacroEntry` reads back (that file, lines 220-242).
+private func encodeMacro(_ macro: MacroDefinition) throws -> [UInt8] {
+    let description = "macro:\(macro.id) (\"\(macro.name)\")"
+
+    var bytes: [UInt8] = []
+    bytes.append(try oneBytePayloadField(macro.id, describedAs: "\(description) id"))
+
+    let nameBytes = Array(macro.name.utf8)
+    bytes.append(try oneBytePayloadField(nameBytes.count, describedAs: "\(description) name length"))
+    bytes.append(contentsOf: nameBytes)
+
+    let steps = compiledMacroSteps(macro.steps)
+    bytes.append(try oneBytePayloadField(steps.count, describedAs: "\(description) step count"))
+    for step in steps {
+        let stepBytes = try encodeMacroStep(step, describedAs: description)
+        assert(stepBytes.count == step.compiledSize,
+               "encoded \(stepBytes.count) bytes for a step whose compiledSize is \(step.compiledSize)")
+        bytes.append(contentsOf: stepBytes)
+    }
+    return bytes
+}
+
+/// Compiles a whole `KeymapDocument` -- matrix, every layer's cells, and
+/// every macro -- to the binary payload
+/// `~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`'s `decodeKeymapPayload`
+/// reads back (that file, lines 167-213). Byte order: the 6-byte header
+/// (`rowCount`, `colCount`, `colsAreDriven`, `layerCount`, `macroCount`,
+/// reserved), `rows[]`, `cols[]`, every cell of every layer at two bytes
+/// each, then each macro.
+///
+/// Any cell parsing to `ActionToken.raw` -- a token this build has no
+/// binary tag for -- fails the whole compile rather than silently dropping
+/// or truncating it; see `KeymapCompileError`'s doc comment for why. The
+/// on-disk `keymap.json` is unaffected: it keeps the raw string, so nothing
+/// is lost by refusing to flash it.
+func compileKeymap(_ document: KeymapDocument) throws -> [UInt8] {
+    let rowCount = document.matrix.rows.count
+    let colCount = document.matrix.cols.count
+    let layerCount = document.layers.count
+    let macros = document.macroList
+
+    var bytes: [UInt8] = []
+    bytes.reserveCapacity(6 + rowCount + colCount + layerCount * rowCount * colCount * 2)
+
+    bytes.append(try oneBytePayloadField(rowCount, describedAs: "matrix row count"))
+    bytes.append(try oneBytePayloadField(colCount, describedAs: "matrix col count"))
+    bytes.append(try oneBytePayloadField(document.matrix.colsAreDriven, describedAs: "matrix colsAreDriven"))
+    bytes.append(try oneBytePayloadField(layerCount, describedAs: "layer count"))
+    bytes.append(try oneBytePayloadField(macros.count, describedAs: "macro count"))
+    bytes.append(0) // reserved
+
+    for gpio in document.matrix.rows {
+        bytes.append(try oneBytePayloadField(gpio, describedAs: "matrix row GPIO"))
+    }
+    for gpio in document.matrix.cols {
+        bytes.append(try oneBytePayloadField(gpio, describedAs: "matrix col GPIO"))
+    }
+
+    for (layerIndex, layer) in document.layers.enumerated() {
+        for (rowIndex, row) in layer.enumerated() {
+            for (colIndex, cellString) in row.enumerated() {
+                let token = ActionToken.parse(cellString)
+                do {
+                    let (tag, param) = try encodeCell(token)
+                    bytes.append(tag)
+                    bytes.append(param)
+                } catch let underlying as KeymapCompileError {
+                    throw KeymapCompileError.invalidCell(
+                        layer: layerIndex, row: rowIndex, col: colIndex,
+                        token: token.canonicalString, reason: underlying.description)
+                }
+            }
+        }
+    }
+
+    for macro in macros {
+        let macroBytes = try encodeMacro(macro)
+        assert(macroBytes.count == macro.compiledSize,
+               "encoded \(macroBytes.count) bytes for macro:\(macro.id) whose compiledSize is \(macro.compiledSize)")
+        bytes.append(contentsOf: macroBytes)
+    }
+
+    return bytes
 }
