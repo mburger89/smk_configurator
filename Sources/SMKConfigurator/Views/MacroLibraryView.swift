@@ -116,12 +116,14 @@ struct MacroLibraryView: View {
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
     }
 
-    private var budgetSummary: String {
-        let budget = editor.macroBudget
-        let estimate = budget.isEstimate ? " (estimated)" : ""
-        return "\(budget.usedBytes) of \(budget.totalBytes) bytes · "
-            + "\(budget.usedSlots) of \(budget.capacity.macroSlots) slots\(estimate)"
-    }
+    /// Delegates to `MacroBudget.headerSummaryLabel` rather than restating
+    /// the "used of total · slots" phrasing here -- the step editor's SLOT
+    /// section (`MacroEditorViews.swift`'s `summaryLabel(slot:)`) renders
+    /// the same underlying numbers, so the wording judgment calls (what to
+    /// say once layers are eating into the shared budget, what to say once
+    /// they've exhausted it) live once in the model instead of twice in
+    /// two views that could drift apart.
+    private var budgetSummary: String { editor.macroBudget.headerSummaryLabel }
 
     /// Library-level half of contract C2's "warns in the library row and
     /// status bar" -- shown whenever the current macro set can't be

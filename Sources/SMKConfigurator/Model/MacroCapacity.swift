@@ -117,10 +117,23 @@ struct MacroBudget: Equatable {
         return (macros.reduce(0) { $0 + $1.compiledSize }, true)
     }
 
+    /// Bytes theoretically left for macros -- unlike `totalBytes`, not
+    /// floored at 0. Goes negative when layers alone already spend more
+    /// than the whole shared budget (many layers against the deliberately
+    /// conservative `.floor` guess is the common way to get there; see
+    /// `MacroCapacity.floor`'s doc comment). `blockReason` and the summary
+    /// strings read this one, not `totalBytes`, whenever the arithmetic
+    /// needs the true deficit or needs to know layers alone are the
+    /// reason -- `totalBytes`'s clamp is right for a meter that can't draw
+    /// past its own end, but wrong for a calculation that explains *how
+    /// far* over the edge things are.
+    var remainingBytes: Int { capacity.macroBytes - layerBytes }
+
     /// Bytes actually left for macros: the board's whole budget minus
     /// whatever the compiled layers already cost (0 unless this was built
-    /// with `init(capacity:source:document:)`).
-    var totalBytes: Int { max(0, capacity.macroBytes - layerBytes) }
+    /// with `init(capacity:source:document:)`), floored at 0 so the meter
+    /// and the displayed "of N bytes" figure never draw or read negative.
+    var totalBytes: Int { max(0, remainingBytes) }
 
     /// True when the numbers aren't from a board that's connected right now,
     /// so the UI can label the meter honestly.
@@ -159,23 +172,65 @@ struct MacroBudget: Equatable {
             return "This board has \(capacity.macroSlots) macro slots\(estimate); \(usedSlots) macros are defined."
         }
         if usedBytes > totalBytes {
-            let layerNote = layerBytes > 0
-                ? " (\(layerBytes) of \(capacity.macroBytes) bytes already used by layers)" : ""
-            return "Macros exceed this board's memory by \(usedBytes - totalBytes) bytes\(estimate)\(layerNote)."
+            // `remainingBytes < 0` means layers alone already spend the
+            // whole shared budget -- the generic "exceed by N bytes"
+            // phrasing below would either need the unclamped deficit (a
+            // confusing number: it counts bytes layers, not macros, are
+            // responsible for) or, if computed against `totalBytes`
+            // instead, would understate how far over things are. Naming
+            // layers as the actual cause is clearer than either.
+            if remainingBytes < 0 {
+                return "Layers alone already use \(layerBytes) of this board's \(capacity.macroBytes) bytes\(estimate), "
+                    + "leaving no room for \(usedSlots) macro\(usedSlots == 1 ? "" : "s"); "
+                    + "shrink layers or connect a board with more capacity."
+            }
+            return "Macros exceed this board's memory by \(usedBytes - remainingBytes) bytes\(estimate)."
         }
         return nil
     }
 
     var canFlash: Bool { blockReason == nil }
 
-    /// "148 of 384 bytes · slot 3" in the palette column's SLOT section —
-    /// or, once layers are consuming part of the shared budget, "148 of
-    /// 2142 bytes · slot 3 · layers use 1943 of 4085" so the number never
-    /// shrinks with no explanation.
+    /// The "how much have I used, how much is left, and why the total
+    /// might be less than the board's whole memory" fragment shared by the
+    /// library header (`MacroLibraryView.budgetSummary` calls
+    /// `headerSummaryLabel`) and the step editor's SLOT line
+    /// (`summaryLabel(slot:)`) -- built once here, not duplicated in either
+    /// view, so the two can't independently drift and so the one tricky
+    /// judgment call (what to say when layers alone already spend the
+    /// whole shared budget) is made in exactly one place.
+    ///
+    /// Ordinarily: "148 of 2142 bytes (1943 of 4085 used by layers)" so the
+    /// total never shrinks with no explanation. When `remainingBytes < 0`
+    /// (layers alone already exceed the whole budget -- `totalBytes` would
+    /// read 0, and "0 of 0 bytes" reads like a crash, not a keymap that
+    /// doesn't fit yet), names layers as the reason instead of printing a
+    /// zeroed-out total: "layers alone use 1943 of 1024 bytes -- no room
+    /// left for macros".
+    private var byteFragment: String {
+        guard remainingBytes >= 0 else {
+            return "layers alone use \(layerBytes) of \(capacity.macroBytes) bytes -- no room left for macros"
+        }
+        let usageNote = usedBytesIsEstimated ? " (macro estimate)" : ""
+        let layerNote = layerBytes > 0 ? " (\(layerBytes) of \(capacity.macroBytes) bytes used by layers)" : ""
+        return "\(usedBytes) of \(totalBytes) bytes\(usageNote)\(layerNote)"
+    }
+
+    /// "148 of 384 bytes · slot 3 (estimated)" in the palette column's SLOT
+    /// section -- see `byteFragment` for what replaces the byte portion
+    /// once layers are sharing (or have exhausted) the budget.
     func summaryLabel(slot: Int) -> String {
         let estimate = isEstimate ? " (estimated)" : ""
-        let usageNote = usedBytesIsEstimated ? " (macro estimate)" : ""
-        let layerNote = layerBytes > 0 ? " · layers use \(layerBytes) of \(capacity.macroBytes)" : ""
-        return "\(usedBytes) of \(totalBytes) bytes\(usageNote) · slot \(slot)\(estimate)\(layerNote)"
+        return "\(byteFragment) · slot \(slot)\(estimate)"
+    }
+
+    /// "148 of 2142 bytes (1943 of 4085 used by layers) · 3 of 8 slots
+    /// (estimated)" in the macro library header -- the whole-set
+    /// counterpart to `summaryLabel(slot:)`, sharing the same
+    /// `byteFragment` so the header and the step editor never disagree
+    /// about what the numbers mean.
+    var headerSummaryLabel: String {
+        let estimate = isEstimate ? " (estimated)" : ""
+        return "\(byteFragment) · \(usedSlots) of \(capacity.macroSlots) slots\(estimate)"
     }
 }

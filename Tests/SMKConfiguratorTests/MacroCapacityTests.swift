@@ -186,6 +186,59 @@ struct MacroCapacityTests {
         #expect(budget.usedBytes > 0)
     }
 
+    @Test("headerSummaryLabel and summaryLabel explain why the total is less than the board's whole memory once layers are sharing it")
+    func summaryStringsExplainTheSharedBudget() {
+        let capacity = MacroCapacity(macroBytes: 4085, macroSlots: 32)
+        let budget = MacroBudget(capacity: capacity, source: .device, document: document(layerCount: 16))
+
+        // Cross-checked against `headroomAccountsForLayerCost`: 16 layers of
+        // this shape cost 1943 bytes, leaving 2142 of the 4085-byte budget.
+        #expect(budget.layerBytes == 1943)
+        #expect(budget.totalBytes == 2142)
+        #expect(budget.headerSummaryLabel == "0 of 2142 bytes (1943 of 4085 bytes used by layers) · 0 of 32 slots")
+        #expect(budget.summaryLabel(slot: 5) == "0 of 2142 bytes (1943 of 4085 bytes used by layers) · slot 5")
+    }
+
+    @Test("when layers alone already exceed the whole shared budget, the summary names layers instead of printing a zeroed-out total")
+    func summaryStringsNameLayersWhenTheyAloneExceedTheBudget() {
+        // The floor's 1024-byte profile is smaller than 16 layers of this
+        // 5x12 shape (1943 bytes) -- the scenario a real board with little
+        // flash, or the never-connected floor guess, can land in. Without
+        // this branch, `totalBytes` clamps to 0 and the summary would read
+        // "0 of 0 bytes", which looks like the app lost its mind rather
+        // than a keymap that simply doesn't fit yet.
+        let budget = MacroBudget(capacity: .floor, source: .floor, document: document(layerCount: 16))
+
+        #expect(budget.layerBytes == 1943)
+        #expect(budget.remainingBytes == 1024 - 1943)
+        #expect(budget.totalBytes == 0)
+        #expect(budget.headerSummaryLabel
+            == "layers alone use 1943 of 1024 bytes -- no room left for macros · 0 of 8 slots (estimated)")
+        #expect(budget.summaryLabel(slot: 0)
+            == "layers alone use 1943 of 1024 bytes -- no room left for macros · slot 0 (estimated)")
+        // Zero macros on an over-budget-by-layers-alone keymap must still
+        // flash-gate as before (see `zeroCapacityWithNoMacrosStillFlashes`'s
+        // reasoning): the floor is a conservative guess, and the real
+        // per-payload guard (`EditorState.sendToDevice`'s step 5) is what
+        // actually protects a real board -- blocking here on the guess
+        // alone would regress an ordinary macro-free keymap the moment a
+        // small board first reports in.
+        #expect(budget.canFlash == true)
+    }
+
+    @Test("blockReason names layers, not a misleadingly small deficit, when layers alone exceed the budget and macros are on top")
+    func blockReasonNamesLayersWhenTheyAloneExceedTheBudget() {
+        let macros = [macro(0, bytes: 50)]
+        let budget = MacroBudget(capacity: .floor, source: .floor,
+                                 document: document(layerCount: 16, macros: macros))
+
+        #expect(budget.usedBytes == 50)
+        #expect(budget.canFlash == false)
+        #expect(budget.blockReason
+            == "Layers alone already use 1943 of this board's 1024 bytes (estimated), "
+            + "leaving no room for 1 macro; shrink layers or connect a board with more capacity.")
+    }
+
     @Test("a document whose layers don't compile reports layer cost as unknown rather than silently zero")
     func uncompilableDocumentReportsLayerCostAsUnknown() {
         let matrix = KeymapDocument.Matrix(rows: [0], cols: [0], colsAreDriven: 1)
