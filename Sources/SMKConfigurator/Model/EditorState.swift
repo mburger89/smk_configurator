@@ -23,6 +23,13 @@ let themeStore = JSONFileStore<KeyboardTheme>(
 private let drawerHeightDefaultsKey = "drawerHeight"
 private let showAdvancedDefaultsKey = "showAdvanced"
 private let appearanceModeDefaultsKey = "appearanceMode"
+/// Remembers which device (by `deviceKey`, see `applyDeviceCapacity(_:deviceKey:)`)
+/// most recently reported real capacity, so `init()` knows which
+/// `macroCapacity.<deviceKey>` entry to reload as `.lastKnown`.
+private let macroCapacityLastDeviceKeyDefaultsKey = "macroCapacityLastDeviceKey"
+private func macroCapacityDefaultsKey(forDeviceKey deviceKey: String) -> String {
+    "macroCapacity.\(deviceKey)"
+}
 
 /// Mirrors the firmware build this app was written against (see
 /// `KeymapUploader.maxPayloadLength`'s doc comment) — shown as a static
@@ -146,13 +153,34 @@ class EditorState {
     var activeTheme: KeyboardTheme
     var availableThemes: [KeyboardTheme] = []
 
-    init() {
-        let storedHeight = UserDefaults.standard.object(forKey: drawerHeightDefaultsKey) as? Double ?? 260
+    /// Injected for tests -- a throwaway `UserDefaults(suiteName:)`,
+    /// following `JSONFileStore`'s exact pattern -- so persistence round
+    /// trips (drawer height, appearance, and macro capacity below) don't
+    /// read or write the real user's `UserDefaults.standard` during
+    /// `swift test`. Defaults to `.standard` for real app use.
+    private let userDefaults: UserDefaults
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+        let storedHeight = userDefaults.object(forKey: drawerHeightDefaultsKey) as? Double ?? 260
         let range = Self.drawerHeightRange
         self.drawerHeight = min(max(storedHeight, range.lowerBound), range.upperBound)
-        self.showAdvanced = UserDefaults.standard.object(forKey: showAdvancedDefaultsKey) as? Bool ?? false
-        let storedAppearanceMode = UserDefaults.standard.string(forKey: appearanceModeDefaultsKey)
+        self.showAdvanced = userDefaults.object(forKey: showAdvancedDefaultsKey) as? Bool ?? false
+        let storedAppearanceMode = userDefaults.string(forKey: appearanceModeDefaultsKey)
         self.appearanceMode = storedAppearanceMode.flatMap(AppearanceMode.init(rawValue:)) ?? .system
+
+        // A board that reported real capacity in some earlier session --
+        // possibly a previous launch entirely -- is remembered so this
+        // session reports `.lastKnown` rather than dropping all the way
+        // back to `MacroCapacity.floor` just because nothing is plugged in
+        // right now. Superseded the moment a board answers `CAPS` again
+        // (see `applyDeviceCapacity(_:deviceKey:)`).
+        if let lastDeviceKey = userDefaults.string(forKey: macroCapacityLastDeviceKeyDefaultsKey),
+           let data = userDefaults.data(forKey: macroCapacityDefaultsKey(forDeviceKey: lastDeviceKey)),
+           let capacity = try? JSONDecoder().decode(MacroCapacity.self, from: data) {
+            self.macroCapacity = capacity
+            self.macroCapacitySource = .lastKnown
+        }
 
         designStore.ensureSeeded(with: [.gateronLPKBD, .smkTestBoard])
         themeStore.ensureSeeded(with: KeyboardTheme.allBuiltIns)
@@ -298,6 +326,14 @@ class EditorState {
             }
             do {
                 if let usb = try? USBRawHIDTransport() {
+                    // Best-effort: a board's real capacity, learned the
+                    // moment a transport is actually open. `try?` because
+                    // older firmware built before the `CAPS` opcode existed
+                    // simply won't answer it -- that must never fail an
+                    // otherwise-good upload.
+                    if let report = try? await KeymapUploader.queryCapacity(using: usb) {
+                        applyDeviceCapacity(report, deviceKey: EditorState.usbDeviceKey)
+                    }
                     try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
                         self?.uploadProgress = phase
                     }
@@ -305,6 +341,9 @@ class EditorState {
                     #if canImport(CoreBluetooth)
                     let ble = BLETransport()
                     try await ble.connect()
+                    if let report = try? await KeymapUploader.queryCapacity(using: ble) {
+                        applyDeviceCapacity(report, deviceKey: bleDeviceKey)
+                    }
                     try await KeymapUploader.upload(json: json, using: ble) { [weak self] phase in
                         self?.uploadProgress = phase
                     }
@@ -452,17 +491,58 @@ class EditorState {
 
     func setDrawerHeight(_ height: Double) {
         drawerHeight = height
-        UserDefaults.standard.set(drawerHeight, forKey: drawerHeightDefaultsKey)
+        userDefaults.set(drawerHeight, forKey: drawerHeightDefaultsKey)
     }
 
     func setShowAdvanced(_ value: Bool) {
         showAdvanced = value
-        UserDefaults.standard.set(value, forKey: showAdvancedDefaultsKey)
+        userDefaults.set(value, forKey: showAdvancedDefaultsKey)
     }
 
     func setAppearanceMode(_ mode: AppearanceMode) {
         appearanceMode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: appearanceModeDefaultsKey)
+        userDefaults.set(mode.rawValue, forKey: appearanceModeDefaultsKey)
+    }
+
+    // MARK: - Macro capacity
+
+    /// `deviceKey` for the USB (RP2040) transport. hidapi's device
+    /// enumeration in `USBRawHIDTransport` doesn't read a per-board serial
+    /// number, so every RP2040 board seen over USB shares this one bucket.
+    static let usbDeviceKey = "usb"
+
+    /// `deviceKey` for the BLE (ESP32-C6) transport, keyed by whatever name
+    /// the peripheral advertised -- the only per-board signal
+    /// `refreshDeviceStatus()` already surfaces. Falls back to a shared
+    /// bucket if a name was never read.
+    #if canImport(CoreBluetooth)
+    var bleDeviceKey: String { "ble:\(blePeripheralName ?? "unknown")" }
+    #endif
+
+    /// Adopts a `CAPS` opcode (0x05) response from a connected board: the
+    /// live meter switches to `.device` immediately, and the numbers are
+    /// persisted under `deviceKey` so a later session with no board
+    /// connected reports `.lastKnown` (see `init()`) instead of dropping
+    /// back to `MacroCapacity.floor`. `deviceKey` is the best device
+    /// identity this app currently has -- `"usb"` for the RP2040 transport
+    /// (which exposes no per-board serial) and `"ble:<peripheral name>"`
+    /// for BLE -- not a strict per-physical-board key, but distinguishes the
+    /// port families that actually have different capacities.
+    ///
+    /// Takes an already-decoded report rather than a transport, so this
+    /// half is reachable from a test without a real transport -- see
+    /// `KeymapUploader.queryCapacity(using:)` in `DeviceTransport.swift` for
+    /// the wire round trip that produces `report`, and `MacroCapacityTests`
+    /// for why `sendToDevice()`-style guards never call a real transport
+    /// from a test.
+    func applyDeviceCapacity(_ report: DeviceCapacityReport, deviceKey: String) {
+        let capacity = MacroCapacity(macroBytes: report.macroBytes, macroSlots: report.macroSlots)
+        macroCapacity = capacity
+        macroCapacitySource = .device
+        if let data = try? JSONEncoder().encode(capacity) {
+            userDefaults.set(data, forKey: macroCapacityDefaultsKey(forDeviceKey: deviceKey))
+        }
+        userDefaults.set(deviceKey, forKey: macroCapacityLastDeviceKeyDefaultsKey)
     }
 
     // MARK: - Key inspector

@@ -47,7 +47,7 @@ macOS is the only platform actually runnable/verifiable from a normal dev machin
 ## Firmware coupling
 
 This app is written against a specific version of `~/esp/SMK` and several places encode that coupling explicitly rather than reading it dynamically (the app has no way to query a running firmware's version):
-- `firmwareVersionLabel` in `EditorState.swift` — a static label, must be bumped by hand when targeting a new firmware build.
+- `firmwareVersionLabel` in `EditorState.swift` — a static label, must be bumped by hand when targeting a new firmware build. In particular, bump it for whichever firmware build first carries keymap-store **frame version 2** (`~/esp/SMK/Sources/SMKCore/KeymapFrame.swift`'s `frameVersion`) — the switch from the version-1 JSON payload to the binary payload documented below. The frame's own header (magic/version/length/CRC, same 11 bytes, same offset) is unchanged, so an upload aimed at frame-version-1 firmware fails the version check and is cleanly rejected rather than misread — but the label should already say "binary-capable" before that surprises anyone.
 - `KeymapUploader.maxPayloadLength` — must match firmware's `SMK_KEYMAP_MAX_LEN`.
 - `ActionToken`'s *grammar* (the `key:`/`mod:`/`mo:`/`tg:`/`trans`/`none`/`toggle_conn` prefixes) is hand-written and must match `KeyAction.fromCString` in the firmware's `LayerEngine.swift`; so must `ModifierName` against `Modifier.fromCString`. The *vocabulary* it dispatches into (`KeyName`) is generated — see `keycodes.json` below.
 - `keycodes.json` (in `~/esp/SMK`) — **the** source of the key vocabulary for both repos. `Sources/SMKConfigurator/Model/KeyCodesGenerated.swift` is **generated** from it by `~/esp/SMK/generate_keycodes.sh`; do not edit it. Adding a key means editing the manifest and re-running the script, then committing the regenerated file in *both* repos. `KeyVocabularyTests` pins the agreement by comparing HID usages, not just names.
@@ -138,13 +138,56 @@ This app is written against a specific version of `~/esp/SMK` and several places
     should still reject rather than silently truncate if a real board ever
     receives one anyway.
 
-  `ActionToken`'s `macro:N` token and the `CAPS` capacity command
-  (`MacroCapacity`) don't exist on the firmware side yet either, and need
-  their own implementations; they aren't part of the bytecode contract
-  above.
-- `MacroCapacity.floor` is what the editor assumes before any board has
-  reported its real capacity via the (not yet implemented) `CAPS` command.
-  It is a deliberate under-promise, not a target.
+  `ActionToken`'s `macro:N` token now compiles too (`KeymapCellTag.macro`,
+  see the binary payload bullet below) — it is no longer missing a
+  firmware-side implementation.
+
+- **The wire/storage format is compiled binary; `keymap.json` on disk stays
+  JSON.** This is a different contract from the JSON macro-step schema
+  documented above: that schema is what `keymap.json` holds on disk (still
+  plain JSON, always lossless — see `KeymapDocument`/`ActionToken`'s `.raw`
+  fallback). `Model/KeymapCompiler.swift`'s `compileKeymap(_:)` is what
+  turns a whole `KeymapDocument` — matrix, every layer's cells, every macro
+  — into the byte payload that actually reaches a board: a 6-byte header
+  (`rowCount`, `colCount`, `colsAreDriven`, `layerCount`, `macroCount`,
+  reserved), the row/col GPIO arrays, then every cell of every layer as a
+  two-byte `(tag, parameter)` pair (`KeymapCellTag`), then each macro
+  (`id(1) + nameLength(1) + name + stepCount(1) + steps`, opcodes/layout as
+  already documented above). Compiling is not lossless the way saving is: a
+  token with no binary tag (`ActionToken.raw`), or a parameter over its
+  wire field's range (a macro slot over 255, a layer at or past
+  `EditorState.maxLayerCount`), makes `compileKeymap` throw
+  `KeymapCompileError` naming the offending token and its layer/row/column
+  rather than truncating, wrapping, or silently dropping it — refusing to
+  flash a token the firmware could never have executed anyway.
+
+  **Three independent implementations must agree on this format, and
+  changing one without the others silently breaks uploads or storage:**
+  this compiler (`Model/KeymapCompiler.swift`), the firmware's decoder
+  (`~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`), and the firmware's
+  `~/esp/SMK/generate_default_keymap.sh` (which compiles the reference
+  `keymap.json` into a literal Swift array at build time, using the same
+  tag layout, so the compiled-in factory-reset default agrees too).
+
+  **`CAPS`** (opcode `0x05` on the existing BEGIN/CHUNK/COMMIT/ERASE
+  transport — `~/esp/SMK/Sources/SMKCore/KeymapProtocol.swift`'s
+  `smkKeymapOpCaps`) exists on both sides now: `Device/DeviceTransport.swift`'s
+  `KeymapUploader.queryCapacity(using:)` sends it and decodes the
+  little-endian response (`macroBytes` u16, `macroSlots` u8, `keymapMaxLen`
+  u16); `EditorState.applyDeviceCapacity(_:deviceKey:)` adopts the result —
+  `macroCapacity`/`macroCapacitySource = .device` — and persists it under
+  `deviceKey` (`"usb"`, or `"ble:<peripheral name>"`, the best device
+  identity this app currently has) so a later session with nothing
+  connected reports `.lastKnown` instead of dropping back to
+  `MacroCapacity.floor`. Two of `CAPS`'s numbers look like bugs and are
+  deliberate on the firmware side — see `DeviceCapacityReport`'s doc
+  comment in `DeviceTransport.swift` for why: `macroBytes` equals
+  `keymapMaxLen` (macros share the layers' payload budget rather than
+  having a separate region of their own), and `macroSlots` maxes out at
+  255, not 256 (the macro id space is a full byte, but the wire field
+  reporting its size is also one byte and cannot itself represent 256).
+  `MacroCapacity.floor` remains what the editor assumes before any board
+  has ever answered `CAPS` — a deliberate under-promise, not a target.
 
 When editing model/device code, check whether the change needs a matching change on the firmware side (or vice versa) before assuming it's editor-only.
 

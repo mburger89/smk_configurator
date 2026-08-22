@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SMKConfigurator
 
@@ -118,5 +119,118 @@ struct MacroCapacityTests {
         let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 8192, macroSlots: 2),
                                  source: .device, macros: macros)
         #expect(budget.blockReason?.contains("estimated") == false)
+    }
+}
+
+/// The `.device` source in `MacroCapacitySource` has never been reachable
+/// before -- there was no way to ask a board anything. These tests exercise
+/// the new `CAPS` opcode (0x05) wiring: decoding the wire response, adopting
+/// it on `EditorState`, and persisting it so a later disconnected session
+/// reports `.lastKnown` instead of dropping back to `MacroCapacity.floor`.
+///
+/// None of these ever construct a real `USBRawHIDTransport`/`BLETransport`
+/// -- `queryCapacity` is tested against `KeymapUploaderTests.MockTransport`
+/// (a fake, see `KeymapUploadProtocolTests.swift`), and `applyDeviceCapacity`
+/// takes an already-decoded `DeviceCapacityReport`, never a transport. The
+/// only code path that opens a real transport is `EditorState.sendToDevice()`,
+/// which none of these tests call -- the same rule the rest of this device
+/// layer's tests already follow.
+@Suite("CAPS opcode: a board's real capacity reaches the meter")
+struct MacroCapacityWireTests {
+    /// A well-formed 32-byte CAPS response: byte 0 status (0x00 ok), byte 1
+    /// opcode echo, bytes 2-3 macroBytes (u16 LE), byte 4 macroSlots (u8),
+    /// bytes 5-6 keymapMaxLen (u16 LE).
+    private func capsResponse(macroBytes: UInt16, macroSlots: UInt8, keymapMaxLen: UInt16) -> [UInt8] {
+        var response = [UInt8](repeating: 0, count: 32)
+        response[0] = 0x00
+        response[1] = 0x05
+        response[2] = UInt8(macroBytes & 0xFF)
+        response[3] = UInt8((macroBytes >> 8) & 0xFF)
+        response[4] = macroSlots
+        response[5] = UInt8(keymapMaxLen & 0xFF)
+        response[6] = UInt8((keymapMaxLen >> 8) & 0xFF)
+        return response
+    }
+
+    /// A throwaway `UserDefaults(suiteName:)`, exactly `JSONFileStoreTests`'s
+    /// pattern, so persistence assertions never touch the real user's
+    /// `UserDefaults.standard`.
+    private func freshDefaults(_ suite: String = #function) -> UserDefaults {
+        let name = "MacroCapacityWireTests.\(suite).\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test("queryCapacity sends opcode 0x05 and decodes the little-endian response")
+    func queryCapacityDecodesResponse() async throws {
+        let transport = KeymapUploaderTests.MockTransport(
+            responses: [capsResponse(macroBytes: 4000, macroSlots: 255, keymapMaxLen: 4000)]
+        )
+        let report = try await KeymapUploader.queryCapacity(using: transport)
+
+        #expect(transport.sent.count == 1)
+        #expect(transport.sent[0][0] == 0x05)
+        #expect(report.macroBytes == 4000)
+        #expect(report.macroSlots == 255)
+        #expect(report.keymapMaxLen == 4000)
+    }
+
+    @Test("queryCapacity decodes a two-byte field spanning both bytes, not just the low byte")
+    func queryCapacityDecodesMultiByteField() async throws {
+        // 0x0FA0 = 4000: exercises the high byte of the u16 LE fields, so a
+        // decoder that dropped the second byte wouldn't be caught by a
+        // round value alone.
+        let transport = KeymapUploaderTests.MockTransport(
+            responses: [capsResponse(macroBytes: 0x0FA0, macroSlots: 32, keymapMaxLen: 0x1234)]
+        )
+        let report = try await KeymapUploader.queryCapacity(using: transport)
+        #expect(report.macroBytes == 0x0FA0)
+        #expect(report.keymapMaxLen == 0x1234)
+    }
+
+    @Test("queryCapacity throws .nak when the board reports an error status")
+    func queryCapacityThrowsOnErrorStatus() async {
+        let transport = KeymapUploaderTests.MockTransport(responses: [[0x01, 0x05]])
+        await #expect(throws: DeviceTransportError.nak) {
+            _ = try await KeymapUploader.queryCapacity(using: transport)
+        }
+    }
+
+    @MainActor
+    @Test("applying a device capacity report switches the meter to .device with the board's numbers")
+    func applyingReportSwitchesSourceToDevice() {
+        let editor = EditorState(userDefaults: freshDefaults())
+        let report = DeviceCapacityReport(macroBytes: 6000, macroSlots: 40, keymapMaxLen: 6000)
+
+        editor.applyDeviceCapacity(report, deviceKey: "usb")
+
+        #expect(editor.macroCapacity == MacroCapacity(macroBytes: 6000, macroSlots: 40))
+        #expect(editor.macroCapacitySource == .device)
+    }
+
+    @MainActor
+    @Test("a device capacity persists so a later session reports .lastKnown, not the floor")
+    func persistedCapacityIsLastKnownNextSession() {
+        let defaults = freshDefaults()
+        let report = DeviceCapacityReport(macroBytes: 5000, macroSlots: 20, keymapMaxLen: 5000)
+
+        let firstSession = EditorState(userDefaults: defaults)
+        firstSession.applyDeviceCapacity(report, deviceKey: "usb")
+
+        // A fresh EditorState, sharing only the persisted defaults, models
+        // "same board, later launch, nothing plugged in right now."
+        let laterSession = EditorState(userDefaults: defaults)
+
+        #expect(laterSession.macroCapacity == MacroCapacity(macroBytes: 5000, macroSlots: 20))
+        #expect(laterSession.macroCapacitySource == .lastKnown)
+    }
+
+    @MainActor
+    @Test("with nothing ever persisted, a fresh session still reports the floor")
+    func noPersistedCapacityStillFloors() {
+        let editor = EditorState(userDefaults: freshDefaults())
+        #expect(editor.macroCapacity == .floor)
+        #expect(editor.macroCapacitySource == .floor)
     }
 }
