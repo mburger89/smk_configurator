@@ -52,6 +52,20 @@ enum KeymapCompileError: Error, Equatable, CustomStringConvertible {
     /// where it lives, so the message names both the token and its
     /// layer/row/column rather than just the token.
     case invalidCell(layer: Int, row: Int, col: Int, token: String, reason: String)
+    /// A `.text` macro step contains a character the firmware's typing
+    /// table has no entry for. That table (see
+    /// `~/esp/SMK/Sources/SMKCore/` -- the ASCII-to-keystroke lookup the
+    /// macro player's text step drives) covers only printable ASCII
+    /// (`0x20`...`0x7E`) and assumes a US QWERTY host layout; anything else
+    /// returns nil and the firmware aborts the macro rather than typing a
+    /// substitute. Refusing here, before the byte ever reaches the board,
+    /// is the same reasoning as `unsupportedToken`: a keyboard that types
+    /// something else is worse than one that types nothing, so this is
+    /// named and refused rather than silently dropped or substituted.
+    /// `token` is a description of the macro/step this character was found
+    /// in (not an `ActionToken`), matching how `parameterOutOfRange` already
+    /// reuses that label for a non-token description.
+    case unsupportedCharacter(token: String, character: Character, index: Int)
 
     var description: String {
         switch self {
@@ -61,8 +75,34 @@ enum KeymapCompileError: Error, Equatable, CustomStringConvertible {
             return "Cannot compile \"\(token)\": parameter \(value) exceeds the maximum of \(limit) the one-byte wire field allows."
         case .invalidCell(let layer, let row, let col, let token, let reason):
             return "Layer \(layer), row \(row), col \(col) (\"\(token)\"): \(reason)"
+        case .unsupportedCharacter(let token, let character, let index):
+            let codepoint = character.unicodeScalars.first.map { String(format: "U+%04X", $0.value) } ?? "?"
+            return "Cannot compile \"\(token)\": character '\(character)' (\(codepoint)) at position \(index) is outside the printable ASCII range the firmware can type (0x20-0x7E)."
         }
     }
+}
+
+/// Whether `self` is a single printable-ASCII character (`0x20`...`0x7E`)
+/// the firmware's text-typing table can look up. A grapheme cluster made of
+/// more than one Unicode scalar (e.g. a base letter plus a combining mark)
+/// is never printable ASCII on its own, so it's rejected without inspecting
+/// its scalars individually.
+private extension Character {
+    var isPrintableASCII: Bool {
+        guard unicodeScalars.count == 1, let scalar = unicodeScalars.first else { return false }
+        return (0x20...0x7E).contains(scalar.value)
+    }
+}
+
+/// The first character in `s` (if any) the firmware's text-typing table
+/// cannot look up, paired with its character-index for a message that lets
+/// a user locate it inside a long string rather than just naming the
+/// character in isolation.
+private func firstUnsupportedCharacter(in s: String) -> (character: Character, index: Int)? {
+    for (index, character) in s.enumerated() where !character.isPrintableASCII {
+        return (character, index)
+    }
+    return nil
 }
 
 /// Encodes one keymap cell's parsed token as the (tag, parameter) byte pair
@@ -239,11 +279,26 @@ private func encodeMacroStep(_ step: MacroStep, describedAs macroDescription: St
         let index = try oneBytePayloadField(n, describedAs: "\(macroDescription) layer index")
         return [0x03, op == .momentary ? 0x00 : 0x01, index]
 
-    case .text(let s, let delivery, let msPerChar):
+    case .text(let s, _, let msPerChar):
+        if let (character, index) = firstUnsupportedCharacter(in: s) {
+            throw KeymapCompileError.unsupportedCharacter(
+                token: macroDescription, character: character, index: index)
+        }
         let payload = Array(s.utf8)
         let length = try oneBytePayloadField(payload.count, describedAs: "\(macroDescription) text length")
         let msPerCharByte = try oneBytePayloadField(msPerChar, describedAs: "\(macroDescription) text msPerChar")
-        let deliveryByte: UInt8 = delivery == .keystrokes ? 0x00 : 0x01
+        // Paste cannot work board-side -- a keyboard has no way to put text
+        // on the host's clipboard, only send keystrokes -- so a text step
+        // always compiles as keystrokes (0x00) regardless of its stored
+        // `delivery`. The byte itself stays reserved rather than removed:
+        // the firmware's decoder (`~/esp/SMK/Sources/SMKCore/
+        // KeymapBinary.swift`) expects this exact stride, and changing it
+        // would churn a wire-format contract three implementations share
+        // for no gain. `TextDelivery.paste` still round-trips through the
+        // JSON model (see Model/Macro.swift) so an existing keymap.json
+        // that carries `"delivery": "paste"` still loads losslessly --
+        // it just never reaches the board as anything but keystrokes.
+        let deliveryByte: UInt8 = 0x00
         return [0x04, deliveryByte, msPerCharByte, length] + payload
 
     case .repeatBlock(let count, let steps):

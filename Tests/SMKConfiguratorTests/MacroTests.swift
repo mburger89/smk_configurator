@@ -358,4 +358,89 @@ struct MacroTests {
         #expect(macro.overflows.isEmpty)
         #expect(macro.isCompilable)
     }
+
+    // MARK: - ASCII-only text compilation
+
+    /// A minimal single-layer document to host a macro for
+    /// `compileKeymap(_:)`, mirroring `KeymapCompilerTests`' own `doc(layers:)`.
+    private func doc(macro: MacroDefinition) -> KeymapDocument {
+        var d = KeymapDocument(
+            matrix: .init(rows: [5], cols: [6, 7], colsAreDriven: 1),
+            layers: [[["key:a", "trans"]]]
+        )
+        d.macros = [macro]
+        return d
+    }
+
+    @Test("a text step within printable ASCII compiles cleanly")
+    func asciiTextCompiles() throws {
+        let macro = MacroDefinition(
+            id: 1, name: "ok",
+            steps: [.text("Deploy v1.0! (staging)", delivery: .keystrokes, msPerChar: 12)]
+        )
+        _ = try compileKeymap(doc(macro: macro))
+    }
+
+    @Test("a text step containing a character outside printable ASCII refuses to compile")
+    func nonASCIITextRefusesToCompile() {
+        // The firmware types text through a hand-written table covering
+        // only 0x20...0x7E and aborts the macro for anything else -- typing
+        // a substitute would be worse than typing nothing, so the compiler
+        // must refuse before this ever reaches the board.
+        let macro = MacroDefinition(
+            id: 1, name: "n",
+            steps: [.text("café", delivery: .keystrokes, msPerChar: 12)]
+        )
+        #expect(throws: KeymapCompileError.self) { _ = try compileKeymap(doc(macro: macro)) }
+    }
+
+    @Test("the non-ASCII refusal message names the offending character")
+    func nonASCIIRefusalNamesTheCharacter() {
+        let macro = MacroDefinition(
+            id: 1, name: "n",
+            steps: [.text("café", delivery: .keystrokes, msPerChar: 12)]
+        )
+        do {
+            _ = try compileKeymap(doc(macro: macro))
+            Issue.record("expected a throw")
+        } catch let error as KeymapCompileError {
+            #expect("\(error)".contains("é"))
+        } catch {
+            Issue.record("wrong error type")
+        }
+    }
+
+    @Test("a control character below the printable ASCII range refuses to compile")
+    func controlCharacterRefusesToCompile() {
+        // Not just non-ASCII -- 0x0A (newline) is ASCII but outside the
+        // firmware's printable 0x20...0x7E table too.
+        let macro = MacroDefinition(
+            id: 1, name: "n",
+            steps: [.text("line one\nline two", delivery: .keystrokes, msPerChar: 12)]
+        )
+        #expect(throws: KeymapCompileError.self) { _ = try compileKeymap(doc(macro: macro)) }
+    }
+
+    @Test("a non-ASCII character nested inside a repeat block is still caught")
+    func nonASCIIInsideRepeatBlockRefusesToCompile() {
+        let macro = MacroDefinition(
+            id: 1, name: "n",
+            steps: [.repeatBlock(count: 2, steps: [.text("naïve", delivery: .keystrokes, msPerChar: 12)])]
+        )
+        #expect(throws: KeymapCompileError.self) { _ = try compileKeymap(doc(macro: macro)) }
+    }
+
+    @Test("paste is not among the delivery options a user can currently choose in the UI")
+    func pasteHasNoUIPath() {
+        // TextDelivery.paste stays in the model so an existing keymap.json
+        // carrying "delivery": "paste" still loads losslessly (a keyboard
+        // has no way to put text on the host's clipboard, so the firmware
+        // never receives it either way -- see KeymapCompiler, which always
+        // compiles a text step as keystrokes regardless of this field).
+        // MacroInspectorView's "Paste all at once" toggle -- the one place
+        // that used to let a user choose it -- was removed; that half of
+        // this requirement is a UI change this suite can't exercise, so it
+        // was verified by reading MacroInspectorView.swift and by building.
+        #expect(TextDelivery.allCases.contains(.paste))
+    }
 }

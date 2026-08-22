@@ -186,18 +186,24 @@ struct MacroInspectorView: View {
 /// calls `editor.updateMacro(_:)`, since only `EditorState` mutates the
 /// document -- this view stays a pure function of `step`.
 ///
-/// Uses the native controls `Slider`/`Picker`/`TextEditor`/`Toggle`
-/// (`.switch` style, i.e. `ToggleSwitch`) rather than inventing custom
-/// controls, per the design spec's "`Slider`, `TextEditor`, `Picker`, and
-/// `ToggleSwitch` all exist natively, so the inspector is unaffected."
-/// `ToggleSwitch` itself is package-internal to SwiftCrossUI (see
-/// `Toggle.swift`); the public surface is `Toggle(_:isOn:).toggleStyle(.switch)`.
-/// There is no boolean field on any `MacroStep` case for a "repeat while
-/// held" concept the plan mentions but the model (`Model/Macro.swift`)
-/// never grew -- adding an inert toggle would violate this feature's own
-/// C4 contract ("nothing in the UI claims a capability the build does not
-/// have"), so the toggle is wired to a real field instead: a text step's
-/// delivery mode.
+/// Uses the native controls `Slider`/`Picker`/`TextEditor` rather than
+/// inventing custom controls, per the design spec's "`Slider`, `TextEditor`,
+/// `Picker`, and `ToggleSwitch` all exist natively, so the inspector is
+/// unaffected." No case here uses a `Toggle` (`.switch` style, i.e.
+/// `ToggleSwitch`, package-internal to SwiftCrossUI's `Toggle.swift`; the
+/// public surface would be `Toggle(_:isOn:).toggleStyle(.switch)`): there is
+/// no boolean field on any `MacroStep` case for a "repeat while held"
+/// concept the plan mentions but the model (`Model/Macro.swift`) never
+/// grew, and the text step's `TextDelivery` toggle ("Paste all at once")
+/// that used to stand in for it was removed for the same reason it was
+/// added carefully in the first place -- the firmware can only send
+/// keystrokes, so a keyboard has no way to put text on the host's clipboard
+/// and "Paste" promised a capability this build cannot have. That is this
+/// feature's own C4 contract: nothing in the UI may claim a capability the
+/// build does not have. `TextDelivery` itself stays in the model (an
+/// existing `keymap.json` may carry `"delivery": "paste"` and must still
+/// load losslessly) and `KeymapCompiler` always compiles a text step as
+/// keystrokes; see its doc comments.
 ///
 /// The keystroke case's key/modifier choosers (`MacroKeyChooserView`,
 /// `MacroModifierChooserView`, below) are the one exception to "native
@@ -315,16 +321,6 @@ private struct MacroStepEditorView: View {
                 )
                 .frame(height: 80)
             }
-            Toggle(
-                "Paste all at once",
-                isOn: Binding(
-                    get: { delivery == .paste },
-                    set: { isPaste in
-                        update(.text(text, delivery: isPaste ? .paste : .keystrokes, msPerChar: msPerChar))
-                    }
-                )
-            )
-            .toggleStyle(.switch)
             VStack(alignment: .leading, spacing: 4) {
                 SectionHeader(title: "Typing speed")
                 // 10 ms steps, same reasoning as the hold slider above: the

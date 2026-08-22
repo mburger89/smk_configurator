@@ -42,6 +42,15 @@ enum JSONValue: Codable, Equatable, Hashable {
 }
 
 /// How a `.text` step reaches the host.
+///
+/// `.paste` has no UI path (there is no control anywhere that lets a user
+/// choose it) and `KeymapCompiler` always compiles a text step as
+/// `.keystrokes` regardless of this field: pasting means the text is
+/// already on the host's clipboard, and a keyboard has no way to put it
+/// there -- it can only send keystrokes. The case stays in the model purely
+/// so an existing `keymap.json` written before this changed, and still
+/// carrying `"delivery": "paste"`, keeps loading losslessly rather than
+/// having that field silently rewritten out from under it.
 enum TextDelivery: String, Codable, Equatable, Hashable, CaseIterable {
     case keystrokes, paste
 }
