@@ -113,6 +113,12 @@ This app is written against a specific version of `~/esp/SMK` and several places
     (`KeyCodesGenerated.swift`) — the same HID usage ID sent in a keyboard
     report. `0x00` (HID "no key") when a keystroke step has no `"k"`.
 
+  - **`op` byte.** `0x00` = `"mo"` (momentary), `0x01` = `"tg"` (toggle) —
+    `LayerOp`'s declaration order, and the same convention as `delivery`
+    below where `0x00` is the first case. The layout table above listed
+    `op(1)` without assigning its values; a firmware implementer hit the gap
+    while writing the decoder and flagged it rather than guessing silently.
+
   - **`delivery` byte.** `0x00` = `"keystrokes"` (type each character),
     `0x01` = `"paste"`. This byte exists precisely so the editor's
     keystrokes/paste toggle has somewhere to land on the wire; a layout
