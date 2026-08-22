@@ -367,6 +367,22 @@ private struct MacroStepEditorView: View {
         (.momentary, "Momentary"), (.toggle, "Toggle"),
     ]
 
+    /// `MO(0)` is a dead step, and silently so: the firmware's
+    /// `LayerEngine.isLayerActive` special-cases layer 0 to always return
+    /// `true`, so momentarily pushing it changes nothing while the macro
+    /// runs, and a momentary push inside a macro is only ever released when
+    /// the macro *terminates* -- so there's no later moment where it would
+    /// have mattered either. `TG(0)` is deliberately not flagged here:
+    /// `LayerEngine.toggleLayer` flips `toggledLayers[0]` unconditionally,
+    /// the same as any other index, with no layer-0 special case of its own
+    /// -- toggling layer 0 is a real, general state change in the engine's
+    /// model, just one `isLayerActive` happens not to need. Only the
+    /// momentary op's specific dead-by-construction combination gets a
+    /// warning here, not layer index 0 as a whole.
+    private static func isDeadMomentaryZero(op: LayerOp, n: Int) -> Bool {
+        op == .momentary && n == 0
+    }
+
     private func layerEditor(op: LayerOp, n: Int) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
@@ -394,6 +410,22 @@ private struct MacroStepEditorView: View {
                         }
                     )
                 )
+            }
+            // See `isDeadMomentaryZero`'s doc comment: this combination is
+            // never a mistake worth blocking outright (the model and
+            // compiler both accept it, and refusing would mean either
+            // banning index 0 for `.toggle` too -- which the doc comment
+            // there says not to do -- or silently rewriting the user's
+            // choice out from under them), but it also must never be
+            // silent. Explaining it in place teaches the underlying model
+            // (layer 0 is always active; a macro's momentary push only ever
+            // un-pushes at the macro's own end) rather than just refusing.
+            if Self.isDeadMomentaryZero(op: op, n: n) {
+                Text(
+                    "Momentary layer 0 has no effect: layer 0 is the base layer and is always active, and a momentary push inside a macro is only released when the macro ends anyway -- so this step never changes anything, during the run or after. Pick Toggle, or a layer above 0."
+                )
+                .font(.system(size: 11))
+                .foregroundColor(chrome.dangerText)
             }
         }
     }
