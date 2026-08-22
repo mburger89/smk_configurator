@@ -263,9 +263,15 @@ class EditorState {
 
     var isSendingToDevice: Bool = false
 
-    /// Tries USB (RP2040) first, then BLE (ESP32-C6), and pushes
-    /// document.layers to whichever responds. Matrix data isn't sent — the
-    /// firmware's matrix stays compiled-in (see the design spec).
+    /// Tries USB (RP2040) first, then BLE (ESP32-C6), and pushes the
+    /// compiled document (matrix header, layers, and macros — see
+    /// `compileForUpload()`) to whichever responds. The matrix's GPIO
+    /// numbers now ride along as part of the compiled payload's fixed
+    /// header (see `~/esp/SMK/docs/superpowers/specs/
+    /// 2026-08-21-binary-keymap-format-design.md`'s format table) — a
+    /// change from the JSON era, when matrix data was never sent at all —
+    /// but the firmware's physical matrix scan still runs off its own
+    /// compiled-in GPIO config; this app has no way to reprogram that.
     ///
     /// `macroBudget` gates *macro* compiled bytecode against the board's
     /// macro memory, but the wire format is now the same compiled bytecode
