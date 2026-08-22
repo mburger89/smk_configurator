@@ -120,6 +120,88 @@ struct MacroCapacityTests {
                                  source: .device, macros: macros)
         #expect(budget.blockReason?.contains("estimated") == false)
     }
+
+    // MARK: - Measuring against the real compiler, not a restated formula
+
+    /// A 5x12 document with `layerCount` identical layers of "key:a" cells,
+    /// the same board shape Task 2's report pinned at 1943 compiled bytes
+    /// for 16 layers -- so the numbers here are cross-checkable against that
+    /// independently-derived figure, not just internally consistent.
+    private func document(layerCount: Int, macros: [MacroDefinition] = []) -> KeymapDocument {
+        let matrix = KeymapDocument.Matrix(rows: Array(0..<5), cols: Array(0..<12), colsAreDriven: 1)
+        let layer = (0..<5).map { _ in (0..<12).map { _ in "key:a" } }
+        return KeymapDocument(matrix: matrix, layers: Array(repeating: layer, count: layerCount), macros: macros)
+    }
+
+    @Test("usedBytes equals exactly the macro-region bytes compileKeymap emits for a real document, not compiledSize summed independently")
+    func usedBytesMatchesWhatTheCompilerActuallyEmits() throws {
+        let macros = [macro(0, bytes: 40), macro(1, bytes: 60)]
+        let doc = document(layerCount: 2, macros: macros)
+
+        // The reference: compile the whole document, then compile it again
+        // with macros stripped, and take the difference. That difference is
+        // -- by construction -- exactly the bytes the macro region costs on
+        // the wire, derived the same way `MacroBudget` must derive it.
+        let full = try compileKeymap(doc)
+        var withoutMacros = doc
+        withoutMacros.macros = nil
+        let base = try compileKeymap(withoutMacros)
+        let expectedMacroBytes = full.count - base.count
+
+        let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 8192, macroSlots: 32),
+                                 source: .device, document: doc)
+        #expect(budget.usedBytes == expectedMacroBytes)
+        #expect(budget.layerBytes == base.count)
+    }
+
+    @Test("macro headroom shrinks as layer count grows, because layers and macros share one payload budget")
+    func headroomAccountsForLayerCost() {
+        let capacity = MacroCapacity(macroBytes: 4085, macroSlots: 32)
+        let twoLayers = MacroBudget(capacity: capacity, source: .device, document: document(layerCount: 2))
+        let sixteenLayers = MacroBudget(capacity: capacity, source: .device, document: document(layerCount: 16))
+
+        // Cross-checked against Task 2's independently-reported figure: 16
+        // layers of this exact 5x12 shape compile to 1943 bytes.
+        #expect(sixteenLayers.layerBytes == 1943)
+        #expect(twoLayers.layerBytes < sixteenLayers.layerBytes)
+        #expect(twoLayers.totalBytes > sixteenLayers.totalBytes)
+        #expect(sixteenLayers.totalBytes == capacity.macroBytes - sixteenLayers.layerBytes)
+        #expect(twoLayers.totalBytes == capacity.macroBytes - twoLayers.layerBytes)
+    }
+
+    @Test("a macro that refuses to compile still reports a byte count instead of crashing or reading zero")
+    func uncompilableMacroFallsBackToAHonestEstimate() {
+        // A non-ASCII `.text` character makes KeymapCompileError.unsupportedCharacter
+        // throw when this macro is actually compiled (see KeymapCompiler's
+        // firstUnsupportedCharacter). The budget must not propagate that
+        // throw, crash, or silently report 0 -- it falls back to
+        // MacroDefinition.compiledSize, the same arithmetic a successful
+        // compile is asserted to match.
+        let uncompilable = MacroDefinition(id: 0, name: "n",
+                                           steps: [.text("café", delivery: .keystrokes, msPerChar: 12)])
+        let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 1024, macroSlots: 8),
+                                 source: .device, macros: [uncompilable])
+        #expect(budget.usedBytes == uncompilable.compiledSize)
+        #expect(budget.usedBytesIsEstimated == true)
+        #expect(budget.usedBytes > 0)
+    }
+
+    @Test("a document whose layers don't compile reports layer cost as unknown rather than silently zero")
+    func uncompilableDocumentReportsLayerCostAsUnknown() {
+        let matrix = KeymapDocument.Matrix(rows: [0], cols: [0], colsAreDriven: 1)
+        // "bogus:token" parses to ActionToken.raw -- a token this build has
+        // no binary tag for -- so compileKeymap refuses the whole document,
+        // not just the macro region.
+        let doc = KeymapDocument(matrix: matrix, layers: [[["bogus:token"]]],
+                                 macros: [macro(0, bytes: 10)])
+
+        let budget = MacroBudget(capacity: MacroCapacity(macroBytes: 1024, macroSlots: 8),
+                                 source: .device, document: doc)
+        #expect(budget.layerCostUnknown == true)
+        #expect(budget.layerBytes == 0)
+        #expect(budget.canFlash == false)
+        #expect(budget.blockReason?.contains("compile") == true)
+    }
 }
 
 /// The `.device` source in `MacroCapacitySource` has never been reachable
