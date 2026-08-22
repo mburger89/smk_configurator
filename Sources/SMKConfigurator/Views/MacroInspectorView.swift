@@ -421,8 +421,12 @@ private struct MacroStepEditorView: View {
             // (layer 0 is always active; a macro's momentary push only ever
             // un-pushes at the macro's own end) rather than just refusing.
             if Self.isDeadMomentaryZero(op: op, n: n) {
+                // Kept to roughly two wrapped lines in a 248pt column: the
+                // longer version ran about seven, which is a wall of text in
+                // an inline warning. Still says why (layer 0 is always
+                // active) and what to do instead, which is the point.
                 Text(
-                    "Momentary layer 0 has no effect: layer 0 is the base layer and is always active, and a momentary push inside a macro is only released when the macro ends anyway -- so this step never changes anything, during the run or after. Pick Toggle, or a layer above 0."
+                    "Momentary layer 0 does nothing — layer 0 is always active, and a macro's momentary push only releases when the macro ends. Pick Toggle, or a layer above 0."
                 )
                 .font(.system(size: 11))
                 .foregroundColor(chrome.dangerText)
