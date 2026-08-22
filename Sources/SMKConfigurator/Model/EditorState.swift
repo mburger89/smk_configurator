@@ -273,40 +273,61 @@ class EditorState {
     /// but the firmware's physical matrix scan still runs off its own
     /// compiled-in GPIO config; this app has no way to reprogram that.
     ///
-    /// `macroBudget` gates *macro* compiled bytecode against the board's
-    /// macro memory, but the wire format is now the same compiled bytecode
-    /// for the *whole* document — matrix, every layer's cells, and macros —
-    /// capped at `KeymapUploader.maxPayloadLength`. `macroBudget` only
-    /// counts macro bytes, not the layers sharing that same budget, so a
-    /// document can still read green on the macro meter while the full
-    /// compiled payload is too big (e.g. many layers on a large matrix, or
-    /// macros that individually fit the meter's ceiling but push the total
-    /// past it). The payload is compiled and size-checked here,
-    /// synchronously, before `isSendingToDevice` flips or the Task is
-    /// created, so an oversized payload never touches a transport and the
-    /// guard is observable without awaiting anything.
+    /// Guard order is deliberate and, since `macroBudget` started measuring
+    /// against `document` (see its doc comment), no longer matches Task 3's
+    /// original "capacity, then compile" — here's why, in the order these
+    /// guards actually run:
     ///
-    /// Before either of those, every macro is checked against
-    /// `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
-    /// step's `msPerChar`, a `.repeatBlock`'s `count`, a macro's `id`, a
-    /// `.layer` step's target index, plus the three checks the compiled/JSON
-    /// guards already imply for name/step-count/payload length) can hold a
-    /// value up to 255 no matter what the compiled-size or JSON-size meters
-    /// say — a 300-count repeat is a handful of compiled bytes and JSON
-    /// characters, small enough to sail through both of those, but wraps
-    /// around in the one byte the firmware reads it into. UI sliders keep
-    /// this from happening via the editor, but a decoded `keymap.json` isn't
-    /// bound by the UI, so this guard runs synchronously here too, before
-    /// `isSendingToDevice` flips or the Task is created — same reasoning as
-    /// the JSON-size guard below.
+    /// 1. `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
+    ///    step's `msPerChar`, a `.repeatBlock`'s `count`, a macro's `id`, a
+    ///    `.layer` step's target index, plus the three checks the compiled-
+    ///    size/JSON-size guards already implied for name/step-count/payload
+    ///    length) can hold a value up to 255 no matter what any size meter
+    ///    says — a 300-count repeat is a handful of bytes either way, small
+    ///    enough to sail through every other guard, but wraps around in the
+    ///    one byte the firmware reads it into. UI sliders keep this from
+    ///    happening via the editor, but a decoded `keymap.json` isn't bound
+    ///    by the UI, so this runs here too.
+    /// 2. The re-entrancy guard, moved first among the remaining checks
+    ///    (previously between the capacity and compile guards) so an
+    ///    already-in-flight send skips the compiling this method now does
+    ///    twice over (once here, once inside `macroBudget`) rather than
+    ///    paying that cost only to discard the result.
+    /// 3. Compiling the whole document (`compileForUpload()`), catching
+    ///    `KeymapCompileError` — moved *ahead* of the capacity check below.
+    ///    `macroBudget` can now fail to measure anything meaningful when
+    ///    the document doesn't compile at all (an unrecognized token
+    ///    anywhere, not just in a macro): its `document:` initializer
+    ///    absorbs that throw into `layerCostUnknown`/`blockReason`'s generic
+    ///    "can't be measured" message rather than propagating it (see that
+    ///    type's doc comment) — which is the right behavior for a passive
+    ///    meter, but it would be the *wrong* message to surface here, where
+    ///    the compiler's own error already names the exact token and its
+    ///    layer/row/col. Compiling first means that specific message wins;
+    ///    checking capacity first would have hidden it behind the generic
+    ///    one. Once this succeeds, `macroBudget`'s own internal compiles in
+    ///    step 4 are guaranteed to succeed too — same cells and macros, just
+    ///    recompiled with the document split apart — so this reordering
+    ///    costs nothing in the success path.
+    /// 4. `macroBudget.canFlash`, using the already-known-good document.
+    /// 5. The payload-size guard: `macroBudget.capacity` is whatever this
+    ///    app currently believes about the board (a live `.device` report, a
+    ///    remembered `.lastKnown` value from a previous session, or the
+    ///    conservative `.floor` guess) and can be stale or simply wrong,
+    ///    while `KeymapUploader.maxPayloadLength` is this build's own fixed
+    ///    ceiling. So a document can still read green on `macroBudget` —
+    ///    believed capacity says there's room — while the actually-compiled
+    ///    payload exceeds the real wire limit (e.g. a `.lastKnown` capacity
+    ///    carried over from a different, larger board).
+    ///
+    /// Every guard above returns before `isSendingToDevice` flips or the
+    /// `Task {` is created, so a document that fails any of them never
+    /// touches a transport and each guard's effect is observable without
+    /// awaiting anything.
     func sendToDevice() {
         let overflows = document.macroList.flatMap(\.overflows)
         guard overflows.isEmpty else {
             loadError = overflows.map(\.message).joined(separator: " ")
-            return
-        }
-        guard macroBudget.canFlash else {
-            loadError = macroBudget.blockReason
             return
         }
         guard !isSendingToDevice else { return }
@@ -320,13 +341,23 @@ class EditorState {
             loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
             return
         }
+        // Read once rather than as two separate `macroBudget` property
+        // accesses: each access compiles `document` from scratch (see
+        // `macroBudget`'s doc comment), so `.canFlash` then `.blockReason`
+        // as two accesses would compile it twice for one guard.
+        let budget = macroBudget
+        guard budget.canFlash else {
+            loadError = budget.blockReason
+            return
+        }
         guard payload.count <= KeymapUploader.maxPayloadLength else {
             loadError = "Keymap upload is \(payload.count) bytes, over the "
-                + "\(KeymapUploader.maxPayloadLength)-byte device limit — the "
-                + "macro meter only tracks macro bytes, not the layers sharing "
-                + "the same budget, so it can read green while the compiled "
-                + "keymap is still too big. Trim macro steps, delete unused "
-                + "macros, or remove layers."
+                + "\(KeymapUploader.maxPayloadLength)-byte device limit. This "
+                + "can happen even when the macro meter reads green, if this "
+                + "app's currently-known board capacity doesn't match the "
+                + "real device limit (e.g. a remembered capacity from a "
+                + "different board). Trim macro steps, delete unused macros, "
+                + "or remove layers."
             return
         }
         isSendingToDevice = true
@@ -688,10 +719,37 @@ class EditorState {
 
     // MARK: - Macro editing
 
+    /// Uses `init(capacity:source:document:)` rather than the `macros:`-only
+    /// initializer, so `totalBytes` reflects what layers have already spent
+    /// out of the shared payload budget (see `MacroBudget`'s doc comment) —
+    /// without this, a 16-layer keymap and a 2-layer one would report the
+    /// exact same macro headroom, which is false: macros and layers compile
+    /// into one store.
+    ///
+    /// Never crashes and never silently reads 0 bytes for a document that
+    /// doesn't compile (an unrecognized token, or macro text outside
+    /// printable ASCII): `MacroBudget` itself absorbs that throw and
+    /// reports it as `layerCostUnknown`/`usedBytesIsEstimated` instead of
+    /// propagating it here — see that type's doc comments for exactly what
+    /// each flag means and what `blockReason` says in each case.
+    ///
+    /// Cost: this compiles `document` on every access (twice — once with
+    /// macros stripped to measure layer cost, once macro-only to measure
+    /// macro cost), not just when something changes, and it's read from
+    /// SwiftUI view bodies (`MacroEditorViews.slotSection`,
+    /// `MacroLibraryView`) that re-evaluate on every re-render while those
+    /// panes are visible. For the sizes this format targets (at most 16
+    /// layers, at most a few hundred cells each) a compile is one pass of
+    /// cheap per-cell arithmetic plus a growing byte buffer, so this hasn't
+    /// been observed to be slow — but it is a deliberate trade (an O(document
+    /// size) property where an O(macro count) one used to be enough), not a
+    /// free correctness fix, and it is not cached here: caching would risk
+    /// the meter reading stale the moment `document` changes through some
+    /// path this file didn't anticipate. `sendToDevice()` below reads this
+    /// property once into a local rather than twice, for the same
+    /// double-compile reason.
     var macroBudget: MacroBudget {
-        MacroBudget(capacity: macroCapacity,
-                    source: macroCapacitySource,
-                    macros: document.macroList)
+        MacroBudget(capacity: macroCapacity, source: macroCapacitySource, document: document)
     }
 
     /// The macro currently open in the editor, if any. Named `currentMacro`

@@ -240,17 +240,27 @@ struct MacroEditingTests {
         #expect(e.loadError == nil)
     }
 
-    @Test("a document that is green on the macro-only budget but whose full compiled payload exceeds the upload limit is refused, blaming macros")
+    @Test("a document green on a believed capacity larger than the real device limit is still refused by the payload-size guard, blaming macros")
     func sendToDeviceRefusesOversizedCompiledPayloadEvenWithinMacroByteBudget() throws {
+        // This used to demonstrate a different gap: MacroBudget summed only
+        // MacroDefinition.compiledSize, never adding in the layers sharing
+        // the same wire budget, so it could read green while the true
+        // compiled payload (layers + macros) overflowed the wire limit. That
+        // gap is closed now -- MacroBudget measures against the whole
+        // document (see its doc comment) and reduces headroom by what
+        // layers actually cost.
+        //
+        // The residual gap this test now demonstrates is different: the
+        // *believed* capacity itself (`macroCapacity`, whatever this app
+        // currently thinks the board can hold -- live, remembered, or
+        // guessed) can simply be larger than `KeymapUploader.maxPayloadLength`,
+        // this build's own fixed wire ceiling. Here it's set to 6000, well
+        // above the real 4085-byte limit, modeling a stale `.lastKnown`
+        // capacity left over from a different, larger-flash board. Even a
+        // fully layer-aware MacroBudget reads green against a wrong belief
+        // like that, so `sendToDevice`'s separate payload-size guard is what
+        // actually protects the wire limit.
         let e = editor()
-        // MacroBudget only ever sums MacroDefinition.compiledSize -- it
-        // never adds in the layers sharing the same wire budget. So a
-        // capacity generous enough to call 5 macros x 200 keystroke steps
-        // (5 x 1003 = 5015 compiled macro bytes) green still lets the *full*
-        // compiled document (those macros plus the layer/matrix header)
-        // sail past KeymapUploader.maxPayloadLength (4085) -- exactly the
-        // gap the macro-only meter can't see now that the wire format is
-        // compiled bytecode instead of JSON.
         e.macroCapacity = MacroCapacity(macroBytes: 6000, macroSlots: 16)
         e.document.macros = (0..<5).map { id in
             MacroDefinition(
@@ -258,7 +268,11 @@ struct MacroEditingTests {
                 steps: (0..<200).map { _ in .keystroke(mods: [], key: .a, holdMs: 40) }
             )
         }
-        #expect(e.macroBudget.canFlash == true) // green on the macro-only meter...
+        // Green: layers here are a single 1x1 "none" cell (a handful of
+        // bytes), so even with MacroBudget correctly charging that against
+        // the 6000-byte believed capacity, 5 x 1003 = 5015 compiled macro
+        // bytes still fits comfortably.
+        #expect(e.macroBudget.canFlash == true)
 
         e.sendToDevice()
 
