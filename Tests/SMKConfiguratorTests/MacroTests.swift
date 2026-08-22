@@ -170,7 +170,7 @@ struct MacroTests {
         #expect(macro.compiledSize == 8)
     }
 
-    @Test("estimated duration sums delays, holds, and typing time")
+    @Test("estimated duration sums delays, holds, and typing time, quantized to the board's 10ms tick")
     func estimatedDuration() {
         let macro = MacroDefinition(
             id: 1, name: "t",
@@ -181,8 +181,55 @@ struct MacroTests {
                 .repeatBlock(count: 3, steps: [.delay(ms: 10)]),
             ]
         )
-        // 40 + 400 + (4 * 12) + (3 * 10)
-        #expect(macro.estimatedDurationMs == 518)
+        // 40 (already a 4-tick multiple of 10) + 400 (already a multiple of
+        // 10) + (4 * 20) -- 12 ms/char rounds up to the board's next 10 ms
+        // tick before multiplying by the character count -- + (3 * 10)
+        #expect(macro.estimatedDurationMs == 550)
+    }
+
+    // MARK: - Tick quantization (CONFIG_FREERTOS_HZ=100, 10 ms/tick)
+
+    @Test("a delay under a full tick rounds up to the board's next 10ms tick")
+    func delayRoundsUpToNextTick() {
+        #expect(MacroStep.delay(ms: 1).estimatedDurationMs == 10)
+        #expect(MacroStep.delay(ms: 9).estimatedDurationMs == 10)
+        #expect(MacroStep.delay(ms: 11).estimatedDurationMs == 20)
+    }
+
+    @Test("a delay already on a tick boundary is reported unchanged")
+    func delayOnTickBoundaryIsUnchanged() {
+        #expect(MacroStep.delay(ms: 0).estimatedDurationMs == 0)
+        #expect(MacroStep.delay(ms: 10).estimatedDurationMs == 10)
+        #expect(MacroStep.delay(ms: 400).estimatedDurationMs == 400)
+    }
+
+    @Test("a keystroke hold under a full tick rounds up to the board's next 10ms tick")
+    func holdRoundsUpToNextTick() {
+        #expect(MacroStep.keystroke(mods: [], key: .a, holdMs: 12).estimatedDurationMs == 20)
+    }
+
+    @Test("a keystroke hold that is already a whole number of ticks is reported unchanged")
+    func holdOnTickBoundaryIsUnchanged() {
+        // 40 ms is already 4 whole ticks -- rounding it must be a no-op.
+        #expect(MacroStep.keystroke(mods: [], key: .a, holdMs: 40).estimatedDurationMs == 40)
+    }
+
+    @Test("a 12 ms/char typing speed over 5 characters estimates 100 ms, not 60 ms")
+    func typingSpeedQuantizesBeforeMultiplying() {
+        // 12 ms/char rounds up to the board's next 10 ms tick (20 ms/char)
+        // before being multiplied by the character count -- the board
+        // rounds every char's delay up individually, so the naive
+        // (12 * 5 = 60 ms) the un-quantized math would report is not what
+        // it delivers.
+        let step = MacroStep.text("abcde", delivery: .keystrokes, msPerChar: 12)
+        #expect(step.estimatedDurationMs == 100)
+    }
+
+    @Test("a repeat block's estimate is quantized per nested step, not as a whole")
+    func repeatBlockQuantizesPerStep() {
+        // Each iteration holds a key for 12ms (rounds up to 20) three times.
+        let step = MacroStep.repeatBlock(count: 3, steps: [.keystroke(mods: [], key: .a, holdMs: 12)])
+        #expect(step.estimatedDurationMs == 60)
     }
 
     @Test("each step type summarizes its own payload and metadata")

@@ -286,8 +286,15 @@ private struct MacroStepEditorView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 SectionHeader(title: "Hold")
+                // 10 ms steps: the board's scan loop ticks every 10 ms
+                // (`CONFIG_FREERTOS_HZ=100`) and rounds every hold up to the
+                // next tick, so a value in between is never delivered as
+                // typed -- see `MacroStep.quantizedToTick(_:)`.
                 Slider(
-                    value: Binding(get: { holdMs }, set: { update(.keystroke(mods: mods, key: key, holdMs: $0)) }),
+                    value: Binding(
+                        get: { holdMs },
+                        set: { update(.keystroke(mods: mods, key: key, holdMs: MacroStep.quantizedToTick($0))) }
+                    ),
                     in: 10...500
                 )
                 Text("\(holdMs) ms")
@@ -320,12 +327,15 @@ private struct MacroStepEditorView: View {
             .toggleStyle(.switch)
             VStack(alignment: .leading, spacing: 4) {
                 SectionHeader(title: "Typing speed")
+                // 10 ms steps, same reasoning as the hold slider above: the
+                // board rounds each character's delay up to its next 10 ms
+                // tick, so anything finer is silently changed at playback.
                 Slider(
                     value: Binding(
                         get: { msPerChar },
-                        set: { update(.text(text, delivery: delivery, msPerChar: $0)) }
+                        set: { update(.text(text, delivery: delivery, msPerChar: MacroStep.quantizedToTick($0))) }
                     ),
-                    in: 1...100
+                    in: 10...100
                 )
                 Text("\(msPerChar) ms/char")
                     .font(.system(size: 11, design: .monospaced))
@@ -339,7 +349,13 @@ private struct MacroStepEditorView: View {
     private func delayEditor(ms: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionHeader(title: "Delay")
-            Slider(value: Binding(get: { ms }, set: { update(.delay(ms: $0)) }), in: 0...5000)
+            // 10 ms steps, same reasoning as the hold and typing-speed
+            // sliders: the board rounds every delay up to its next 10 ms
+            // tick, so this control shouldn't offer a value it won't honor.
+            Slider(
+                value: Binding(get: { ms }, set: { update(.delay(ms: MacroStep.quantizedToTick($0))) }),
+                in: 0...5000
+            )
             Text("\(ms) ms")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(chrome.textTertiary)

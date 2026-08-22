@@ -400,14 +400,37 @@ extension MacroStep {
         }
     }
 
-    /// Milliseconds this step is expected to take when the board runs it.
+    /// Rounds a millisecond duration up to the board's tick granularity.
+    /// The firmware's main scan loop runs at `CONFIG_FREERTOS_HZ=100` -- one
+    /// tick every 10 ms, the finest timing resolution the board has -- and
+    /// its macro player converts every stored duration to ticks with
+    /// `(ms + 9) / 10` before playback, rounding up so a sub-tick duration
+    /// never vanishes. This mirrors that exact rounding so the estimate
+    /// reports what the board will actually do, not what was typed in.
+    ///
+    /// This only affects the *estimate* (and, in `MacroInspectorView`, what
+    /// the controls offer) -- durations are still stored in milliseconds.
+    /// The firmware converts to ticks at playback deliberately, so a macro
+    /// keeps its authored meaning if the tick rate ever changes; quantizing
+    /// the stored value here would throw that away.
+    static func quantizedToTick(_ ms: Int) -> Int {
+        ((ms + 9) / 10) * 10
+    }
+
+    /// Milliseconds this step is expected to take when the board runs it,
+    /// after rounding up to the board's 10 ms tick the way its firmware
+    /// will. See `quantizedToTick(_:)`.
     var estimatedDurationMs: Int {
         switch self {
-        case .keystroke(_, _, let holdMs): return holdMs
-        case .delay(let ms): return ms
-        case .text(let s, _, let msPerChar): return s.count * msPerChar
+        case .keystroke(_, _, let holdMs): return Self.quantizedToTick(holdMs)
+        case .delay(let ms): return Self.quantizedToTick(ms)
+        case .text(let s, _, let msPerChar): return s.count * Self.quantizedToTick(msPerChar)
         case .layer: return 0
         case .repeatBlock(let count, let steps):
+            // Each nested step's own estimatedDurationMs is already a
+            // multiple of 10 (recursively, via this same quantization), so
+            // their sum -- and that sum times an integer repeat count -- is
+            // too. No separate rounding needed for the block as a whole.
             return count * steps.reduce(0) { $0 + $1.estimatedDurationMs }
         case .raw: return 0
         }
