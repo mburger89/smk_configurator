@@ -140,6 +140,17 @@ func mistypedEnabledIsPreserved() throws {
     #expect(text.contains("\"enabled\":\"yes\""))
 }
 
+@Test("a mistyped collection value is preserved rather than coerced")
+func mistypedCollectionIsPreserved() throws {
+    let json = #"{"id":0,"name":"M","steps":[],"collection":5}"#
+    let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+    // Treated as ungrouped -- the safe reading -- but the original value
+    // is still in the file after a save.
+    #expect(macro.collection == nil)
+    let text = String(decoding: try JSONEncoder().encode(macro), as: UTF8.self)
+    #expect(text.contains("\"collection\":5"))
+}
+
 @Test("a mistyped value doesn't produce a duplicate key once really set")
 func mistypedValueIsReplacedWhenSet() throws {
     let json = #"{"id":0,"name":"M","steps":[],"enabled":"yes"}"#
@@ -225,18 +236,31 @@ and `encode(to:)` with:
         // and silently rewriting it to `true` destroys the only evidence of
         // what that something meant. The macro reads as its default in this
         // build; `encode(to:)` puts the original value back.
+        //
+        // `contains` is checked first rather than leaning on `try?`: Swift
+        // flattens `try?` over an already-optional expression (SE-0230), so
+        // a `try? decodeIfPresent` result of nil cannot distinguish "absent"
+        // from "threw" -- and only the second of those is malformed.
         var malformed: [String] = []
-        if let decoded = try? c.decodeIfPresent(Bool.self, forKey: .enabled) {
-            enabled = decoded ?? true
+        if c.contains(.enabled) {
+            if let decoded = try? c.decode(Bool.self, forKey: .enabled) {
+                enabled = decoded
+            } else {
+                enabled = true
+                malformed.append(CodingKeys.enabled.stringValue)
+            }
         } else {
             enabled = true
-            malformed.append(CodingKeys.enabled.stringValue)
         }
-        if let decoded = try? c.decodeIfPresent(String.self, forKey: .collection) {
-            collection = decoded
+        if c.contains(.collection) {
+            if let decoded = try? c.decode(String.self, forKey: .collection) {
+                collection = decoded
+            } else {
+                collection = nil
+                malformed.append(CodingKeys.collection.stringValue)
+            }
         } else {
             collection = nil
-            malformed.append(CodingKeys.collection.stringValue)
         }
 
         let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)

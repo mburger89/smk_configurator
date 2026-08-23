@@ -328,18 +328,31 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
         // and silently rewriting it to `true` destroys the only evidence of
         // what that something meant. The macro reads as its default in this
         // build; `encode(to:)` puts the original value back.
+        //
+        // `contains` is checked first rather than leaning on `try?`: Swift
+        // flattens `try?` over an already-optional expression (SE-0230), so
+        // a `try? decodeIfPresent` result of nil cannot distinguish "absent"
+        // from "threw" -- and only the second of those is malformed.
         var malformed: [String] = []
-        if let decoded = try? c.decodeIfPresent(Bool.self, forKey: .enabled) {
-            enabled = decoded ?? true
+        if c.contains(.enabled) {
+            if let decoded = try? c.decode(Bool.self, forKey: .enabled) {
+                enabled = decoded
+            } else {
+                enabled = true
+                malformed.append(CodingKeys.enabled.stringValue)
+            }
         } else {
             enabled = true
-            malformed.append(CodingKeys.enabled.stringValue)
         }
-        if let decoded = try? c.decodeIfPresent(String.self, forKey: .collection) {
-            collection = decoded
+        if c.contains(.collection) {
+            if let decoded = try? c.decode(String.self, forKey: .collection) {
+                collection = decoded
+            } else {
+                collection = nil
+                malformed.append(CodingKeys.collection.stringValue)
+            }
         } else {
             collection = nil
-            malformed.append(CodingKeys.collection.stringValue)
         }
 
         let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)

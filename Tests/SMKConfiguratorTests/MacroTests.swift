@@ -259,6 +259,17 @@ struct MacroTests {
         #expect(text.contains("\"enabled\":\"yes\""))
     }
 
+    @Test("a mistyped collection value is preserved rather than coerced")
+    func mistypedCollectionIsPreserved() throws {
+        let json = #"{"id":0,"name":"M","steps":[],"collection":5}"#
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        // Treated as ungrouped -- the safe reading -- but the original value
+        // is still in the file after a save.
+        #expect(macro.collection == nil)
+        let text = String(decoding: try JSONEncoder().encode(macro), as: UTF8.self)
+        #expect(text.contains("\"collection\":5"))
+    }
+
     @Test("a mistyped value doesn't produce a duplicate key once really set")
     func mistypedValueIsReplacedWhenSet() throws {
         let json = #"{"id":0,"name":"M","steps":[],"enabled":"yes"}"#
