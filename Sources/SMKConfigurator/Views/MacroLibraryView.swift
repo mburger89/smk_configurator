@@ -112,6 +112,54 @@ struct MacroLibraryFilter: Equatable {
     }
 }
 
+/// One entry in the library header's collection filter. A dedicated type
+/// rather than a reserved string: the picker's domain is built from
+/// user-entered collection names, so any sentinel drawn from the same
+/// `String` space collides with a macro that happens to use that exact
+/// name -- and `_BuiltinPickerStyle` maps selections back by
+/// `firstIndex(of:)` on `"\(value)"`, so the collision is silent and
+/// unfixable at the binding: two rows read identically, the first always
+/// wins, and a macro genuinely in a collection named the same as the
+/// sentinel could never be filtered for. `MacroLibraryRowView` dropped a
+/// `"--"` sentinel from its collection field for the same reason.
+enum CollectionFilterOption: Equatable, CustomStringConvertible {
+    case all
+    case named(String)
+
+    /// What `Picker` renders for this option -- `_BuiltinPickerStyle`
+    /// derives each row's label from `"\(value)"`, so this conformance is
+    /// not cosmetic: without it, `.named("Work")` would print as the
+    /// enum's default `named("Work")` rather than `Work`.
+    var description: String {
+        switch self {
+        case .all: return "All"
+        case .named(let name): return name
+        }
+    }
+
+    /// The full option list for a document's current collections. `.all`
+    /// always leads and is not itself a collection, so it can never collide
+    /// with one -- unlike the `"All"` string it replaces.
+    static func options(for collections: [String]) -> [CollectionFilterOption] {
+        [.all] + collections.map(CollectionFilterOption.named)
+    }
+
+    /// The option representing a filter's current `collection` value, for
+    /// the picker's `get`.
+    static func selected(for collection: String?) -> CollectionFilterOption {
+        collection.map(CollectionFilterOption.named) ?? .all
+    }
+
+    /// The `MacroLibraryFilter.collection` value this option resolves to
+    /// once chosen, for the picker's `set`.
+    var filterValue: String? {
+        switch self {
+        case .all: return nil
+        case .named(let name): return name
+        }
+    }
+}
+
 /// MACROS rail mode's library: a table of every macro on the document, with
 /// its trigger, step count, and byte cost -- the whole-body counterpart to
 /// the step editor reached via `openMacro(id:)`. Built from the same
@@ -190,16 +238,18 @@ struct MacroLibraryView: View {
             ))
             .frame(width: 180)
 
-            // "All" is not a collection, it is the absence of the filter.
-            // The named options derive from what macros actually use, so an
+            // `.all` is not a collection, it is the absence of the filter --
+            // `CollectionFilterOption` keeps that out of `String` space so a
+            // collection literally named "All" still gets its own row. The
+            // named options derive from what macros actually use, so an
             // emptied collection disappears from this picker on its own.
             Picker(
-                of: [Self.allCollections] + editor.document.macroCollections,
+                of: CollectionFilterOption.options(for: editor.document.macroCollections),
                 selection: Binding(
-                    get: { filter.collection ?? Self.allCollections },
+                    get: { CollectionFilterOption.selected(for: filter.collection) },
                     set: { choice in
                         guard let choice else { return }
-                        filter.collection = (choice == Self.allCollections) ? nil : choice
+                        filter.collection = choice.filterValue
                     }
                 )
             )
@@ -215,8 +265,6 @@ struct MacroLibraryView: View {
         }
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
     }
-
-    private static let allCollections = "All"
 
     private func importMacro() {
         Task {

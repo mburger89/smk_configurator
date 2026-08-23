@@ -123,6 +123,37 @@ struct MacroLibraryFilterTests {
     }
 }
 
+@Suite("The library header's collection filter options")
+struct CollectionFilterOptionTests {
+    @Test("a document with no collections offers only .all")
+    func noCollectionsOffersOnlyAll() {
+        #expect(CollectionFilterOption.options(for: []) == [.all])
+    }
+
+    @Test("a collection literally named \"All\" gets its own, distinct option")
+    func collectionNamedAllIsDistinctFromTheAllOption() {
+        let options = CollectionFilterOption.options(for: ["All"])
+        #expect(options == [.all, .named("All")])
+        #expect(options[0] != options[1])
+    }
+
+    @Test("selecting a collection named \"All\" filters by that name, not by nothing")
+    func selectingCollectionNamedAllSetsThatName() {
+        #expect(CollectionFilterOption.named("All").filterValue == "All")
+    }
+
+    @Test("selecting .all clears the filter")
+    func selectingAllClearsTheFilter() {
+        #expect(CollectionFilterOption.all.filterValue == nil)
+    }
+
+    @Test("the option round-trips a filter's current collection back to itself")
+    func selectedRoundTripsCollection() {
+        #expect(CollectionFilterOption.selected(for: nil) == .all)
+        #expect(CollectionFilterOption.selected(for: "Work") == .named("Work"))
+    }
+}
+
 @Suite("The collection-field draft display rule")
 struct MacroLibraryRowCollectionTextTests {
     @Test("no draft shows the stored value")
