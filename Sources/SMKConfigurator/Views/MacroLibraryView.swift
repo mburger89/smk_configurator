@@ -122,11 +122,17 @@ struct MacroLibraryView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.presentAlert) private var presentAlert
     @Environment(\.chooseFileSaveDestination) private var chooseFileSaveDestination
+    @Environment(\.chooseFile) private var chooseFile
+    @State private var filter = MacroLibraryFilter()
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
-    private var rows: [MacroLibraryRow] {
+    /// Every row, before filtering -- the count the empty states below
+    /// distinguish "no macros at all" from "none match the filter" with.
+    private var allRows: [MacroLibraryRow] {
         editor.document.macroList.map { MacroLibraryRow(macro: $0, document: editor.document) }
     }
+
+    private var rows: [MacroLibraryRow] { filter.apply(to: allRows) }
 
     /// Whole-set capacity warning (contract C2: "warns in the library row
     /// and status bar"). Deliberately the same reason surfaced by the step
@@ -178,15 +184,47 @@ struct MacroLibraryView: View {
                 .font(.system(size: 11))
                 .foregroundColor(chrome.textTertiary)
             Spacer()
+            TextField("Search macros", text: Binding(
+                get: { filter.query },
+                set: { filter.query = $0 }
+            ))
+            .frame(width: 180)
+
+            // "All" is not a collection, it is the absence of the filter.
+            // The named options derive from what macros actually use, so an
+            // emptied collection disappears from this picker on its own.
+            Picker(
+                of: [Self.allCollections] + editor.document.macroCollections,
+                selection: Binding(
+                    get: { filter.collection ?? Self.allCollections },
+                    set: { choice in
+                        guard let choice else { return }
+                        filter.collection = (choice == Self.allCollections) ? nil : choice
+                    }
+                )
+            )
+            .frame(width: 140)
+
             // Recording macros from the board is a later project -- this
             // stays disabled rather than implying a capability that doesn't
             // exist yet. See Task 13 for the final wording.
             ToolbarPill(label: "Record new", isEnabled: false, action: {})
                 .help("Recording macros from the board isn't implemented yet.")
-
+            ToolbarPill(label: "Import", action: importMacro)
             ToolbarPill(label: "New macro", isAccent: true, action: editor.createMacro)
         }
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
+    }
+
+    private static let allCollections = "All"
+
+    private func importMacro() {
+        Task {
+            guard let url = await chooseFile(title: "Import macro JSON",
+                                             allowSelectingFiles: true)
+            else { return }
+            editor.importMacro(from: url)
+        }
     }
 
     /// Delegates to `MacroBudget.headerSummaryLabel` rather than restating
@@ -279,7 +317,9 @@ struct MacroLibraryView: View {
     }
 
     private var emptyState: some View {
-        Text("No macros yet. Create one to place it on a key.")
+        Text(allRows.isEmpty
+             ? "No macros yet. Create one to place it on a key."
+             : "No macros match this search or collection.")
             .font(.system(size: 12))
             .foregroundColor(chrome.textTertiary)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
