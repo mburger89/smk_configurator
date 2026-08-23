@@ -31,8 +31,11 @@ struct MacroLibraryRow: Identifiable, Equatable {
     var layerLabel: String
     var isEnabled: Bool
     var collection: String?
-    /// Name plus every step's text, lowercased once at construction so the
-    /// filter doesn't re-lowercase it per keystroke.
+    /// Name plus every step's text, lowercased so the filter can compare it
+    /// against a lowercased query without either side re-folding case at the
+    /// comparison. It is *not* a cache that survives keystrokes:
+    /// `MacroLibraryView.rows` is a computed property, so every row -- and
+    /// every `searchText` -- is rebuilt on each body evaluation regardless.
     var searchText: String
     /// Set only when a disabled macro still has a key bound to it -- that
     /// key compiles as a dead key (`compileKeymap` rewrites it), which is
@@ -125,7 +128,6 @@ struct MacroLibraryView: View {
                             MacroLibraryRowView(
                                 row: row,
                                 chrome: chrome,
-                                collections: editor.document.macroCollections,
                                 isOverCapacity: capacityWarning != nil,
                                 open: { editor.openMacro(id: row.id) },
                                 setEnabled: { editor.setMacroEnabled(id: row.id, $0) },
@@ -293,11 +295,6 @@ struct MacroLibraryView: View {
 private struct MacroLibraryRowView: View {
     var row: MacroLibraryRow
     var chrome: Chrome
-    /// Every collection currently in use, for the row's picker. Derived by
-    /// `KeymapDocument.macroCollections`, so a collection nobody is in any
-    /// more disappears from every row's picker without a separate list to
-    /// prune.
-    var collections: [String]
     /// Whole-set capacity overage (not something one row alone caused --
     /// slots/bytes are cumulative across the document, so there's no sound
     /// way to blame a single macro). Colors the byte count on every row
@@ -309,6 +306,12 @@ private struct MacroLibraryRowView: View {
     var duplicate: () -> Void
     var export: () -> Void
     var delete: () -> Void
+
+    /// What the user has actually typed into `collectionField`, kept only
+    /// long enough to stop the model's normalizer from rewriting the field
+    /// underneath them -- see `collectionField` for why this is needed and
+    /// `collectionText` for how it hands control back.
+    @State private var collectionDraft: String?
 
     var body: some View {
         ZStack {
@@ -337,10 +340,17 @@ private struct MacroLibraryRowView: View {
                 .frame(width: MacroLibraryColumn.informationalWidth)
                 .onTapGesture(perform: open)
 
-                collectionPicker
+                collectionField
                 Toggle("", isOn: Binding(get: { row.isEnabled }, set: setEnabled))
                     .toggleStyle(.switch)
                     .fixedSize()
+                    // Pinned to the ON column like every other cell rather
+                    // than left to whatever `.fixedSize()` happens to
+                    // measure: this is the one column whose header width
+                    // and content width would otherwise agree only by
+                    // luck, which is the exact drift `MacroLibraryColumn`
+                    // exists to rule out.
+                    .frame(width: MacroLibraryColumn.enabled, alignment: .leading)
                     .help("Disabled macros aren't uploaded, and free their bytes.")
                 glyph("⧉", action: duplicate, help: "Duplicate this macro")
                 glyph("↑", action: export, help: "Export this macro to a file")
@@ -351,7 +361,12 @@ private struct MacroLibraryRowView: View {
         }
         // Tall enough for the name plus the warning's two lines when there
         // is one; the plain 40 otherwise, so an ordinary row is unchanged.
-        .frame(height: row.disabledWarning == nil ? 40 : 64)
+        // A *minimum*, not a fixed height: the warning case is 16 + 2 + 26
+        // of text inside 20 of padding, which lands exactly on 64, so a
+        // longer trigger label or a larger system font would have nowhere
+        // to go under a strict frame and would clip. `minHeight` lets the
+        // row grow instead, and still reads as 40/64 in the common case.
+        .frame(minHeight: row.disabledWarning == nil ? 40 : 64)
     }
 
     /// Fades one colour when the macro is disabled. swift-cross-ui has no
@@ -389,24 +404,63 @@ private struct MacroLibraryRowView: View {
         .frame(width: MacroLibraryColumn.name, alignment: .leading)
     }
 
-    private var collectionPicker: some View {
-        // `Self.ungrouped` is the "no collection" option. The rest of the
-        // list is derived from what macros actually use, so an emptied
-        // collection disappears from every row's picker on its own.
-        Picker(
-            of: [Self.ungrouped] + collections,
-            selection: Binding(
-                get: { row.collection ?? Self.ungrouped },
-                set: { choice in
-                    guard let choice else { return }
-                    setCollection(choice == Self.ungrouped ? nil : choice)
+    /// Free text, not a picker. A picker here could never work: its options
+    /// came from `KeymapDocument.macroCollections`, which is *derived* from
+    /// the collections macros are already in, so it could only ever offer a
+    /// name that already existed -- and with no macro in any collection yet,
+    /// there was nothing to offer at all. A derived set needs an entry point
+    /// to gain its first member, and typing is it. (`macroCollections`
+    /// itself stays: Task 9's header filter is its real consumer, where
+    /// offering only the collections actually in use is exactly right.)
+    ///
+    /// Clearing the field hands `""` straight through --
+    /// `EditorState.setMacroCollection(id:_:)` trims and folds blank to
+    /// `nil`, so "ungrouped" is spelled `nil` here the same as everywhere
+    /// else, with no sentinel string that a macro literally named after it
+    /// could collide with.
+    ///
+    /// The raw string goes to the model on every keystroke (`textDidChange`
+    /// in `AppKitBackend+TextField.swift`), but what is *displayed* comes
+    /// from `collectionText`, not straight back off the model. That
+    /// indirection is load-bearing: `TextField.commit` overwrites the
+    /// widget's contents whenever the binding's value differs from them, and
+    /// `setMacroCollection` trims. Bound naively, typing a space would
+    /// store the trimmed string, see it differ from the "Work " in the
+    /// field, and write "Work" back over it -- so every space would vanish
+    /// as it was typed and a two-word collection name would be impossible
+    /// to enter. The other `TextField`s in this app
+    /// (`MacroInspectorView.nameBinding(for:)`,
+    /// `DesignGridEditorView.nameBinding`) bind to setters that store
+    /// verbatim, which is why none of them needed this.
+    private var collectionField: some View {
+        TextField(
+            "Collection",
+            text: Binding(
+                get: { collectionText },
+                set: { typed in
+                    collectionDraft = typed
+                    setCollection(typed)
                 }
             )
         )
+        .font(.system(size: 12))
         .frame(width: MacroLibraryColumn.collection)
     }
 
-    private static let ungrouped = "--"
+    /// The draft while it still describes what the model holds, the model
+    /// otherwise. Comparing the draft's *trimmed* form to the stored value
+    /// is what makes this self-healing rather than a second source of
+    /// truth: whitespace the normalizer dropped is the one difference the
+    /// draft is allowed to keep, so any other divergence -- a reload, an
+    /// import, an edit from elsewhere -- means the model moved on its own
+    /// and the draft is abandoned rather than shown over the top of it.
+    private var collectionText: String {
+        let stored = row.collection ?? ""
+        guard let collectionDraft,
+              collectionDraft.trimmingCharacters(in: .whitespacesAndNewlines) == stored
+        else { return stored }
+        return collectionDraft
+    }
 
     private func glyph(_ text: String, action: @escaping () -> Void,
                        help: String, color: Color? = nil) -> some View {

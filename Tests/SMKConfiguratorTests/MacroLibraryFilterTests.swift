@@ -52,9 +52,11 @@ struct MacroLibraryRowTests {
             ])
         ])
         let text = MacroLibraryRow(macro: macro, document: document(macros: [macro])).searchText
-        // Lowercased once at construction (so the filter needn't re-lowercase
-        // it per keystroke), which is why the name is matched here in the
-        // folded form the filter will actually compare against.
+        // Lowercased at construction so the filter can compare it against a
+        // lowercased query without either side folding case again, which is
+        // why the name is matched here in that folded form. (Not a
+        // per-keystroke saving: `MacroLibraryView.rows` is computed, so every
+        // row is rebuilt on each body evaluation anyway.)
         #expect(text == text.lowercased())
         #expect(text.contains("sign off"))
         #expect(text.contains("regards"))

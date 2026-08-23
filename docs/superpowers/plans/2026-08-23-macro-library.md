@@ -956,6 +956,40 @@ putting hover on a different view from the tap gesture — the exact bug
 visible. Deletion is still confirmed by an alert, so nothing gets easier to
 do by accident.
 
+**On the collection control being a text field, not a picker.** An earlier
+draft of this task put a `Picker` on the row whose options came from
+`KeymapDocument.macroCollections`. That cannot work: `macroCollections` is
+*derived* from the collections macros are already in, so a picker over it can
+only ever offer a name that already exists — and with no macro in any
+collection yet, it offers nothing but an "ungrouped" sentinel. A derived set
+needs an entry point to gain its first member. The row therefore carries a
+`TextField`: typing a name assigns it, clearing the field passes `""` through
+and `setMacroCollection(id:_:)` folds blank back to `nil`. That also removes
+the `"--"` sentinel, which a macro whose collection was literally `"--"`
+would have collided with. `macroCollections` itself stays — Task 9's header
+filter is its real consumer, where offering only the collections actually in
+use is exactly right.
+
+That field cannot bind straight back to the model, though.
+`TextField.commit` (swift-cross-ui) overwrites the widget's contents whenever
+the binding's value differs from them, `onChange` fires per keystroke, and
+`setMacroCollection` trims — so a naive binding would store the trimmed
+string, see it differ from the `"Work "` in the field, and write `"Work"`
+back over it. Every space would vanish as it was typed and a two-word
+collection name would be unenterable. The row therefore keeps a
+`@State collectionDraft` of what was typed and displays it *while it still
+trims to what the model holds*, falling back to the model on any other
+divergence (reload, import, an edit from elsewhere). The app's other
+`TextField`s bind to setters that store verbatim, which is why none of them
+needed this.
+
+**On column widths.** The row's tap target has to span the same width as the
+informational columns it covers, so three separate places (header, cells, tap
+target) must agree on the same numbers. They live once in a
+`MacroLibraryColumn` enum (`name` 240, `trigger` 130, `steps` 90, `bytes` 90,
+`collection` 130, `enabled` 60, plus a derived `informationalWidth`), and the
+code below refers to them rather than repeating literals.
+
 - [ ] **Step 1: Write the failing tests**
 
 Create `Tests/SMKConfiguratorTests/MacroLibraryFilterTests.swift`:
@@ -1015,7 +1049,11 @@ struct MacroLibraryRowTests {
             ])
         ])
         let text = MacroLibraryRow(macro: macro, document: document(macros: [macro])).searchText
-        #expect(text.contains("Sign off"))
+        // Matched in the folded form, because `searchText` is lowercased at
+        // construction -- and that folding is pinned here rather than merely
+        // worked around.
+        #expect(text == text.lowercased())
+        #expect(text.contains("sign off"))
         #expect(text.contains("regards"))
     }
 }
@@ -1054,8 +1092,11 @@ there and produces `found`; reuse it rather than repeating the scan:
 ```swift
     var isEnabled: Bool
     var collection: String?
-    /// Name plus every step's text, lowercased once at construction so the
-    /// filter doesn't re-lowercase it per keystroke.
+    /// Name plus every step's text, lowercased so the filter can compare it
+    /// against a lowercased query without either side re-folding case at the
+    /// comparison. It is *not* a cache that survives keystrokes:
+    /// `MacroLibraryView.rows` is a computed property, so every row -- and
+    /// every `searchText` -- is rebuilt on each body evaluation regardless.
     var searchText: String
     /// Set only when a disabled macro still has a key bound to it -- that
     /// key compiles as a dead key (`compileKeymap` rewrites it), which is
@@ -1088,7 +1129,6 @@ Then rework `MacroLibraryRowView`. Its parameters become:
 ```swift
     var row: MacroLibraryRow
     var chrome: Chrome
-    var collections: [String]
     var isOverCapacity: Bool
     var open: () -> Void
     var setEnabled: (Bool) -> Void
@@ -1096,6 +1136,10 @@ Then rework `MacroLibraryRowView`. Its parameters become:
     var duplicate: () -> Void
     var export: () -> Void
     var delete: () -> Void
+
+    /// What the user has actually typed into `collectionField` -- see
+    /// "On the collection control" above.
+    @State private var collectionDraft: String?
 ```
 
 and its body becomes a gesture-free outer `ZStack` holding the background
@@ -1109,27 +1153,35 @@ elements are the controls — siblings, never nested inside it:
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 6)
-                .fill(chrome.column)
+                .fill(dimmed(chrome.column))
             HStack(spacing: 0) {
+                // `.frame` on the tap target is load-bearing: `Color.clear`
+                // expands into whatever space it is offered, so unpinned the
+                // tap target swallows the whole row -- the cells drift to
+                // the middle and the controls are flung against the right
+                // edge, out from under their own column headers.
                 ZStack {
                     Color.clear
                     HStack(spacing: 0) {
-                        cell(row.name, width: 240, weight: .semibold,
-                             color: row.isEnabled ? chrome.textPrimary : chrome.textTertiary)
-                        cell(row.triggerLabel, width: 130,
-                             color: row.isBound ? chrome.textSecondary : chrome.textTertiary)
-                        cell("\(row.stepCount)", width: 90, color: chrome.textSecondary)
-                        cell("\(row.byteCount)", width: 90,
-                             color: isOverCapacity ? chrome.dangerText : chrome.textSecondary)
+                        nameCell   // name + optional warning, see below
+                        cell(row.triggerLabel, width: MacroLibraryColumn.trigger,
+                             color: dimmed(row.isBound ? chrome.textSecondary : chrome.textTertiary))
+                        cell("\(row.stepCount)", width: MacroLibraryColumn.steps,
+                             color: dimmed(chrome.textSecondary))
+                        cell("\(row.byteCount)", width: MacroLibraryColumn.bytes,
+                             color: dimmed(isOverCapacity ? chrome.dangerText : chrome.textSecondary))
                     }
                 }
-                .onHover { _ in }
+                .frame(width: MacroLibraryColumn.informationalWidth)
                 .onTapGesture(perform: open)
 
-                collectionPicker
+                collectionField
                 Toggle("", isOn: Binding(get: { row.isEnabled }, set: setEnabled))
                     .toggleStyle(.switch)
                     .fixedSize()
+                    // Pinned like every other cell: `.fixedSize()` alone
+                    // would agree with the ON header only by luck.
+                    .frame(width: MacroLibraryColumn.enabled, alignment: .leading)
                     .help("Disabled macros aren't uploaded, and free their bytes.")
                 glyph("⧉", action: duplicate, help: "Duplicate this macro")
                 glyph("↑", action: export, help: "Export this macro to a file")
@@ -1138,28 +1190,54 @@ elements are the controls — siblings, never nested inside it:
             }
             .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
         }
-        .frame(height: row.disabledWarning == nil ? 40 : 56)
-        .opacity(row.isEnabled ? 1.0 : 0.55)
+        // A *minimum*, not a strict height. The warning case is 16 + 2 + 26
+        // of text inside 20 of padding -- exactly 64 -- so under
+        // `.frame(height:)` a longer trigger label or a larger system font
+        // would clip instead of growing the row.
+        .frame(minHeight: row.disabledWarning == nil ? 40 : 64)
     }
 
-    private var collectionPicker: some View {
-        // "--" is the ungrouped option. The list is derived from what
-        // macros actually use (`KeymapDocument.macroCollections`), so an
-        // emptied collection disappears from every row's picker on its own.
-        Picker(
-            of: [Self.ungrouped] + collections,
-            selection: Binding(
-                get: { row.collection ?? Self.ungrouped },
-                set: { choice in
-                    guard let choice else { return }
-                    setCollection(choice == Self.ungrouped ? nil : choice)
+    /// swift-cross-ui has **no view-level `.opacity` modifier** -- only
+    /// `Color` carries one -- so the row dims by fading each colour it draws
+    /// rather than itself as a whole. Applied to the row fill and the
+    /// informational cells only: the controls stay at full strength because
+    /// they remain live (the toggle is how you turn the macro back on), and
+    /// so does `disabledWarning`, the one thing on a dimmed row that must
+    /// not be easy to overlook.
+    private func dimmed(_ color: Color) -> Color {
+        row.isEnabled ? color : color.opacity(0.55)
+    }
+
+    /// Free text, not a picker -- see "On the collection control" above for
+    /// why a picker over a derived set could never create its first member,
+    /// and why what is displayed comes from `collectionText` rather than
+    /// straight off the model. Clearing the field hands `""` through;
+    /// `setMacroCollection(id:_:)` trims and folds blank to `nil`, so
+    /// "ungrouped" needs no sentinel.
+    private var collectionField: some View {
+        TextField(
+            "Collection",
+            text: Binding(
+                get: { collectionText },
+                set: { typed in
+                    collectionDraft = typed
+                    setCollection(typed)
                 }
             )
         )
-        .frame(width: 130)
+        .font(.system(size: 12))
+        .frame(width: MacroLibraryColumn.collection)
     }
 
-    private static let ungrouped = "--"
+    /// The draft while it still describes what the model holds, the model
+    /// otherwise -- self-healing rather than a second source of truth.
+    private var collectionText: String {
+        let stored = row.collection ?? ""
+        guard let collectionDraft,
+              collectionDraft.trimmingCharacters(in: .whitespacesAndNewlines) == stored
+        else { return stored }
+        return collectionDraft
+    }
 
     private func glyph(_ text: String, action: @escaping () -> Void,
                        help: String, color: Color? = nil) -> some View {
@@ -1178,10 +1256,12 @@ already in `triggerLabel`'s neighbour and now also appears in
 present — a second `Text` inside that inner `HStack`'s first column is not
 possible without breaking the two-child rule, so make the name cell a
 `VStack` of name + optional warning and keep the `ZStack`'s two children
-intact.
+intact. Give the warning `.lineLimit(2)`: on one line the sentence truncates
+mid-word, losing exactly the half that says what to do about it.
 
-Update the `columnHeader` labels to match the new columns: `MACRO` (240),
-`TRIGGER` (130), `STEPS` (90), `BYTES` (90), `COLLECTION` (130), `ON` (60).
+Update the `columnHeader` labels to match the new columns, all widths from
+`MacroLibraryColumn`: `MACRO`, `TRIGGER`, `STEPS`, `BYTES`, `COLLECTION`,
+`ON`.
 
 Update `MacroLibraryView`'s `ForEach` to pass the new closures:
 
@@ -1189,7 +1269,6 @@ Update `MacroLibraryView`'s `ForEach` to pass the new closures:
                             MacroLibraryRowView(
                                 row: row,
                                 chrome: chrome,
-                                collections: editor.document.macroCollections,
                                 isOverCapacity: capacityWarning != nil,
                                 open: { editor.openMacro(id: row.id) },
                                 setEnabled: { editor.setMacroEnabled(id: row.id, $0) },
@@ -1225,9 +1304,10 @@ Expected: PASS.
 
 Then run: `swift run --build-system native SMKConfigurator`, open the MACROS
 rail tab, and confirm by eye: rows are still clickable and open the step
-editor, the toggle flips, the collection picker opens, and a disabled row
-dims. Click delivery through a restructured row is exactly what broke here
-before and no test covers it.
+editor, the toggle flips, typing in the collection field assigns a name that
+then shows on the row, and a disabled row dims. Check both row heights — the
+plain one and the taller one carrying the warning. Click delivery through a
+restructured row is exactly what broke here before and no test covers it.
 
 - [ ] **Step 5: Commit**
 
