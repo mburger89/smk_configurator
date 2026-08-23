@@ -222,6 +222,55 @@ struct MacroTests {
         #expect(object["name"] as? String == "n")
     }
 
+    @Test("a macro with no enabled field decodes as enabled")
+    func missingEnabledMeansEnabled() throws {
+        let json = #"{"id":0,"name":"M","steps":[]}"#
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        #expect(macro.enabled)
+        #expect(macro.collection == nil)
+    }
+
+    @Test("enabled and collection round-trip")
+    func enabledAndCollectionRoundTrip() throws {
+        var macro = MacroDefinition(id: 3, name: "M", steps: [])
+        macro.enabled = false
+        macro.collection = "Work"
+        let data = try JSONEncoder().encode(macro)
+        let back = try JSONDecoder().decode(MacroDefinition.self, from: data)
+        #expect(back == macro)
+    }
+
+    @Test("defaults are omitted so an existing file gains no keys")
+    func defaultsAreOmitted() throws {
+        let macro = MacroDefinition(id: 0, name: "M", steps: [])
+        let text = String(decoding: try JSONEncoder().encode(macro), as: UTF8.self)
+        #expect(!text.contains("enabled"))
+        #expect(!text.contains("collection"))
+    }
+
+    @Test("a mistyped enabled value is preserved rather than coerced")
+    func mistypedEnabledIsPreserved() throws {
+        let json = #"{"id":0,"name":"M","steps":[],"enabled":"yes"}"#
+        let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        // Treated as enabled -- the safe reading -- but the original value is
+        // still in the file after a save.
+        #expect(macro.enabled)
+        let text = String(decoding: try JSONEncoder().encode(macro), as: UTF8.self)
+        #expect(text.contains("\"enabled\":\"yes\""))
+    }
+
+    @Test("a mistyped value doesn't produce a duplicate key once really set")
+    func mistypedValueIsReplacedWhenSet() throws {
+        let json = #"{"id":0,"name":"M","steps":[],"enabled":"yes"}"#
+        var macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
+        macro.enabled = false
+        let data = try JSONEncoder().encode(macro)
+        // Decodes cleanly, which it could not if "enabled" appeared twice
+        // with conflicting types.
+        let back = try JSONDecoder().decode(MacroDefinition.self, from: data)
+        #expect(back.enabled == false)
+    }
+
     @Test("a nested repeat block is kept verbatim rather than treated as one")
     func nestedRepeatBecomesRaw() throws {
         let json = #"{"id":1,"name":"n","steps":[{"t":"rpt","count":2,"steps":[{"t":"rpt","count":3,"steps":[]}]}]}"#
