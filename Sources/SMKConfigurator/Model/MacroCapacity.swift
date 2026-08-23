@@ -72,12 +72,17 @@ struct MacroBudget: Equatable {
     var layerCostUnknown: Bool
 
     init(capacity: MacroCapacity, source: MacroCapacitySource, macros: [MacroDefinition], layerBytes: Int = 0) {
+        // Disabled macros are omitted from the payload by `compileKeymap`,
+        // so counting them here would report a cost the board never pays --
+        // and since macros share one budget with layers, "disable a macro to
+        // fit" has to actually free bytes or the feature is theatre.
+        let counted = macros.filter(\.enabled)
         self.capacity = capacity
         self.source = source
-        self.usedSlots = macros.count
+        self.usedSlots = counted.count
         self.layerBytes = layerBytes
         self.layerCostUnknown = false
-        (self.usedBytes, self.usedBytesIsEstimated) = Self.compiledMacroBytes(macros)
+        (self.usedBytes, self.usedBytesIsEstimated) = Self.compiledMacroBytes(counted)
     }
 
     /// Builds a budget straight from the document being edited, so
