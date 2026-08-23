@@ -117,4 +117,54 @@ struct KeymapCompilerTests {
         #expect(bytes[4] == 1)   // macroCount
         #expect(bytes.count > 6 + 1 + 2 + 4)
     }
+
+    @Test("a disabled macro contributes no bytes and isn't counted")
+    func disabledMacroContributesNothing() throws {
+        let steps: [MacroStep] = [.delay(ms: 10)]
+        let enabled = MacroDefinition(id: 0, name: "A", steps: steps)
+        var disabled = MacroDefinition(id: 1, name: "B", steps: steps)
+        disabled.enabled = false
+
+        let doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["none"]]],
+            macros: [enabled, disabled])
+        let onlyEnabled = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["none"]]],
+            macros: [enabled])
+
+        #expect(try compileKeymap(doc) == (try compileKeymap(onlyEnabled)))
+        // The header's macroCount is byte 4.
+        #expect(try compileKeymap(doc)[4] == 1)
+    }
+
+    @Test("a cell bound to a disabled macro compiles as none")
+    func disabledMacroKeyCompilesAsNone() throws {
+        var disabled = MacroDefinition(id: 2, name: "B", steps: [])
+        disabled.enabled = false
+        let doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["macro:2"]]],
+            macros: [disabled])
+
+        let bytes = try compileKeymap(doc)
+        // 6-byte header + 1 row GPIO + 1 col GPIO = the cell starts at index 8.
+        let (noneTag, noneParam) = try encodeCell(.none)
+        #expect(bytes[8] == noneTag)
+        #expect(bytes[9] == noneParam)
+    }
+
+    @Test("a cell bound to an enabled macro still compiles as that macro")
+    func enabledMacroKeyStillCompiles() throws {
+        let doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["macro:2"]]],
+            macros: [MacroDefinition(id: 2, name: "B", steps: [])])
+
+        let bytes = try compileKeymap(doc)
+        let (tag, param) = try encodeCell(.macro(2))
+        #expect(bytes[8] == tag)
+        #expect(bytes[9] == param)
+    }
 }

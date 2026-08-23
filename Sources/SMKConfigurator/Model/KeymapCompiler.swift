@@ -367,7 +367,12 @@ func compileKeymap(_ document: KeymapDocument) throws -> [UInt8] {
     let rowCount = document.matrix.rows.count
     let colCount = document.matrix.cols.count
     let layerCount = document.layers.count
-    let macros = document.macroList
+    // A disabled macro is omitted from the payload entirely, and every cell
+    // bound to it compiles as a dead key below -- see the plan/spec for why
+    // `none` rather than a dangling `macro:` reference the frozen firmware
+    // decoder would have to tolerate.
+    let macros = document.macroList.filter(\.enabled)
+    let disabledMacroIDs = Set(document.macroList.lazy.filter { !$0.enabled }.map(\.id))
 
     var bytes: [UInt8] = []
     bytes.reserveCapacity(6 + rowCount + colCount + layerCount * rowCount * colCount * 2)
@@ -390,11 +395,20 @@ func compileKeymap(_ document: KeymapDocument) throws -> [UInt8] {
         for (rowIndex, row) in layer.enumerated() {
             for (colIndex, cellString) in row.enumerated() {
                 let token = ActionToken.parse(cellString)
+                // The cell keeps its `macro:N` string in `keymap.json`;
+                // only what reaches the board changes, so re-enabling the
+                // macro brings the key back with no re-binding.
+                var effective = token
+                if case .macro(let slot) = token, disabledMacroIDs.contains(slot) {
+                    effective = .none
+                }
                 do {
-                    let (tag, param) = try encodeCell(token)
+                    let (tag, param) = try encodeCell(effective)
                     bytes.append(tag)
                     bytes.append(param)
                 } catch let underlying as KeymapCompileError {
+                    // Names the token the user actually wrote, not the
+                    // substitution.
                     throw KeymapCompileError.invalidCell(
                         layer: layerIndex, row: rowIndex, col: colIndex,
                         token: token.canonicalString, reason: underlying.description)
