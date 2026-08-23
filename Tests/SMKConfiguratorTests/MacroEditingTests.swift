@@ -470,4 +470,67 @@ struct MacroEditingTests {
         #expect(e.document.macroList[1].collection == "Work")
         #expect(e.document.macroList[1].enabled == false)
     }
+
+    @Test("a macro exports and imports back, keeping its steps and fields")
+    func exportImportRoundTrips() throws {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "Sign off", steps: [.delay(ms: 30)],
+                                      enabled: false, collection: "Work"))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        e.exportMacro(e.document.macroList[0], to: url)
+        #expect(e.importMacro(from: url))
+
+        let imported = e.document.macroList[1]
+        #expect(imported.name == "Sign off")
+        #expect(imported.steps == [.delay(ms: 30)])
+        #expect(imported.enabled == false)
+        #expect(imported.collection == "Work")
+    }
+
+    @Test("import assigns a fresh slot rather than the id in the file")
+    func importAssignsFreshSlot() throws {
+        let e = editor()
+        e.createMacro()   // occupies slot 0
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let json = #"{"id":0,"name":"Imported","steps":[]}"#
+        try Data(json.utf8).write(to: url)
+
+        #expect(e.importMacro(from: url))
+        #expect(e.document.macroList.map(\.id) == [0, 1])
+        #expect(e.document.macroList[1].name == "Imported")
+    }
+
+    @Test("importing a file that isn't a macro fails and names the file")
+    func importRejectsNonMacro() throws {
+        let e = editor()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("not-a-macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"hello":"world"}"#.utf8).write(to: url)
+
+        #expect(e.importMacro(from: url) == false)
+        #expect(e.document.macroList.isEmpty)
+        #expect(e.loadError?.contains(url.lastPathComponent) == true)
+    }
+
+    @Test("importing refuses when every slot is taken")
+    func importRefusesWhenFull() throws {
+        let e = editor()
+        e.document.macros = (0...MacroDefinition.maxID).map {
+            MacroDefinition(id: $0, name: "M\($0)", steps: [])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"id":0,"name":"Imported","steps":[]}"#.utf8).write(to: url)
+
+        #expect(e.importMacro(from: url) == false)
+        #expect(e.loadError != nil)
+    }
 }

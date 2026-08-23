@@ -862,6 +862,43 @@ class EditorState {
         return "\(base) \(n)"
     }
 
+    /// One macro per file, so a single macro can be shared. A whole-library
+    /// file couldn't, and would replace rather than merge on the way back in.
+    func exportMacro(_ macro: MacroDefinition, to url: URL) {
+        _ = writeJSON(macro, to: url, errorContext: "export macro \"\(macro.name)\"")
+    }
+
+    /// Imports one exported macro into the lowest free slot. The id in the
+    /// file is ignored: it is the slot the macro happened to occupy in the
+    /// document it came from, and almost certainly collides here.
+    ///
+    /// Decodes through the same `MacroDefinition` path as `keymap.json`, so
+    /// a file carrying fields this build doesn't know -- or a known field
+    /// with a mistyped value -- is preserved rather than coerced or
+    /// rejected. What it will not accept is a file that isn't a macro at
+    /// all; that fails with a message naming the file.
+    @discardableResult
+    func importMacro(from url: URL) -> Bool {
+        let slot = document.nextMacroID
+        guard slot <= MacroDefinition.maxID else {
+            loadError = "Every macro slot (0-\(MacroDefinition.maxID)) is in use; "
+                + "delete a macro before importing one."
+            return false
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            var macro = try JSONDecoder().decode(MacroDefinition.self, from: data)
+            macro.id = slot
+            document.macros = document.macroList + [macro]
+            isDirty = true
+            return true
+        } catch {
+            loadError = "Couldn't import a macro from \(url.lastPathComponent): "
+                + error.localizedDescription
+            return false
+        }
+    }
+
     /// Applies `transform` to the macro currently open, if any.
     private func mutateOpenMacro(_ transform: (inout MacroDefinition) -> Void) {
         guard var macro = currentMacro else { return }
