@@ -89,6 +89,29 @@ struct MacroLibraryRow: Identifiable, Equatable {
     }
 }
 
+/// What the library header is currently filtering by. A plain value type
+/// with a pure `apply(to:)` so the matching rules are testable without a
+/// view, the same reason `MacroLibraryRow` derives its strings up front.
+struct MacroLibraryFilter: Equatable {
+    /// Free text matched against `MacroLibraryRow.searchText` -- the macro's
+    /// name and every step's content, including steps nested inside a
+    /// repeat block. Blank means "no search" rather than "match nothing".
+    var query: String = ""
+
+    /// `nil` means every collection. A named collection matches only macros
+    /// assigned to it; ungrouped macros match no named collection.
+    var collection: String? = nil
+
+    func apply(to rows: [MacroLibraryRow]) -> [MacroLibraryRow] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return rows.filter { row in
+            if let collection, row.collection != collection { return false }
+            if needle.isEmpty { return true }
+            return row.searchText.contains(needle)
+        }
+    }
+}
+
 /// MACROS rail mode's library: a table of every macro on the document, with
 /// its trigger, step count, and byte cost -- the whole-body counterpart to
 /// the step editor reached via `openMacro(id:)`. Built from the same

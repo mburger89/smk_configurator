@@ -62,3 +62,63 @@ struct MacroLibraryRowTests {
         #expect(text.contains("regards"))
     }
 }
+
+@Suite("Filtering the macro library")
+struct MacroLibraryFilterTests {
+    private func rows() -> [MacroLibraryRow] {
+        let macros = [
+            MacroDefinition(id: 0, name: "Sign off", steps: [
+                .text("kind regards", delivery: .keystrokes, msPerChar: 10)
+            ], collection: "Work"),
+            MacroDefinition(id: 1, name: "Build", steps: [.delay(ms: 20)],
+                            collection: "Dev"),
+            MacroDefinition(id: 2, name: "Ungrouped one", steps: []),
+        ]
+        let document = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["none"]]],
+            macros: macros)
+        return macros.map { MacroLibraryRow(macro: $0, document: document) }
+    }
+
+    @Test("an empty filter keeps everything")
+    func emptyFilterKeepsAll() {
+        #expect(MacroLibraryFilter().apply(to: rows()).count == 3)
+    }
+
+    @Test("search matches the name, case-insensitively")
+    func searchMatchesName() {
+        var filter = MacroLibraryFilter()
+        filter.query = "SIGN"
+        #expect(filter.apply(to: rows()).map(\.id) == [0])
+    }
+
+    @Test("search matches step content, not just the name")
+    func searchMatchesStepContent() {
+        var filter = MacroLibraryFilter()
+        filter.query = "regards"
+        #expect(filter.apply(to: rows()).map(\.id) == [0])
+    }
+
+    @Test("whitespace-only search is treated as no search")
+    func blankSearchKeepsAll() {
+        var filter = MacroLibraryFilter()
+        filter.query = "   "
+        #expect(filter.apply(to: rows()).count == 3)
+    }
+
+    @Test("a collection filter keeps only that collection")
+    func collectionFilters() {
+        var filter = MacroLibraryFilter()
+        filter.collection = "Dev"
+        #expect(filter.apply(to: rows()).map(\.id) == [1])
+    }
+
+    @Test("search and collection combine")
+    func filtersCombine() {
+        var filter = MacroLibraryFilter()
+        filter.collection = "Work"
+        filter.query = "build"
+        #expect(filter.apply(to: rows()).isEmpty)
+    }
+}
