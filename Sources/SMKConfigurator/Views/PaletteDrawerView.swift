@@ -16,17 +16,6 @@ struct PaletteDrawerView: View {
     /// chip rows within a section (e.g. the two `Letters` rows).
     private static let chipRowHeight: Double = 26
     private static let chipRowSpacing: Double = 8
-    /// Headroom reserved below each section's chip row for a horizontal
-    /// scrollbar. SwiftCrossUI's `ScrollView(.horizontal)` only grows its
-    /// own layout height to make room for the scrollbar when its content
-    /// actually overflows the available width (see swift-cross-ui's
-    /// `ScrollView.computeLayout`), so without a fixed frame here,
-    /// sections whose chips happen to overflow render taller than ones
-    /// that don't -- an inconsistent gap/border-like artifact between
-    /// sections. Giving every section the same fixed height (content +
-    /// this reserve) makes them uniform regardless of whether that
-    /// section's row overflows.
-    private static let scrollBarReserve: Double = 15
     /// `layersAndSpecialSection`'s row height: `layerPickerGroup`'s tallest
     /// child (`PaletteChip`, 26) plus its own `.padding(4)` on both sides.
     private static let layersRowHeight: Double = chipRowHeight + 8
@@ -40,12 +29,17 @@ struct PaletteDrawerView: View {
     /// `body`'s outer `.padding(10)`, top and bottom.
     private static let outerPadding: Double = 10
 
-    /// Chips per row before a section wraps to another row. Not a layout
-    /// constraint -- sections scroll horizontally -- but the point past which a
-    /// single row is unreadable enough to be worth splitting. 13 is what keeps
-    /// Letters at the 2 rows it has always rendered; changing it re-flows every
-    /// section, so it is the one number here worth eyeballing in the running app.
-    private static let chipsPerRow = 13
+    /// Chips per row before a section wraps to another row.
+    ///
+    /// This is a hard layout constraint now that nothing in the drawer scrolls
+    /// horizontally: a row wider than the drawer clips rather than scrolls, so
+    /// chips past the edge would be unreachable. 13 chips is 668pt against a
+    /// drawer that is never narrower than ~793pt, which
+    /// `PaletteDrawerLayoutTests` pins -- raise this and that test fails rather
+    /// than the palette silently losing chips. 13 is also what keeps Letters at
+    /// the 2 rows it has always rendered; changing it re-flows every section, so
+    /// it is the one number here worth eyeballing in the running app.
+    static let chipsPerRow = 13
 
     /// Every palette section in display order: the generated key groups (see
     /// `KeyName.allGroups`, ordered by how often they get used), then Modifiers,
@@ -79,18 +73,32 @@ struct PaletteDrawerView: View {
     private static func sectionHeight(rows: Int) -> Double {
         sectionTitleHeight + sectionTitleSpacing
             + Double(rows) * chipRowHeight + Double(rows - 1) * chipRowSpacing
-            + scrollBarReserve
     }
 
+    /// One chip per saved macro, in slot order.
+    static func macroTokens(for document: KeymapDocument) -> [ActionToken] {
+        document.macroList.sorted { $0.id < $1.id }.map { .macro($0.id) }
+    }
+
+    /// The MACROS section is deliberately fixed at one row no matter how many
+    /// macros exist -- including zero, where it still
+    /// renders (as "No macros yet.") rather than disappearing. `maxHeight`
+    /// and `contentHeight` here are static and feed
+    /// `ContentView.minWindowHeight`; a section that grew with the document,
+    /// or that appeared/disappeared based on it, would make the window's
+    /// minimum height depend on how many macros the user happens to own.
+    static let macroSectionHeight: Double = sectionHeight(rows: 1)
+
     /// Sum of every section's rendered height, derived from `keySections`
-    /// rather than hand-enumerated, plus the Layers & Special row, the gaps
-    /// between sections, and the outer padding.
+    /// rather than hand-enumerated, plus the Layers & Special row, the
+    /// MACROS row, the gaps between sections, and the outer padding.
     private static var contentHeight: Double {
         let sections = keySections
         let sectionsHeight = sections.reduce(0.0) { $0 + sectionHeight(rows: $1.rows) }
-        let layersAndSpecial = sectionTitleHeight + sectionTitleSpacing + layersRowHeight + scrollBarReserve
-        let sectionGaps = Double(sections.count) * sectionSpacing
-        return sectionsHeight + layersAndSpecial + sectionGaps + 2 * outerPadding
+        let layersAndSpecial = sectionTitleHeight + sectionTitleSpacing + layersRowHeight
+        // +1 section gap: MACROS is an additional section beyond `sections.count`.
+        let sectionGaps = Double(sections.count + 1) * sectionSpacing
+        return sectionsHeight + layersAndSpecial + macroSectionHeight + sectionGaps + 2 * outerPadding
     }
 
     /// Safety margin over `contentHeight` covering font-metric variance on
@@ -138,6 +146,7 @@ struct PaletteDrawerView: View {
                 ForEach(Self.keySections, id: \.title) { s in
                     section(s.title, tokens: s.tokens, rows: s.rows)
                 }
+                macroSection
             }
             .padding(10)
         }
@@ -153,18 +162,27 @@ struct PaletteDrawerView: View {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(chrome.textTertiary)
-            ScrollView(.horizontal) {
-                VStack(spacing: 8) {
-                    ForEach(chunks.indices, id: \.self) { i in
-                        HStack(spacing: 8) {
-                            ForEach(chunks[i]) { token in
-                                PaletteChip(token: token)
-                            }
+            // Deliberately NOT wrapped in `ScrollView(.horizontal)`. Chips
+            // already wrap: `chunk(_:into:)` splits a group across `rows`, so
+            // Letters is two rows of 13 rather than one long scrolling strip.
+            // The scroll view that used to be here could never scroll --- a
+            // full 13-chip row is 668pt and the drawer is never narrower than
+            // ~793pt (see `PaletteDrawerLayoutTests`) --- but it did steal
+            // wheel events from the drawer's own vertical scroll, because
+            // swift-cross-ui maps every `ScrollView` onto a plain
+            // `NSScrollView` and never tells it which axis it owns. That made
+            // vertical scrolling work or not depending on whether the pointer
+            // happened to sit over a section's chips.
+            VStack(spacing: 8) {
+                ForEach(chunks.indices, id: \.self) { i in
+                    HStack(spacing: 8) {
+                        ForEach(chunks[i]) { token in
+                            PaletteChip(token: token)
                         }
                     }
                 }
             }
-            .frame(height: contentHeight + Self.scrollBarReserve)
+            .frame(height: contentHeight)
         }
     }
 
@@ -184,17 +202,17 @@ struct PaletteDrawerView: View {
             Text("LAYERS & SPECIAL")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(chrome.textTertiary)
-            ScrollView(.horizontal) {
-                HStack(spacing: 12) {
-                    layerPickerGroup
-                    HStack(spacing: 8) {
-                        PaletteChip(token: .transparent)
-                        PaletteChip(token: .none)
-                        PaletteChip(token: .toggleConnection)
-                    }
+            // Six chips and a stepper, ~300pt: the narrowest section here and
+            // the one least in need of the scroll view it used to carry.
+            HStack(spacing: 12) {
+                layerPickerGroup
+                HStack(spacing: 8) {
+                    PaletteChip(token: .transparent)
+                    PaletteChip(token: .none)
+                    PaletteChip(token: .toggleConnection)
                 }
             }
-            .frame(height: Self.layersRowHeight + Self.scrollBarReserve)
+            .frame(height: Self.layersRowHeight, alignment: .leading)
         }
     }
 
@@ -230,6 +248,48 @@ struct PaletteDrawerView: View {
         .background(RoundedRectangle(cornerRadius: 6).fill(chrome.chipBackground.opacity(0.5)))
         .overlay {
             RoundedRectangle(cornerRadius: 6).stroke(chrome.chipBorder, style: StrokeStyle(width: 1))
+        }
+    }
+
+    /// One saved-macro chip per macro, exactly like a generated key
+    /// section, except this one is document-driven rather than
+    /// manifest-driven. Deliberately fixed at one row regardless of how
+    /// many macros exist (see `macroSectionHeight`) -- including zero,
+    /// where it still renders ("No macros yet.") rather than disappearing,
+    /// since a section that appears/disappears would also change the
+    /// drawer's height, which is the thing `macroSectionHeight` being a
+    /// `static let` exists to prevent.
+    private var macroSection: some View {
+        let tokens = Self.macroTokens(for: editor.document)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("MACROS")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(chrome.textTertiary)
+            if tokens.isEmpty {
+                Text("No macros yet.")
+                    .font(.system(size: 11))
+                    .foregroundColor(chrome.textTertiary)
+                    .frame(height: Self.chipRowHeight, alignment: .leading)
+            } else {
+                // The only section whose contents can genuinely outgrow a row,
+                // and the only one that can't answer by wrapping: it is pinned
+                // to one row so the drawer's height doesn't depend on how many
+                // macros the document happens to hold (see `macroSectionHeight`).
+                // So it caps at a row and says how many it is not showing,
+                // rather than clipping the overflow silently. The MACROS rail
+                // mode lists all of them; this strip is a placement shortcut.
+                HStack(spacing: 8) {
+                    ForEach(Array(tokens.prefix(Self.chipsPerRow))) { token in
+                        PaletteChip(token: token)
+                    }
+                    if tokens.count > Self.chipsPerRow {
+                        Text("+\(tokens.count - Self.chipsPerRow) more")
+                            .font(.system(size: 11))
+                            .foregroundColor(chrome.textTertiary)
+                    }
+                }
+                .frame(height: Self.chipRowHeight, alignment: .leading)
+            }
         }
     }
 }

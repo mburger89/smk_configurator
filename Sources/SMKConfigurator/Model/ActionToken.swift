@@ -13,6 +13,9 @@ enum ActionToken: Equatable, Identifiable, Hashable {
     case transparent
     case none
     case toggleConnection
+    /// Runs the macro stored in slot `n`. Must stay in lockstep with
+    /// `KeyAction.fromCString` in the firmware's `LayerEngine.swift`.
+    case macro(Int)
     /// Anything loaded from a file that doesn't match the known vocabulary.
     /// Preserved verbatim so loading never silently drops data.
     case raw(String)
@@ -28,6 +31,7 @@ enum ActionToken: Equatable, Identifiable, Hashable {
         case .transparent: return "trans"
         case .none: return "none"
         case .toggleConnection: return "toggle_conn"
+        case .macro(let n): return "macro:\(n)"
         case .raw(let s): return s
         }
     }
@@ -41,6 +45,10 @@ enum ActionToken: Equatable, Identifiable, Hashable {
         case .transparent: return "▽"
         case .none: return ""
         case .toggleConnection: return "⇄ Conn"
+        // This is the one token whose label is not self-sufficient -- a macro
+        // keycap should read its name, which needs a document lookup, so
+        // `KeyCapView` resolves it separately (Task 14).
+        case .macro(let n): return "M\(n)"
         case .raw(let s): return s
         }
     }
@@ -63,6 +71,9 @@ enum ActionToken: Equatable, Identifiable, Hashable {
         if s.hasPrefix("tg:"), let n = Int(s.dropFirst(3)) {
             return .toggleLayer(n)
         }
+        if s.hasPrefix("macro:"), let n = Int(s.dropFirst(6)) {
+            return .macro(n)
+        }
         return .raw(s)
     }
 }
@@ -74,7 +85,7 @@ enum ActionToken: Equatable, Identifiable, Hashable {
 // the vocabulary it dispatches into is generated.
 
 /// Matches `Modifier.fromCString` exactly.
-enum ModifierName: String, CaseIterable, Hashable {
+enum ModifierName: String, CaseIterable, Hashable, Codable {
     case leftCtrl, leftShift, leftAlt, leftGUI
     case rightCtrl, rightShift, rightAlt, rightGUI
 

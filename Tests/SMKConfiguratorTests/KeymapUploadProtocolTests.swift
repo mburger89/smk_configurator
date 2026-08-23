@@ -62,18 +62,18 @@ struct KeymapUploaderTests {
         }
     }
 
-    @Test("uploads a small JSON payload as BEGIN, one CHUNK, then COMMIT")
+    @Test("uploads a small binary payload as BEGIN, one CHUNK, then COMMIT")
     func fullUpload() async throws {
-        let json = #"{"layers":[]}"#
+        let payload: [UInt8] = [0x06, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00]
         let transport = MockTransport(responses: [])
-        try await KeymapUploader.upload(json: json, using: transport)
+        try await KeymapUploader.upload(payload: payload, using: transport)
 
         #expect(transport.sent.count == 3)
         #expect(transport.sent[0][0] == 0x01) // BEGIN
         #expect(transport.sent[1][0] == 0x02) // CHUNK
         #expect(transport.sent[2][0] == 0x03) // COMMIT
 
-        let expectedCrc = KeymapUploadProtocol.crc32(Array(json.utf8))
+        let expectedCrc = KeymapUploadProtocol.crc32(payload)
         let sentCrcBytes = Array(transport.sent[2][1...4])
         let sentCrc = UInt32(sentCrcBytes[0]) | (UInt32(sentCrcBytes[1]) << 8) |
                       (UInt32(sentCrcBytes[2]) << 16) | (UInt32(sentCrcBytes[3]) << 24)
@@ -84,16 +84,16 @@ struct KeymapUploaderTests {
     func nakPropagates() async {
         let transport = MockTransport(responses: [[0x01, 0x01]]) // NAK on BEGIN
         await #expect(throws: DeviceTransportError.nak) {
-            try await KeymapUploader.upload(json: "{}", using: transport)
+            try await KeymapUploader.upload(payload: [0x06, 0x01, 0x01, 0x01, 0x00, 0x00], using: transport)
         }
     }
 
-    @Test("throws .payloadTooLarge for JSON exceeding the store's capacity")
+    @Test("throws .payloadTooLarge for a binary payload exceeding the store's capacity")
     func payloadTooLarge() async {
-        let json = String(repeating: "x", count: 4086)
+        let payload = [UInt8](repeating: 0xAA, count: 4086)
         let transport = MockTransport(responses: [])
         await #expect(throws: DeviceTransportError.payloadTooLarge) {
-            try await KeymapUploader.upload(json: json, using: transport)
+            try await KeymapUploader.upload(payload: payload, using: transport)
         }
     }
 
@@ -101,11 +101,11 @@ struct KeymapUploaderTests {
     @MainActor
     func progressSequence() async throws {
         // 60 bytes of payload -> 3 chunks at 28 bytes each.
-        let json = #"{"layers":["# + String(repeating: "a", count: 47) + "]}"
+        let payload = [UInt8](repeating: 0x41, count: 60)
         let transport = MockTransport(responses: [])
         var phases: [KeymapUploader.UploadPhase] = []
 
-        try await KeymapUploader.upload(json: json, using: transport) { phases.append($0) }
+        try await KeymapUploader.upload(payload: payload, using: transport) { phases.append($0) }
 
         let chunkCount = transport.sent.filter { $0[0] == 0x02 }.count
         #expect(phases.first == .begin)

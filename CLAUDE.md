@@ -31,7 +31,7 @@ macOS is the only platform actually runnable/verifiable from a normal dev machin
 
 **MVVM with a single observable model.** `EditorState` (`Model/EditorState.swift`) is the one `@ObservableObject` for the whole app — document state, file I/O, device upload, design/theme management, and UI state (drawer height, selected key, appearance mode) all live on it as plain stored properties (no `didSet`, since `@ObservableObject` skips properties with accessors — mutating helper methods persist to `UserDefaults` explicitly instead, e.g. `setDrawerHeight(_:)`, `setAppearanceMode(_:)`). It's installed once in `App.swift` via `.environment(editor)` and read everywhere via `@Environment(EditorState.self)`.
 
-**Four-pane layout driven by one enum.** `RailMode` (`.key`/`.designs`/`.themes`/`.device`) selects which icon rail tab is active and drives what the list/main/inspector columns render — see the `switch editor.railMode` in each of `ContentView`'s three column properties. Design/theme editing happens inline (not in modal sheets): `ContentView` owns `designDraft`/`themeDraft` scratch copies that mirror the selected design/theme until explicitly saved, mimicking an edit-then-Save/Cancel flow without a sheet.
+**Four-pane layout driven by one enum.** `RailMode` (`.key`/`.designs`/`.themes`/`.device`/`.macros`) selects which icon rail tab is active and drives what the list/main/inspector columns render — see the `switch editor.railMode` in each of `ContentView`'s three column properties. Design/theme editing happens inline (not in modal sheets): `ContentView` owns `designDraft`/`themeDraft` scratch copies that mirror the selected design/theme until explicitly saved, mimicking an edit-then-Save/Cancel flow without a sheet. `.macros` is the one rail mode with sub-states of its own: `MacroWorkspace` (`.library`/`.editor(id:)`) swaps the whole list/main/inspector layout between the macro library table and the step editor, because a macro is a document-within-the-document — opening one to edit it needs its own canvas and inspector, not just a different list selection — where every other rail mode renders one fixed layout regardless of what's selected.
 
 **Model layer** (`Model/`):
 - `KeymapDocument` — mirrors the firmware's `keymap.json` schema exactly (`LayerEngine.loadKeymap` in the SMK repo). Cells are raw strings (`"key:a"`, `"mo:1"`, `"trans"`, `"none"`, etc.), not a parsed enum, so save is always lossless even for tokens the UI doesn't specifically render.
@@ -47,13 +47,153 @@ macOS is the only platform actually runnable/verifiable from a normal dev machin
 ## Firmware coupling
 
 This app is written against a specific version of `~/esp/SMK` and several places encode that coupling explicitly rather than reading it dynamically (the app has no way to query a running firmware's version):
-- `firmwareVersionLabel` in `EditorState.swift` — a static label, must be bumped by hand when targeting a new firmware build.
+- `firmwareVersionLabel` in `EditorState.swift` — a static label, must be bumped by hand when targeting a new firmware build. In particular, bump it for whichever firmware build first carries keymap-store **frame version 2** (`~/esp/SMK/Sources/SMKCore/KeymapFrame.swift`'s `frameVersion`) — the switch from the version-1 JSON payload to the binary payload documented below. The frame's own header (magic/version/length/CRC, same 11 bytes, same offset) is unchanged, so an upload aimed at frame-version-1 firmware fails the version check and is cleanly rejected rather than misread — but the label should already say "binary-capable" before that surprises anyone.
 - `KeymapUploader.maxPayloadLength` — must match firmware's `SMK_KEYMAP_MAX_LEN`.
 - `ActionToken`'s *grammar* (the `key:`/`mod:`/`mo:`/`tg:`/`trans`/`none`/`toggle_conn` prefixes) is hand-written and must match `KeyAction.fromCString` in the firmware's `LayerEngine.swift`; so must `ModifierName` against `Modifier.fromCString`. The *vocabulary* it dispatches into (`KeyName`) is generated — see `keycodes.json` below.
 - `keycodes.json` (in `~/esp/SMK`) — **the** source of the key vocabulary for both repos. `Sources/SMKConfigurator/Model/KeyCodesGenerated.swift` is **generated** from it by `~/esp/SMK/generate_keycodes.sh`; do not edit it. Adding a key means editing the manifest and re-running the script, then committing the regenerated file in *both* repos. `KeyVocabularyTests` pins the agreement by comparing HID usages, not just names.
 - `EditorState.maxLayerCount` — the firmware's layer ceiling (16), not an editor preference: `LayerEngine`'s `toggledLayers`/`momentaryCounts` are sized `count: 16` and `isLayerActive` rejects anything `>= 16`.
 - `defaultKeymapURL` (`EditorState.swift`) points at `~/esp/SMK/keymap.json` — the reference file this app is pointed at by default.
 - `Sources/SMKConfigurator/Device/BLEUploadUUIDs.swift` — **generated**, do not edit. The custom GATT upload service's UUIDs, produced together with the firmware's `Sources/components/smk_ble_uuids.h` by `~/esp/SMK/generate_ble_uuids.sh` from `~/esp/SMK/ble_upload_uuids.json`. Regenerate in both repos and commit both. `BLEUploadUUIDsTests` pins the values.
+- **Macros** (`Model/Macro.swift`) are carried in `keymap.json` under an
+  optional top-level `"macros"` array and uploaded with the layers. None of
+  this exists on the firmware side yet (see
+  `docs/superpowers/specs/2026-08-20-macro-creation-design.md`, sub-project
+  3). A firmware author implementing the macro player needs all of the
+  following — not just the byte-width table in `MacroStep.compiledSize`'s
+  doc comment, which omits the opcode values, endianness, bit packing, and
+  keycode derivation a byte-for-byte implementation needs:
+
+  - **JSON schema.** A macro is `{ "id": Int, "name": String, "steps": [...] }`.
+    Each step object has a `"t"` field selecting its shape (`CodingKeys` in
+    `MacroStep` names every JSON field below, since they otherwise appear
+    nowhere but that enum):
+    - `{"t":"key","k":"key:<name>","mods":["leftShift",...],"hold":<ms>}` —
+      `"k"` is optional (a modifiers-only chord omits it) and reuses the
+      `key:` string `ActionToken` already parses, naming a `KeyName`.
+    - `{"t":"text","s":"<string>","delivery":"keystrokes"|"paste","cpm":<msPerChar>}`
+      — `"delivery"` defaults to `"keystrokes"` when absent.
+    - `{"t":"delay","ms":<ms>}`
+    - `{"t":"layer","op":"mo"|"tg","n":<layer index>}`
+    - `{"t":"rpt","count":<n>,"steps":[...]}` — does not nest; a `"rpt"`
+      whose own `"steps"` contains another `"rpt"` is invalid, and the
+      editor preserves it unexecuted rather than running it.
+    A step whose `"t"` is unrecognized, or whose known fields don't resolve
+    in this build (an unknown key name, an unrecognized modifier anywhere in
+    `"mods"`, an unrecognized `"delivery"`/`"op"`), round-trips through the
+    editor unexecuted rather than being dropped or silently normalized —
+    `MacroStep.raw`. A per-macro field this build doesn't know (e.g. a
+    future `"enabled"`) round-trips the same way.
+
+  - **Bytecode layout and opcodes.** The layout is `MacroStep.compiledSize`'s
+    doc comment; the opcode byte each step's `"t"` compiles to is only
+    defined here:
+
+    | step | opcode | layout |
+    |---|---|---|
+    | keystroke | `0x01` | `opcode(1) + mods(1) + keycode(1) + holdMs(2)` = 5 |
+    | delay | `0x02` | `opcode(1) + ms(2)` = 3 |
+    | layer | `0x03` | `opcode(1) + op(1) + index(1)` = 3 |
+    | text | `0x04` | `opcode(1) + delivery(1) + msPerChar(1) + length(1) + payload` = 4 + n |
+    | repeat | `0x05` | `opcode(1) + count(1) + bodyLength(2) + body` = 4 + body |
+
+    A compiled macro is `id(1) + nameLength(1) + name + stepCount(1) + steps`.
+    All multi-byte fields (`holdMs`, `ms`, `bodyLength`) are **little-endian**
+    — the native byte order of both supported MCUs (RP2040 is Cortex-M0+,
+    ESP32-C6 is RISC-V; both little-endian), so neither port needs a
+    byte-swap.
+
+  - **`mods` bit packing.** `ModifierName`'s eight cases, in their
+    `CaseIterable` declaration order (`leftCtrl, leftShift, leftAlt,
+    leftGUI, rightCtrl, rightShift, rightAlt, rightGUI`), are bits 0–7 of
+    the `mods` byte, LSB first. That is the same order and layout as the
+    modifier byte of a standard USB HID keyboard report, so a firmware
+    `mods` byte can be OR'd directly into a HID report rather than remapped.
+
+  - **`keycode` derivation.** `keycode(1)` is `KeyName.hidUsage`
+    (`KeyCodesGenerated.swift`) — the same HID usage ID sent in a keyboard
+    report. `0x00` (HID "no key") when a keystroke step has no `"k"`.
+
+  - **`op` byte.** `0x00` = `"mo"` (momentary), `0x01` = `"tg"` (toggle) —
+    `LayerOp`'s declaration order, and the same convention as `delivery`
+    below where `0x00` is the first case. The layout table above listed
+    `op(1)` without assigning its values; a firmware implementer hit the gap
+    while writing the decoder and flagged it rather than guessing silently.
+
+  - **`delivery` byte.** `0x00` = `"keystrokes"` (type each character),
+    `0x01` = `"paste"`. This byte exists precisely so the editor's
+    keystrokes/paste toggle has somewhere to land on the wire; a layout
+    without it would make that toggle a UI-only no-op.
+
+  - **`op` byte.** `0x00` = `"mo"` (momentary), `0x01` = `"tg"` (toggle).
+
+  - **One-byte field maxima.** `length`, `nameLength`, `stepCount`,
+    `count` (repeat), `msPerChar` (text), `id` (macro header), and `index`
+    (layer) are each one byte, so a text payload, a macro name, a macro's
+    top-level step count, a repeat count, a text step's ms-per-char, a
+    macro's slot id, and a layer step's target layer each cap at 255
+    (UTF-8 bytes for the first two). The editor enforces this on its side
+    via `MacroStep.overflows` / `MacroDefinition.overflows`
+    (`MacroDefinition.isCompilable` is the all-clear check), consulted in
+    `EditorState.sendToDevice()` alongside the compiled-bytecode capacity
+    guard and the JSON-size guard — any macro with a nonempty `overflows`
+    blocks the upload and surfaces `MacroOverflow.message` before a
+    transport is ever touched. UI sliders keep the editor itself from
+    producing an overflowing value, but a hand-edited or decoded
+    `keymap.json` isn't bound by the UI, which is why this is checked again
+    at upload time rather than trusted from the editing surface — firmware
+    should still reject rather than silently truncate if a real board ever
+    receives one anyway.
+
+  `ActionToken`'s `macro:N` token now compiles too (`KeymapCellTag.macro`,
+  see the binary payload bullet below) — it is no longer missing a
+  firmware-side implementation.
+
+- **The wire/storage format is compiled binary; `keymap.json` on disk stays
+  JSON.** This is a different contract from the JSON macro-step schema
+  documented above: that schema is what `keymap.json` holds on disk (still
+  plain JSON, always lossless — see `KeymapDocument`/`ActionToken`'s `.raw`
+  fallback). `Model/KeymapCompiler.swift`'s `compileKeymap(_:)` is what
+  turns a whole `KeymapDocument` — matrix, every layer's cells, every macro
+  — into the byte payload that actually reaches a board: a 6-byte header
+  (`rowCount`, `colCount`, `colsAreDriven`, `layerCount`, `macroCount`,
+  reserved), the row/col GPIO arrays, then every cell of every layer as a
+  two-byte `(tag, parameter)` pair (`KeymapCellTag`), then each macro
+  (`id(1) + nameLength(1) + name + stepCount(1) + steps`, opcodes/layout as
+  already documented above). Compiling is not lossless the way saving is: a
+  token with no binary tag (`ActionToken.raw`), or a parameter over its
+  wire field's range (a macro slot over 255, a layer at or past
+  `EditorState.maxLayerCount`), makes `compileKeymap` throw
+  `KeymapCompileError` naming the offending token and its layer/row/column
+  rather than truncating, wrapping, or silently dropping it — refusing to
+  flash a token the firmware could never have executed anyway.
+
+  **Three independent implementations must agree on this format, and
+  changing one without the others silently breaks uploads or storage:**
+  this compiler (`Model/KeymapCompiler.swift`), the firmware's decoder
+  (`~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`), and the firmware's
+  `~/esp/SMK/generate_default_keymap.sh` (which compiles the reference
+  `keymap.json` into a literal Swift array at build time, using the same
+  tag layout, so the compiled-in factory-reset default agrees too).
+
+  **`CAPS`** (opcode `0x05` on the existing BEGIN/CHUNK/COMMIT/ERASE
+  transport — `~/esp/SMK/Sources/SMKCore/KeymapProtocol.swift`'s
+  `smkKeymapOpCaps`) exists on both sides now: `Device/DeviceTransport.swift`'s
+  `KeymapUploader.queryCapacity(using:)` sends it and decodes the
+  little-endian response (`macroBytes` u16, `macroSlots` u8, `keymapMaxLen`
+  u16); `EditorState.applyDeviceCapacity(_:deviceKey:)` adopts the result —
+  `macroCapacity`/`macroCapacitySource = .device` — and persists it under
+  `deviceKey` (`"usb"`, or `"ble:<peripheral name>"`, the best device
+  identity this app currently has) so a later session with nothing
+  connected reports `.lastKnown` instead of dropping back to
+  `MacroCapacity.floor`. Two of `CAPS`'s numbers look like bugs and are
+  deliberate on the firmware side — see `DeviceCapacityReport`'s doc
+  comment in `DeviceTransport.swift` for why: `macroBytes` equals
+  `keymapMaxLen` (macros share the layers' payload budget rather than
+  having a separate region of their own), and `macroSlots` maxes out at
+  255, not 256 (the macro id space is a full byte, but the wire field
+  reporting its size is also one byte and cannot itself represent 256).
+  `MacroCapacity.floor` remains what the editor assumes before any board
+  has ever answered `CAPS` — a deliberate under-promise, not a target.
 
 When editing model/device code, check whether the change needs a matching change on the firmware side (or vice versa) before assuming it's editor-only.
 

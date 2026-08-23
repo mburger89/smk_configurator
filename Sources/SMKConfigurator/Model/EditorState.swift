@@ -23,6 +23,13 @@ let themeStore = JSONFileStore<KeyboardTheme>(
 private let drawerHeightDefaultsKey = "drawerHeight"
 private let showAdvancedDefaultsKey = "showAdvanced"
 private let appearanceModeDefaultsKey = "appearanceMode"
+/// Remembers which device (by `deviceKey`, see `applyDeviceCapacity(_:deviceKey:)`)
+/// most recently reported real capacity, so `init()` knows which
+/// `macroCapacity.<deviceKey>` entry to reload as `.lastKnown`.
+private let macroCapacityLastDeviceKeyDefaultsKey = "macroCapacityLastDeviceKey"
+private func macroCapacityDefaultsKey(forDeviceKey deviceKey: String) -> String {
+    "macroCapacity.\(deviceKey)"
+}
 
 /// Mirrors the firmware build this app was written against (see
 /// `KeymapUploader.maxPayloadLength`'s doc comment) — shown as a static
@@ -35,8 +42,21 @@ let firmwareVersionLabel = "v0.9.0"
 /// design/theme/layer/key, matrix values, theme role hex values) still lives
 /// on `EditorState` exactly as before -- this only changes navigation.
 enum RailMode: String, CaseIterable, Identifiable {
-    case key, designs, themes, device
+    case key, designs, themes, device, macros
     var id: String { rawValue }
+}
+
+/// Macros mode is the only rail mode with sub-states: the library takes the
+/// whole workspace, and opening a macro swaps it for the step editor. Every
+/// other rail mode renders one fixed layout.
+enum MacroWorkspace: Equatable, Hashable {
+    case library
+    case editor(id: Int)
+
+    var openMacroID: Int? {
+        if case .editor(let id) = self { return id }
+        return nil
+    }
 }
 
 /// Light/Dark/System, set via the `View ▸ Appearance` menu (see `App.swift`)
@@ -86,6 +106,20 @@ class EditorState {
     /// The physical key the Key inspector is currently showing, if any.
     var selectedKeyPosition: KeyPosition? = KeyPosition(row: 0, col: 0)
 
+    /// Which of the MACROS workspace's two layouts (library vs. editor) is
+    /// showing.
+    var macroWorkspace: MacroWorkspace = .library
+    /// Which step the inspector is editing, or nil when the macro is empty.
+    var selectedStepIndex: Int? = nil
+    /// Which tab of `MacroInspectorView` is showing. Lives here rather than
+    /// as local `@State` on the inspector because `MacroCanvasHeaderView`'s
+    /// "Test run" button (a sibling view, not an ancestor) needs to switch it
+    /// to `.timing` -- there's no shared ancestor closer than `EditorState`.
+    var macroInspectorTab: MacroInspectorTab = .step
+    /// The last capacity a board reported, or the floor profile until one does.
+    var macroCapacity: MacroCapacity = .floor
+    var macroCapacitySource: MacroCapacitySource = .floor
+
     /// Light/Dark/System override for the whole app, applied via
     /// `.preferredColorScheme` at the app root (`App.swift`). Plain stored
     /// property (no `didSet`, same reason as `drawerHeight` below) — use
@@ -119,13 +153,34 @@ class EditorState {
     var activeTheme: KeyboardTheme
     var availableThemes: [KeyboardTheme] = []
 
-    init() {
-        let storedHeight = UserDefaults.standard.object(forKey: drawerHeightDefaultsKey) as? Double ?? 260
+    /// Injected for tests -- a throwaway `UserDefaults(suiteName:)`,
+    /// following `JSONFileStore`'s exact pattern -- so persistence round
+    /// trips (drawer height, appearance, and macro capacity below) don't
+    /// read or write the real user's `UserDefaults.standard` during
+    /// `swift test`. Defaults to `.standard` for real app use.
+    private let userDefaults: UserDefaults
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+        let storedHeight = userDefaults.object(forKey: drawerHeightDefaultsKey) as? Double ?? 260
         let range = Self.drawerHeightRange
         self.drawerHeight = min(max(storedHeight, range.lowerBound), range.upperBound)
-        self.showAdvanced = UserDefaults.standard.object(forKey: showAdvancedDefaultsKey) as? Bool ?? false
-        let storedAppearanceMode = UserDefaults.standard.string(forKey: appearanceModeDefaultsKey)
+        self.showAdvanced = userDefaults.object(forKey: showAdvancedDefaultsKey) as? Bool ?? false
+        let storedAppearanceMode = userDefaults.string(forKey: appearanceModeDefaultsKey)
         self.appearanceMode = storedAppearanceMode.flatMap(AppearanceMode.init(rawValue:)) ?? .system
+
+        // A board that reported real capacity in some earlier session --
+        // possibly a previous launch entirely -- is remembered so this
+        // session reports `.lastKnown` rather than dropping all the way
+        // back to `MacroCapacity.floor` just because nothing is plugged in
+        // right now. Superseded the moment a board answers `CAPS` again
+        // (see `applyDeviceCapacity(_:deviceKey:)`).
+        if let lastDeviceKey = userDefaults.string(forKey: macroCapacityLastDeviceKeyDefaultsKey),
+           let data = userDefaults.data(forKey: macroCapacityDefaultsKey(forDeviceKey: lastDeviceKey)),
+           let capacity = try? JSONDecoder().decode(MacroCapacity.self, from: data) {
+            self.macroCapacity = capacity
+            self.macroCapacitySource = .lastKnown
+        }
 
         designStore.ensureSeeded(with: [.gateronLPKBD, .smkTestBoard])
         themeStore.ensureSeeded(with: KeyboardTheme.allBuiltIns)
@@ -160,6 +215,13 @@ class EditorState {
             fileURL = url
             currentLayer = 0
             clampPendingLayerIndex()
+            // The macro workspace (and whichever step it had selected) can
+            // reference a macro id from the *previous* document -- e.g. a
+            // step editor left open on macro 3 when the newly loaded file
+            // has no macros at all, which would leave currentMacro nil and
+            // strand the UI on a dead editor pane.
+            macroWorkspace = .library
+            selectedStepIndex = nil
             isDirty = false
             loadError = nil
             activeDesign = availableDesigns.first { $0.matrix == doc.matrix }
@@ -189,6 +251,11 @@ class EditorState {
         fileURL = nil
         currentLayer = 0
         clampPendingLayerIndex()
+        // Same reasoning as load(from:) -- a fresh blank document has no
+        // macros, so any macro workspace/step selection left over from
+        // before must not survive the swap.
+        macroWorkspace = .library
+        selectedStepIndex = nil
         isDirty = false
     }
 
@@ -196,11 +263,103 @@ class EditorState {
 
     var isSendingToDevice: Bool = false
 
-    /// Tries USB (RP2040) first, then BLE (ESP32-C6), and pushes
-    /// document.layers to whichever responds. Matrix data isn't sent — the
-    /// firmware's matrix stays compiled-in (see the design spec).
+    /// Tries USB (RP2040) first, then BLE (ESP32-C6), and pushes the
+    /// compiled document (matrix header, layers, and macros — see
+    /// `compileForUpload()`) to whichever responds. The matrix's GPIO
+    /// numbers now ride along as part of the compiled payload's fixed
+    /// header (see `~/esp/SMK/docs/superpowers/specs/
+    /// 2026-08-21-binary-keymap-format-design.md`'s format table) — a
+    /// change from the JSON era, when matrix data was never sent at all —
+    /// but the firmware's physical matrix scan still runs off its own
+    /// compiled-in GPIO config; this app has no way to reprogram that.
+    ///
+    /// Guard order is deliberate and, since `macroBudget` started measuring
+    /// against `document` (see its doc comment), no longer matches Task 3's
+    /// original "capacity, then compile" — here's why, in the order these
+    /// guards actually run:
+    ///
+    /// 1. `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
+    ///    step's `msPerChar`, a `.repeatBlock`'s `count`, a macro's `id`, a
+    ///    `.layer` step's target index, plus the three checks the compiled-
+    ///    size/JSON-size guards already implied for name/step-count/payload
+    ///    length) can hold a value up to 255 no matter what any size meter
+    ///    says — a 300-count repeat is a handful of bytes either way, small
+    ///    enough to sail through every other guard, but wraps around in the
+    ///    one byte the firmware reads it into. UI sliders keep this from
+    ///    happening via the editor, but a decoded `keymap.json` isn't bound
+    ///    by the UI, so this runs here too.
+    /// 2. The re-entrancy guard, moved first among the remaining checks
+    ///    (previously between the capacity and compile guards) so an
+    ///    already-in-flight send skips the compiling this method now does
+    ///    twice over (once here, once inside `macroBudget`) rather than
+    ///    paying that cost only to discard the result.
+    /// 3. Compiling the whole document (`compileForUpload()`), catching
+    ///    `KeymapCompileError` — moved *ahead* of the capacity check below.
+    ///    `macroBudget` can now fail to measure anything meaningful when
+    ///    the document doesn't compile at all (an unrecognized token
+    ///    anywhere, not just in a macro): its `document:` initializer
+    ///    absorbs that throw into `layerCostUnknown`/`blockReason`'s generic
+    ///    "can't be measured" message rather than propagating it (see that
+    ///    type's doc comment) — which is the right behavior for a passive
+    ///    meter, but it would be the *wrong* message to surface here, where
+    ///    the compiler's own error already names the exact token and its
+    ///    layer/row/col. Compiling first means that specific message wins;
+    ///    checking capacity first would have hidden it behind the generic
+    ///    one. Once this succeeds, `macroBudget`'s own internal compiles in
+    ///    step 4 are guaranteed to succeed too — same cells and macros, just
+    ///    recompiled with the document split apart — so this reordering
+    ///    costs nothing in the success path.
+    /// 4. `macroBudget.canFlash`, using the already-known-good document.
+    /// 5. The payload-size guard: `macroBudget.capacity` is whatever this
+    ///    app currently believes about the board (a live `.device` report, a
+    ///    remembered `.lastKnown` value from a previous session, or the
+    ///    conservative `.floor` guess) and can be stale or simply wrong,
+    ///    while `KeymapUploader.maxPayloadLength` is this build's own fixed
+    ///    ceiling. So a document can still read green on `macroBudget` —
+    ///    believed capacity says there's room — while the actually-compiled
+    ///    payload exceeds the real wire limit (e.g. a `.lastKnown` capacity
+    ///    carried over from a different, larger board).
+    ///
+    /// Every guard above returns before `isSendingToDevice` flips or the
+    /// `Task {` is created, so a document that fails any of them never
+    /// touches a transport and each guard's effect is observable without
+    /// awaiting anything.
     func sendToDevice() {
+        let overflows = document.macroList.flatMap(\.overflows)
+        guard overflows.isEmpty else {
+            loadError = overflows.map(\.message).joined(separator: " ")
+            return
+        }
         guard !isSendingToDevice else { return }
+        let payload: [UInt8]
+        do {
+            payload = try compileForUpload()
+        } catch let compileError as KeymapCompileError {
+            loadError = compileError.description
+            return
+        } catch {
+            loadError = "Couldn't send keymap to device: \(error.localizedDescription)"
+            return
+        }
+        // Read once rather than as two separate `macroBudget` property
+        // accesses: each access compiles `document` from scratch (see
+        // `macroBudget`'s doc comment), so `.canFlash` then `.blockReason`
+        // as two accesses would compile it twice for one guard.
+        let budget = macroBudget
+        guard budget.canFlash else {
+            loadError = budget.blockReason
+            return
+        }
+        guard payload.count <= KeymapUploader.maxPayloadLength else {
+            loadError = "Keymap upload is \(payload.count) bytes, over the "
+                + "\(KeymapUploader.maxPayloadLength)-byte device limit. This "
+                + "can happen even when the macro meter reads green, if this "
+                + "app's currently-known board capacity doesn't match the "
+                + "real device limit (e.g. a remembered capacity from a "
+                + "different board). Trim macro steps, delete unused macros, "
+                + "or remove layers."
+            return
+        }
         isSendingToDevice = true
         Task { [self] in
             defer {
@@ -209,16 +368,26 @@ class EditorState {
                 refreshDeviceStatus()
             }
             do {
-                let json = try encodeLayersJSON(document.layers)
                 if let usb = try? USBRawHIDTransport() {
-                    try await KeymapUploader.upload(json: json, using: usb) { [weak self] phase in
+                    // Best-effort: a board's real capacity, learned the
+                    // moment a transport is actually open. `try?` because
+                    // older firmware built before the `CAPS` opcode existed
+                    // simply won't answer it -- that must never fail an
+                    // otherwise-good upload.
+                    if let report = try? await KeymapUploader.queryCapacity(using: usb) {
+                        applyDeviceCapacity(report, deviceKey: EditorState.usbDeviceKey)
+                    }
+                    try await KeymapUploader.upload(payload: payload, using: usb) { [weak self] phase in
                         self?.uploadProgress = phase
                     }
                 } else {
                     #if canImport(CoreBluetooth)
                     let ble = BLETransport()
                     try await ble.connect()
-                    try await KeymapUploader.upload(json: json, using: ble) { [weak self] phase in
+                    if let report = try? await KeymapUploader.queryCapacity(using: ble) {
+                        applyDeviceCapacity(report, deviceKey: bleDeviceKey)
+                    }
+                    try await KeymapUploader.upload(payload: payload, using: ble) { [weak self] phase in
                         self?.uploadProgress = phase
                     }
                     #else
@@ -256,13 +425,17 @@ class EditorState {
         #endif
     }
 
-    private func encodeLayersJSON(_ layers: [[[String]]]) throws -> String {
-        struct LayersPayload: Encodable { let layers: [[[String]]] }
-        let data = try JSONEncoder().encode(LayersPayload(layers: layers))
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw DeviceTransportError.encodingFailed
-        }
-        return json
+    /// The bytes the board receives: `compileKeymap(document)`'s binary
+    /// payload (matrix, every layer's cells, and macros, all as fixed-width
+    /// bytecode — see `Model/KeymapCompiler.swift`). Matrix *electrical*
+    /// config (GPIO rows/cols) is included so the firmware can validate the
+    /// payload against its own compiled-in matrix, but the firmware's matrix
+    /// itself stays compiled in; macros travel alongside layers, since one
+    /// upload has to leave the board self-consistent. Can throw
+    /// `KeymapCompileError` for a token this build has no binary tag for, or
+    /// a parameter that doesn't fit the wire format's one-byte fields.
+    func compileForUpload() throws -> [UInt8] {
+        try compileKeymap(document)
     }
 
     // MARK: - Keymap editing
@@ -357,17 +530,58 @@ class EditorState {
 
     func setDrawerHeight(_ height: Double) {
         drawerHeight = height
-        UserDefaults.standard.set(drawerHeight, forKey: drawerHeightDefaultsKey)
+        userDefaults.set(drawerHeight, forKey: drawerHeightDefaultsKey)
     }
 
     func setShowAdvanced(_ value: Bool) {
         showAdvanced = value
-        UserDefaults.standard.set(value, forKey: showAdvancedDefaultsKey)
+        userDefaults.set(value, forKey: showAdvancedDefaultsKey)
     }
 
     func setAppearanceMode(_ mode: AppearanceMode) {
         appearanceMode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: appearanceModeDefaultsKey)
+        userDefaults.set(mode.rawValue, forKey: appearanceModeDefaultsKey)
+    }
+
+    // MARK: - Macro capacity
+
+    /// `deviceKey` for the USB (RP2040) transport. hidapi's device
+    /// enumeration in `USBRawHIDTransport` doesn't read a per-board serial
+    /// number, so every RP2040 board seen over USB shares this one bucket.
+    static let usbDeviceKey = "usb"
+
+    /// `deviceKey` for the BLE (ESP32-C6) transport, keyed by whatever name
+    /// the peripheral advertised -- the only per-board signal
+    /// `refreshDeviceStatus()` already surfaces. Falls back to a shared
+    /// bucket if a name was never read.
+    #if canImport(CoreBluetooth)
+    var bleDeviceKey: String { "ble:\(blePeripheralName ?? "unknown")" }
+    #endif
+
+    /// Adopts a `CAPS` opcode (0x05) response from a connected board: the
+    /// live meter switches to `.device` immediately, and the numbers are
+    /// persisted under `deviceKey` so a later session with no board
+    /// connected reports `.lastKnown` (see `init()`) instead of dropping
+    /// back to `MacroCapacity.floor`. `deviceKey` is the best device
+    /// identity this app currently has -- `"usb"` for the RP2040 transport
+    /// (which exposes no per-board serial) and `"ble:<peripheral name>"`
+    /// for BLE -- not a strict per-physical-board key, but distinguishes the
+    /// port families that actually have different capacities.
+    ///
+    /// Takes an already-decoded report rather than a transport, so this
+    /// half is reachable from a test without a real transport -- see
+    /// `KeymapUploader.queryCapacity(using:)` in `DeviceTransport.swift` for
+    /// the wire round trip that produces `report`, and `MacroCapacityTests`
+    /// for why `sendToDevice()`-style guards never call a real transport
+    /// from a test.
+    func applyDeviceCapacity(_ report: DeviceCapacityReport, deviceKey: String) {
+        let capacity = MacroCapacity(macroBytes: report.macroBytes, macroSlots: report.macroSlots)
+        macroCapacity = capacity
+        macroCapacitySource = .device
+        if let data = try? JSONEncoder().encode(capacity) {
+            userDefaults.set(data, forKey: macroCapacityDefaultsKey(forDeviceKey: deviceKey))
+        }
+        userDefaults.set(deviceKey, forKey: macroCapacityLastDeviceKeyDefaultsKey)
     }
 
     // MARK: - Key inspector
@@ -501,5 +715,144 @@ class EditorState {
             loadError = "Couldn't \(errorContext): \(error.localizedDescription)"
             return false
         }
+    }
+
+    // MARK: - Macro editing
+
+    /// Uses `init(capacity:source:document:)` rather than the `macros:`-only
+    /// initializer, so `totalBytes` reflects what layers have already spent
+    /// out of the shared payload budget (see `MacroBudget`'s doc comment) —
+    /// without this, a 16-layer keymap and a 2-layer one would report the
+    /// exact same macro headroom, which is false: macros and layers compile
+    /// into one store.
+    ///
+    /// Never crashes and never silently reads 0 bytes for a document that
+    /// doesn't compile (an unrecognized token, or macro text outside
+    /// printable ASCII): `MacroBudget` itself absorbs that throw and
+    /// reports it as `layerCostUnknown`/`usedBytesIsEstimated` instead of
+    /// propagating it here — see that type's doc comments for exactly what
+    /// each flag means and what `blockReason` says in each case.
+    ///
+    /// Cost: this compiles `document` on every access (twice — once with
+    /// macros stripped to measure layer cost, once macro-only to measure
+    /// macro cost), not just when something changes, and it's read from
+    /// SwiftUI view bodies (`MacroEditorViews.slotSection`,
+    /// `MacroLibraryView`) that re-evaluate on every re-render while those
+    /// panes are visible. For the sizes this format targets (at most 16
+    /// layers, at most a few hundred cells each) a compile is one pass of
+    /// cheap per-cell arithmetic plus a growing byte buffer, so this hasn't
+    /// been observed to be slow — but it is a deliberate trade (an O(document
+    /// size) property where an O(macro count) one used to be enough), not a
+    /// free correctness fix, and it is not cached here: caching would risk
+    /// the meter reading stale the moment `document` changes through some
+    /// path this file didn't anticipate. `sendToDevice()` below reads this
+    /// property once into a local rather than twice, for the same
+    /// double-compile reason.
+    var macroBudget: MacroBudget {
+        MacroBudget(capacity: macroCapacity, source: macroCapacitySource, document: document)
+    }
+
+    /// The macro currently open in the editor, if any. Named `currentMacro`
+    /// rather than `openMacro` because a property and a method cannot share
+    /// an identifier — `openMacro(id:)` below is the verb.
+    var currentMacro: MacroDefinition? {
+        guard let id = macroWorkspace.openMacroID else { return nil }
+        return document.macroList.first { $0.id == id }
+    }
+
+    /// The name for `macro:<id>`, used by `KeyCapView` — the one token whose
+    /// label isn't self-contained. Nil when the slot holds no macro, so the
+    /// keycap can fall back to the token's own "M<id>".
+    func macroName(for id: Int) -> String? {
+        document.macroList.first { $0.id == id }?.name
+    }
+
+    func createMacro() {
+        let macro = MacroDefinition(id: document.nextMacroID, name: "New macro", steps: [])
+        document.macros = document.macroList + [macro]
+        macroWorkspace = .editor(id: macro.id)
+        selectedStepIndex = nil
+        isDirty = true
+    }
+
+    /// No-op for an id with no macro -- a view should never call this with an
+    /// id it didn't get from `document.macroList`, but landing in an editor
+    /// for a macro that doesn't exist (where `currentMacro` then resolves to
+    /// nil) is worse than silently doing nothing.
+    func openMacro(id: Int) {
+        guard let macro = document.macroList.first(where: { $0.id == id }) else { return }
+        macroWorkspace = .editor(id: id)
+        selectedStepIndex = macro.steps.isEmpty ? nil : 0
+    }
+
+    func closeMacro() {
+        macroWorkspace = .library
+        selectedStepIndex = nil
+    }
+
+    /// Closes the editor only when the macro being edited is the one that
+    /// just vanished -- not on every deletion. Deleting a macro other than
+    /// the one currently open must leave that editor alone.
+    func deleteMacro(id: Int) {
+        document.macros = document.macroList.filter { $0.id != id }
+        if document.macroList.isEmpty { document.macros = nil }
+        if macroWorkspace.openMacroID == id { closeMacro() }
+        isDirty = true
+    }
+
+    func updateMacro(_ macro: MacroDefinition) {
+        guard let index = document.macroList.firstIndex(where: { $0.id == macro.id }) else { return }
+        var list = document.macroList
+        list[index] = macro
+        document.macros = list
+        isDirty = true
+    }
+
+    /// Applies `transform` to the macro currently open, if any.
+    private func mutateOpenMacro(_ transform: (inout MacroDefinition) -> Void) {
+        guard var macro = currentMacro else { return }
+        transform(&macro)
+        updateMacro(macro)
+    }
+
+    func appendStep(_ step: MacroStep) {
+        guard currentMacro != nil else { return }
+        mutateOpenMacro { $0.steps.append(step) }
+        selectedStepIndex = (currentMacro?.steps.count ?? 1) - 1
+    }
+
+    /// Inserts after the selected step, which is how a position is chosen
+    /// without drag-and-drop. With nothing selected, appends.
+    func insertStepAfterSelection(_ step: MacroStep) {
+        guard let selected = selectedStepIndex, currentMacro != nil else {
+            appendStep(step)
+            return
+        }
+        let target = selected + 1
+        mutateOpenMacro { $0.steps.insert(step, at: min(target, $0.steps.count)) }
+        // Clamp against the post-mutation state, not the unclamped `target`
+        // -- a stale `selectedStepIndex` (e.g. left over from a larger macro)
+        // must not leave the selection pointing past the array's new end.
+        let remaining = currentMacro?.steps.count ?? 0
+        selectedStepIndex = remaining == 0 ? nil : min(target, remaining - 1)
+    }
+
+    func moveStep(from source: Int, to destination: Int) {
+        guard let macro = currentMacro,
+              macro.steps.indices.contains(source),
+              macro.steps.indices.contains(destination)
+        else { return }
+        mutateOpenMacro {
+            let step = $0.steps.remove(at: source)
+            $0.steps.insert(step, at: destination)
+        }
+        selectedStepIndex = destination
+    }
+
+    func deleteStep(at index: Int) {
+        guard let macro = currentMacro, macro.steps.indices.contains(index) else { return }
+        mutateOpenMacro { $0.steps.remove(at: index) }
+        let remaining = currentMacro?.steps.count ?? 0
+        selectedStepIndex = remaining == 0 ? nil : min(index, remaining - 1)
     }
 }

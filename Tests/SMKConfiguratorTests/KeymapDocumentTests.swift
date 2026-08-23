@@ -49,6 +49,54 @@ struct KeymapDocumentTests {
         #expect(doc.layers[1][0] == ["trans", "none", "none", "custom:thing"])
     }
 
+    @Test("renumberLayerReferences also renumbers macro .layer steps, dropping the one that dangles")
+    func renumberAlsoWalksMacroLayerSteps() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [0], colsAreDriven: 0),
+            layers: [[["none"]]]
+        )
+        doc.macros = [
+            MacroDefinition(id: 0, name: "M", steps: [
+                .layer(op: .momentary, n: 0),  // below removed index 1: untouched
+                .layer(op: .toggle, n: 1),     // == removed index: dropped, no "none" step exists
+                .layer(op: .momentary, n: 2),  // above removed index: shifts down to 1
+                .delay(ms: 5),                 // not a layer step: untouched
+            ]),
+        ]
+
+        doc.renumberLayerReferences(afterRemoving: 1)
+
+        #expect(doc.macroList[0].steps == [
+            .layer(op: .momentary, n: 0),
+            .layer(op: .momentary, n: 1),
+            .delay(ms: 5),
+        ])
+    }
+
+    @Test("renumberLayerReferences recurses into repeatBlock bodies")
+    func renumberRecursesIntoRepeatBlocks() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [0], colsAreDriven: 0),
+            layers: [[["none"]]]
+        )
+        doc.macros = [
+            MacroDefinition(id: 0, name: "M", steps: [
+                .repeatBlock(count: 3, steps: [
+                    .layer(op: .toggle, n: 2),
+                    .layer(op: .momentary, n: 1),
+                ]),
+            ]),
+        ]
+
+        doc.renumberLayerReferences(afterRemoving: 1)
+
+        #expect(doc.macroList[0].steps == [
+            .repeatBlock(count: 3, steps: [
+                .layer(op: .toggle, n: 1),
+            ]),
+        ])
+    }
+
     @Test("renumberLayerReferences leaves everything below the removed layer alone")
     func renumberLeavesLowerReferencesAlone() {
         var doc = KeymapDocument(
@@ -73,5 +121,54 @@ struct KeymapDocumentTests {
         layer = [["key:a", "key:b"], ["key:c", "key:d"]]
         let shrunk = layer.reshaped(to: small)
         #expect(shrunk == [["key:a"]])
+    }
+
+    @Test("a document with no macros key does not gain one on save")
+    func absentMacrosKeyStaysAbsent() throws {
+        let json = """
+        {"matrix":{"rows":[0],"cols":[1],"colsAreDriven":1},"layers":[[["key:a"]]]}
+        """
+        let doc = try JSONDecoder().decode(KeymapDocument.self, from: Data(json.utf8))
+        #expect(doc.macros == nil)
+
+        let data = try JSONEncoder().encode(doc)
+        let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(object["macros"] == nil)
+    }
+
+    @Test("macros survive a document round-trip")
+    func macrosRoundTrip() throws {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["key:a"]]]
+        )
+        doc.macros = [MacroDefinition(id: 0, name: "Hi", steps: [.delay(ms: 5)])]
+
+        let data = try JSONEncoder().encode(doc)
+        let decoded = try JSONDecoder().decode(KeymapDocument.self, from: data)
+        #expect(decoded.macros == doc.macros)
+    }
+
+    @Test("macroList reads nil as empty")
+    func macroListTreatsNilAsEmpty() {
+        let doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["key:a"]]]
+        )
+        #expect(doc.macroList.isEmpty)
+    }
+
+    @Test("nextMacroID fills the lowest free slot")
+    func nextMacroIDFillsGaps() {
+        var doc = KeymapDocument(
+            matrix: .init(rows: [0], cols: [1], colsAreDriven: 1),
+            layers: [[["key:a"]]]
+        )
+        #expect(doc.nextMacroID == 0)
+        doc.macros = [
+            MacroDefinition(id: 0, name: "a", steps: []),
+            MacroDefinition(id: 2, name: "c", steps: []),
+        ]
+        #expect(doc.nextMacroID == 1)
     }
 }

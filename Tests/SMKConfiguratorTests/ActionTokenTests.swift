@@ -59,4 +59,17 @@ struct ActionTokenTests {
         #expect(ActionToken.parse("key:insert") == .key(.insert))
         #expect(ActionToken.parse("key:exsel") == .key(.exsel))
     }
+
+    @Test("macro tokens round-trip through macro:<id>", arguments: 0...31)
+    func macroRoundTrip(id: Int) {
+        let token = ActionToken.macro(id)
+        #expect(token.canonicalString == "macro:\(id)")
+        #expect(ActionToken.parse(token.canonicalString) == token)
+        #expect(token.displayLabel == "M\(id)")
+    }
+
+    @Test("a macro token with a non-numeric id is preserved as raw")
+    func malformedMacroStaysRaw() {
+        #expect(ActionToken.parse("macro:abc") == .raw("macro:abc"))
+    }
 }

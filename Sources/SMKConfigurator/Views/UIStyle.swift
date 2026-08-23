@@ -120,22 +120,42 @@ struct TapTarget<Content: View>: View {
     }
 }
 
-/// A 12px text pill in the titlebar toolbar group (`New`, `Open`, `Save`, …).
+/// A 12px text pill in the titlebar toolbar group (`New`, `Open`, `Save`, …),
+/// also used for accent-filled/disabled variants elsewhere (macro library's
+/// `New macro`/`Record new`, macro canvas's `Test run`/`Save`).
+///
+/// The horizontal padding lives on the `Text` *inside* `TapTarget`'s content
+/// closure, not as a modifier on the returned view -- padding applied
+/// outside `TapTarget` only pads the already-hugging pill within its own
+/// layout box, it does not grow the `RoundedRectangle` fill (see
+/// `TapTarget.body`'s two-pass ZStack sizing: the fill only picks up a
+/// sibling's larger size when that size is baked into the sibling's own
+/// layout, i.e. inside the closure). The explicit `.frame(height: 29)`
+/// mirrors `InspectorButton`/`PaletteChip` rather than relying on font
+/// metrics to land at a particular height.
 struct ToolbarPill: View {
     var label: String
+    var isAccent: Bool = false
+    var isEnabled: Bool = true
     var action: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     private var chrome: Chrome { Chrome(scheme: colorScheme) }
 
     var body: some View {
-        TapTarget(background: chrome.pillBackground, cornerRadius: 6, action: action) {
+        let fade = isEnabled ? 1.0 : 0.4
+        TapTarget(
+            background: (isAccent ? chrome.accent : chrome.pillBackground).opacity(fade),
+            cornerRadius: 6,
+            action: { if isEnabled { action() } }
+        ) {
             Text(label)
-                .font(.system(size: 12))
-                .foregroundColor(chrome.textPrimary)
+                .font(.system(size: 12, weight: isAccent ? .semibold : .regular))
+                .foregroundColor((isAccent ? .white : chrome.textPrimary).opacity(fade))
+                .padding(.horizontal, 10)
         }
-        .padding(EdgeInsets(top: 5, bottom: 5, leading: 10, trailing: 10))
-        .fixedSize()
+        .frame(height: 29)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
