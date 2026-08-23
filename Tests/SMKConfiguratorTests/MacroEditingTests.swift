@@ -425,4 +425,49 @@ struct MacroEditingTests {
         e.setMacroCollection(id: 1, nil)
         #expect(e.document.macroCollections == ["Work"])
     }
+
+    @Test("duplicating takes the lowest free slot and a derived name")
+    func duplicateTakesLowestFreeSlot() {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "Sign off", steps: [.delay(ms: 20)]))
+        #expect(e.duplicateMacro(id: 0))
+        #expect(e.document.macroList.count == 2)
+        let copy = e.document.macroList[1]
+        #expect(copy.id == 1)
+        #expect(copy.name == "Sign off copy")
+        #expect(copy.steps == [.delay(ms: 20)])
+    }
+
+    @Test("duplicating again doesn't collide with the first copy's name")
+    func duplicateNamesDoNotCollide() {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "A", steps: []))
+        e.duplicateMacro(id: 0)
+        e.duplicateMacro(id: 0)
+        #expect(e.document.macroList.map(\.name) == ["A", "A copy", "A copy 2"])
+    }
+
+    @Test("duplicating refuses when every slot is taken")
+    func duplicateRefusesWhenFull() {
+        let e = editor()
+        e.document.macros = (0...MacroDefinition.maxID).map {
+            MacroDefinition(id: $0, name: "M\($0)", steps: [])
+        }
+        #expect(e.duplicateMacro(id: 0) == false)
+        #expect(e.document.macroList.count == MacroDefinition.maxID + 1)
+        #expect(e.loadError != nil)
+    }
+
+    @Test("a duplicate carries enabled and collection across")
+    func duplicateCarriesFields() {
+        let e = editor()
+        e.createMacro()
+        e.setMacroCollection(id: 0, "Work")
+        e.setMacroEnabled(id: 0, false)
+        e.duplicateMacro(id: 0)
+        #expect(e.document.macroList[1].collection == "Work")
+        #expect(e.document.macroList[1].enabled == false)
+    }
 }

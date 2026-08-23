@@ -829,6 +829,39 @@ class EditorState {
         updateMacro(macro)
     }
 
+    /// Copies a macro into the lowest free slot, keeping everything about it
+    /// except its id and name. Returns false (and sets `loadError`) when
+    /// every slot in the format's `0...MacroDefinition.maxID` range is
+    /// taken, rather than silently overwriting one -- see the plan for why
+    /// the board's reported slot count deliberately isn't the limit here.
+    @discardableResult
+    func duplicateMacro(id: Int) -> Bool {
+        guard let source = document.macroList.first(where: { $0.id == id }) else { return false }
+        let slot = document.nextMacroID
+        guard slot <= MacroDefinition.maxID else {
+            loadError = "Every macro slot (0-\(MacroDefinition.maxID)) is in use; "
+                + "delete a macro before duplicating one."
+            return false
+        }
+        var copy = source
+        copy.id = slot
+        copy.name = Self.copyName(for: source.name, taken: Set(document.macroList.map(\.name)))
+        document.macros = document.macroList + [copy]
+        isDirty = true
+        return true
+    }
+
+    /// "A" -> "A copy" -> "A copy 2" -> "A copy 3". Deliberately not
+    /// "A copy copy": the suffix counts copies of the original, which is
+    /// what someone duplicating three times is actually producing.
+    private static func copyName(for name: String, taken: Set<String>) -> String {
+        let base = "\(name) copy"
+        if !taken.contains(base) { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
     /// Applies `transform` to the macro currently open, if any.
     private func mutateOpenMacro(_ transform: (inout MacroDefinition) -> Void) {
         guard var macro = currentMacro else { return }
