@@ -315,7 +315,7 @@ struct MacroLibraryView: View {
 /// without reintroducing exactly the split-gesture bug above. Deletion is
 /// still confirmed by an alert (`MacroLibraryView.confirmDelete`), so
 /// nothing became easier to do by accident.
-private struct MacroLibraryRowView: View {
+struct MacroLibraryRowView: View {
     var row: MacroLibraryRow
     var chrome: Chrome
     /// Whole-set capacity overage (not something one row alone caused --
@@ -383,12 +383,20 @@ private struct MacroLibraryRowView: View {
             .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
         }
         // Tall enough for the name plus the warning's two lines when there
-        // is one; the plain 40 otherwise, so an ordinary row is unchanged.
-        // A *minimum*, not a fixed height: the warning case is 16 + 2 + 26
-        // of text inside 20 of padding, which lands exactly on 64, so a
-        // longer trigger label or a larger system font would have nowhere
-        // to go under a strict frame and would clip. `minHeight` lets the
-        // row grow instead, and still reads as 40/64 in the common case.
+        // is one; a 40 floor otherwise. A *minimum*, not a fixed height:
+        // the warning case is 16 + 2 + 26 of text inside 20 of padding,
+        // which lands exactly on 64, so a longer trigger label or a larger
+        // system font would have nowhere to go under a strict frame and
+        // would clip. `minHeight` lets the row grow instead.
+        //
+        // An ordinary row no longer actually renders at 40: `collectionField`'s
+        // `TextField` has a natural height around 22, which inside this row's
+        // 20pt of vertical padding lands near 42 -- past the floor, so the
+        // floor doesn't bind and ordinary rows come out slightly taller than
+        // 40. That is the intended effect of a floor rather than a ceiling
+        // (the old strict frame this replaced was overflowing the control);
+        // only the previous claim that ordinary rows "still read as 40" was
+        // wrong.
         .frame(minHeight: row.disabledWarning == nil ? 40 : 64)
     }
 
@@ -477,12 +485,27 @@ private struct MacroLibraryRowView: View {
     /// draft is allowed to keep, so any other divergence -- a reload, an
     /// import, an edit from elsewhere -- means the model moved on its own
     /// and the draft is abandoned rather than shown over the top of it.
+    ///
+    /// Known limitation: `collectionDraft` is never cleared on focus loss,
+    /// so trailing whitespace a user typed can remain on screen after the
+    /// model has trimmed it away -- what is displayed can differ from what
+    /// is stored, by whitespace only. It self-heals on the next real model
+    /// change, so this is bounded and left alone rather than patched: there
+    /// is no focus-loss hook in this view to clear the draft from.
     private var collectionText: String {
-        let stored = row.collection ?? ""
-        guard let collectionDraft,
-              collectionDraft.trimmingCharacters(in: .whitespacesAndNewlines) == stored
+        Self.collectionText(draft: collectionDraft, stored: row.collection ?? "")
+    }
+
+    /// Pure form of the rule above, taking both strings directly so it is
+    /// testable without a view: no draft shows the stored value; a draft
+    /// that trims to the stored value shows the draft (this is the case
+    /// that lets a user type trailing/interior spaces without the
+    /// normalizer eating them mid-keystroke); anything else shows the
+    /// stored value, because the model has moved on its own.
+    nonisolated static func collectionText(draft: String?, stored: String) -> String {
+        guard let draft, draft.trimmingCharacters(in: .whitespacesAndNewlines) == stored
         else { return stored }
-        return collectionDraft
+        return draft
     }
 
     private func glyph(_ text: String, action: @escaping () -> Void,

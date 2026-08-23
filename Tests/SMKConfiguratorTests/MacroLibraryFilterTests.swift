@@ -122,3 +122,26 @@ struct MacroLibraryFilterTests {
         #expect(filter.apply(to: rows()).isEmpty)
     }
 }
+
+@Suite("The collection-field draft display rule")
+struct MacroLibraryRowCollectionTextTests {
+    @Test("no draft shows the stored value")
+    func noDraftShowsStored() {
+        #expect(MacroLibraryRowView.collectionText(draft: nil, stored: "Work") == "Work")
+    }
+
+    @Test("a draft matching the stored value is shown")
+    func draftMatchingStoredIsShown() {
+        #expect(MacroLibraryRowView.collectionText(draft: "Work", stored: "Work") == "Work")
+    }
+
+    @Test("a draft that no longer matches the stored value defers to the model")
+    func draftDivergingFromStoredShowsStored() {
+        #expect(MacroLibraryRowView.collectionText(draft: "Something else", stored: "Work") == "Work")
+    }
+
+    @Test("trailing whitespace the model trimmed away is preserved on screen")
+    func trailingWhitespaceIsPreserved() {
+        #expect(MacroLibraryRowView.collectionText(draft: "Work ", stored: "Work") == "Work ")
+    }
+}
