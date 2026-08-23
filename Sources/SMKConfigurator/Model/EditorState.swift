@@ -808,6 +808,27 @@ class EditorState {
         isDirty = true
     }
 
+    /// Disabling keeps the macro and its key bindings in `keymap.json` in
+    /// full -- it only stops the macro being compiled into the payload, so
+    /// the bytes it was spending come back (see `compileKeymap`). Any key
+    /// bound to it compiles as a dead key until it is re-enabled.
+    func setMacroEnabled(id: Int, _ enabled: Bool) {
+        guard var macro = document.macroList.first(where: { $0.id == id }) else { return }
+        macro.enabled = enabled
+        updateMacro(macro)
+    }
+
+    /// A blank or whitespace-only name reads as ungrouped rather than
+    /// creating a collection whose name renders as nothing -- the picker
+    /// derives its options from these strings, and an invisible option is
+    /// unselectable in practice.
+    func setMacroCollection(id: Int, _ collection: String?) {
+        guard var macro = document.macroList.first(where: { $0.id == id }) else { return }
+        let trimmed = collection?.trimmingCharacters(in: .whitespacesAndNewlines)
+        macro.collection = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        updateMacro(macro)
+    }
+
     /// Applies `transform` to the macro currently open, if any.
     private func mutateOpenMacro(_ transform: (inout MacroDefinition) -> Void) {
         guard var macro = currentMacro else { return }

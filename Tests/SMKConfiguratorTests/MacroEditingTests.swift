@@ -384,4 +384,45 @@ struct MacroEditingTests {
         #expect(e.macroWorkspace == .library)
         #expect(e.selectedStepIndex == nil)
     }
+
+    @Test("disabling a macro marks the document dirty and keeps the macro")
+    func disableKeepsMacro() {
+        let e = editor()
+        e.createMacro()
+        e.isDirty = false
+        e.setMacroEnabled(id: 0, false)
+        #expect(e.document.macroList.count == 1)
+        #expect(e.document.macroList[0].enabled == false)
+        #expect(e.isDirty)
+    }
+
+    @Test("assigning a collection stores it, and clearing it stores nil")
+    func collectionAssignment() {
+        let e = editor()
+        e.createMacro()
+        e.setMacroCollection(id: 0, "Work")
+        #expect(e.document.macroList[0].collection == "Work")
+        e.setMacroCollection(id: 0, nil)
+        #expect(e.document.macroList[0].collection == nil)
+    }
+
+    @Test("a blank or whitespace collection reads as ungrouped")
+    func blankCollectionIsNil() {
+        let e = editor()
+        e.createMacro()
+        e.setMacroCollection(id: 0, "   ")
+        #expect(e.document.macroList[0].collection == nil)
+    }
+
+    @Test("collections derive from macros, so emptying one removes it")
+    func collectionsDerive() {
+        let e = editor()
+        e.createMacro()                       // id 0
+        e.createMacro()                       // id 1
+        e.setMacroCollection(id: 0, "Work")
+        e.setMacroCollection(id: 1, "Play")
+        #expect(e.document.macroCollections == ["Play", "Work"])
+        e.setMacroCollection(id: 1, nil)
+        #expect(e.document.macroCollections == ["Work"])
+    }
 }
