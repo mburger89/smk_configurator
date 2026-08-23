@@ -599,6 +599,20 @@ extension MacroStep {
         case .raw: return ""
         }
     }
+
+    /// Everything about this step the library's search should match on.
+    /// Recurses into a `.repeatBlock`'s body: its own `payloadSummary` is
+    /// "Repeat 2 steps 3 times", which says nothing about what those steps
+    /// contain, and text buried in a repeat is exactly the kind of thing
+    /// someone searches for.
+    var searchableText: String {
+        switch self {
+        case .repeatBlock(_, let steps):
+            return ([payloadSummary] + steps.map(\.searchableText)).joined(separator: " ")
+        default:
+            return "\(payloadSummary) \(metadataLabel)"
+        }
+    }
 }
 
 extension MacroDefinition {
