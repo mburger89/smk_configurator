@@ -293,7 +293,7 @@ private func encodeMacroStep(_ step: MacroStep, describedAs macroDescription: St
         // `delivery`. The byte itself stays reserved rather than removed:
         // the firmware's decoder (`~/esp/SMK/Sources/SMKCore/
         // KeymapBinary.swift`) expects this exact stride, and changing it
-        // would churn a wire-format contract three implementations share
+        // would churn a wire-format contract four implementations share
         // for no gain. `TextDelivery.paste` still round-trips through the
         // JSON model (see Model/Macro.swift) so an existing keymap.json
         // that carries `"delivery": "paste"` still loads losslessly --

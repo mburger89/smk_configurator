@@ -167,13 +167,19 @@ This app is written against a specific version of `~/esp/SMK` and several places
   rather than truncating, wrapping, or silently dropping it — refusing to
   flash a token the firmware could never have executed anyway.
 
-  **Three independent implementations must agree on this format, and
+  **Four independent implementations must agree on this format, and
   changing one without the others silently breaks uploads or storage:**
   this compiler (`Model/KeymapCompiler.swift`), the firmware's decoder
-  (`~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`), and the firmware's
+  (`~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`), the firmware's
   `~/esp/SMK/generate_default_keymap.sh` (which compiles the reference
   `keymap.json` into a literal Swift array at build time, using the same
-  tag layout, so the compiled-in factory-reset default agrees too).
+  tag layout, so the compiled-in factory-reset default agrees too), and
+  the firmware's test-only encoder
+  (`~/esp/SMK/Tests/SMKCoreTests/PayloadBuilder.swift`, which keeps the
+  host tests readable and is pinned byte-for-byte against the shell
+  generator by its own `builderMatchesShellGenerator`). The fourth is easy
+  to miss from this side because it never ships in firmware or here --
+  `~/esp/SMK/CLAUDE.md` counts four and is the authority on that list.
 
   **`CAPS`** (opcode `0x05` on the existing BEGIN/CHUNK/COMMIT/ERASE
   transport — `~/esp/SMK/Sources/SMKCore/KeymapProtocol.swift`'s
