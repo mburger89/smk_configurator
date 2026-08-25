@@ -255,6 +255,20 @@ struct MacroCapacityTests {
         #expect(budget.canFlash == false)
         #expect(budget.blockReason?.contains("compile") == true)
     }
+
+    @Test("a disabled macro spends no slots and no bytes")
+    func disabledMacroIsFree() {
+        let steps: [MacroStep] = [.text("hello", delivery: .keystrokes, msPerChar: 10)]
+        let enabled = MacroDefinition(id: 0, name: "A", steps: steps)
+        var disabled = MacroDefinition(id: 1, name: "B", steps: steps)
+        disabled.enabled = false
+
+        let both = MacroBudget(capacity: .floor, source: .device, macros: [enabled, disabled])
+        let one = MacroBudget(capacity: .floor, source: .device, macros: [enabled])
+
+        #expect(both.usedSlots == 1)
+        #expect(both.usedBytes == one.usedBytes)
+    }
 }
 
 /// The `.device` source in `MacroCapacitySource` has never been reachable

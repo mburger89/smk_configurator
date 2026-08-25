@@ -272,20 +272,48 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
     var name: String
     var steps: [MacroStep]
 
+    /// Whether this macro is compiled into the payload uploaded to a board.
+    /// A disabled macro stays in `keymap.json` in full, but `compileKeymap`
+    /// omits it and compiles every cell bound to it as `none` -- so
+    /// disabling frees real bytes against the budget macros share with
+    /// layers, which is the main reason to want it. Re-enabling restores
+    /// the key with no re-binding, because the `macro:<id>` token was never
+    /// removed from the document.
+    ///
+    /// Defaults to `true` and is only *encoded* when false: every macro
+    /// written before this field existed must keep loading as enabled, and
+    /// opening and saving such a file must not add a key to it.
+    var enabled: Bool = true
+
+    /// An optional grouping label for the library, `nil` meaning ungrouped.
+    /// Purely an editor concept -- the firmware never sees it.
+    ///
+    /// Lives on the macro rather than in an editor-side store keyed by id,
+    /// which would be actively wrong: `KeymapDocument.nextMacroID` hands out
+    /// the lowest free slot, so deleting macro 0 and creating another gives
+    /// the new macro id 0, and any side store would silently re-attribute
+    /// the deleted macro's collection to its replacement.
+    var collection: String? = nil
+
     /// Any per-macro field this build doesn't have a model property for --
-    /// e.g. a future build's "enabled" flag. Carried through unchanged on
-    /// save, same lossless principle as `MacroStep.raw`: this build not
-    /// knowing a field must not mean it gets to delete it.
+    /// e.g. a future build's "repeatWhileHeld" flag -- plus any *known*
+    /// field whose value had the wrong type to decode (see `init(from:)`).
+    /// Carried through unchanged on save, same lossless principle as
+    /// `MacroStep.raw`: this build not understanding something must not
+    /// mean it gets to delete it.
     private var unknownFields: [String: JSONValue] = [:]
 
-    init(id: Int, name: String, steps: [MacroStep]) {
+    init(id: Int, name: String, steps: [MacroStep],
+         enabled: Bool = true, collection: String? = nil) {
         self.id = id
         self.name = name
         self.steps = steps
+        self.enabled = enabled
+        self.collection = collection
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, steps
+        case id, name, steps, enabled, collection
     }
 
     init(from decoder: Decoder) throws {
@@ -294,8 +322,43 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
         name = try c.decode(String.self, forKey: .name)
         steps = try c.decode([MacroStep].self, forKey: .steps)
 
+        // A *known* key whose value has the wrong type is preserved
+        // verbatim rather than coerced, exactly as an unknown step becomes
+        // `MacroStep.raw`: `{"enabled": "yes"}` was written by something,
+        // and silently rewriting it to `true` destroys the only evidence of
+        // what that something meant. The macro reads as its default in this
+        // build; `encode(to:)` puts the original value back.
+        //
+        // `contains` is checked first rather than leaning on `try?`: Swift
+        // flattens `try?` over an already-optional expression (SE-0230), so
+        // a `try? decodeIfPresent` result of nil cannot distinguish "absent"
+        // from "threw" -- and only the second of those is malformed.
+        var malformed: [String] = []
+        if c.contains(.enabled) {
+            if let decoded = try? c.decode(Bool.self, forKey: .enabled) {
+                enabled = decoded
+            } else {
+                enabled = true
+                malformed.append(CodingKeys.enabled.stringValue)
+            }
+        } else {
+            enabled = true
+        }
+        if c.contains(.collection) {
+            if let decoded = try? c.decode(String.self, forKey: .collection) {
+                collection = decoded
+            } else {
+                collection = nil
+                malformed.append(CodingKeys.collection.stringValue)
+            }
+        } else {
+            collection = nil
+        }
+
         let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)
-        for key in dynamic.allKeys where CodingKeys(stringValue: key.stringValue) == nil {
+        for key in dynamic.allKeys
+        where CodingKeys(stringValue: key.stringValue) == nil
+            || malformed.contains(key.stringValue) {
             unknownFields[key.stringValue] = try dynamic.decode(JSONValue.self, forKey: key)
         }
     }
@@ -305,9 +368,30 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
         try c.encode(id, forKey: .id)
         try c.encode(name, forKey: .name)
         try c.encode(steps, forKey: .steps)
+        // Non-default only: an existing file must not gain keys merely from
+        // being opened and saved.
+        if !enabled { try c.encode(false, forKey: .enabled) }
+        if let collection { try c.encode(collection, forKey: .collection) }
 
         var dynamic = encoder.container(keyedBy: DynamicCodingKey.self)
         for (key, value) in unknownFields {
+            // A preserved malformed value and a real one would otherwise
+            // both be written, leaving the same key twice in one object.
+            // The real value wins: the user set it in this build.
+            //
+            // The skip is non-default-only, which is deliberately asymmetric:
+            // a file with `{"enabled":"yes"}` decodes as enabled (the
+            // malformed value stashed in `unknownFields`) and, so long as it
+            // stays enabled, re-encodes with the original `"yes"` still
+            // preserved. But toggle it off then back on in this build and
+            // `enabled` passes back through its default (`true`), so the
+            // guard below no longer suppresses the stash and `"enabled":"yes"`
+            // is written out again alongside nothing contradicting it. That
+            // is not a bug: the malformed value was never discarded, only
+            // shadowed by a real one while that real one held a non-default
+            // value, and reappears exactly when it stops being shadowed.
+            if key == CodingKeys.enabled.stringValue && !enabled { continue }
+            if key == CodingKeys.collection.stringValue && collection != nil { continue }
             guard let codingKey = DynamicCodingKey(stringValue: key) else { continue }
             try dynamic.encode(value, forKey: codingKey)
         }
@@ -525,6 +609,20 @@ extension MacroStep {
         case .layer(let op, let n): return "\(op.rawValue.uppercased())\(n)"
         case .repeatBlock(let count, _): return "\(count)×"
         case .raw: return ""
+        }
+    }
+
+    /// Everything about this step the library's search should match on.
+    /// Recurses into a `.repeatBlock`'s body: its own `payloadSummary` is
+    /// "Repeat 2 steps 3 times", which says nothing about what those steps
+    /// contain, and text buried in a repeat is exactly the kind of thing
+    /// someone searches for.
+    var searchableText: String {
+        switch self {
+        case .repeatBlock(_, let steps):
+            return ([payloadSummary] + steps.map(\.searchableText)).joined(separator: " ")
+        default:
+            return "\(payloadSummary) \(metadataLabel)"
         }
     }
 }

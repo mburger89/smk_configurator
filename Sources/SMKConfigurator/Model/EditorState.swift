@@ -278,16 +278,23 @@ class EditorState {
     /// original "capacity, then compile" — here's why, in the order these
     /// guards actually run:
     ///
-    /// 1. `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
-    ///    step's `msPerChar`, a `.repeatBlock`'s `count`, a macro's `id`, a
-    ///    `.layer` step's target index, plus the three checks the compiled-
-    ///    size/JSON-size guards already implied for name/step-count/payload
-    ///    length) can hold a value up to 255 no matter what any size meter
-    ///    says — a 300-count repeat is a handful of bytes either way, small
-    ///    enough to sail through every other guard, but wraps around in the
-    ///    one byte the firmware reads it into. UI sliders keep this from
-    ///    happening via the editor, but a decoded `keymap.json` isn't bound
-    ///    by the UI, so this runs here too.
+    /// 1. `MacroDefinition.overflows`, checked only for `enabled` macros: a
+    ///    one-byte bytecode field (a `.text` step's `msPerChar`, a
+    ///    `.repeatBlock`'s `count`, a macro's `id`, a `.layer` step's target
+    ///    index, plus the three checks the compiled-size/JSON-size guards
+    ///    already implied for name/step-count/payload length) can hold a
+    ///    value up to 255 no matter what any size meter says — a 300-count
+    ///    repeat is a handful of bytes either way, small enough to sail
+    ///    through every other guard, but wraps around in the one byte the
+    ///    firmware reads it into. UI sliders keep this from happening via
+    ///    the editor, but a decoded `keymap.json` isn't bound by the UI, so
+    ///    this runs here too. A disabled macro is exempt: `compileKeymap`
+    ///    filters `document.macroList` down to `\.enabled` (as does
+    ///    `MacroBudget`), so a disabled macro contributes zero bytes to the
+    ///    payload — the firmware reads no byte for a macro that was never
+    ///    written into it — and blocking an upload over a field it will
+    ///    never see would be refusing a flash the document can actually
+    ///    perform.
     /// 2. The re-entrancy guard, moved first among the remaining checks
     ///    (previously between the capacity and compile guards) so an
     ///    already-in-flight send skips the compiling this method now does
@@ -325,7 +332,7 @@ class EditorState {
     /// touches a transport and each guard's effect is observable without
     /// awaiting anything.
     func sendToDevice() {
-        let overflows = document.macroList.flatMap(\.overflows)
+        let overflows = document.macroList.filter(\.enabled).flatMap(\.overflows)
         guard overflows.isEmpty else {
             loadError = overflows.map(\.message).joined(separator: " ")
             return
@@ -806,6 +813,97 @@ class EditorState {
         list[index] = macro
         document.macros = list
         isDirty = true
+    }
+
+    /// Disabling keeps the macro and its key bindings in `keymap.json` in
+    /// full -- it only stops the macro being compiled into the payload, so
+    /// the bytes it was spending come back (see `compileKeymap`). Any key
+    /// bound to it compiles as a dead key until it is re-enabled.
+    func setMacroEnabled(id: Int, _ enabled: Bool) {
+        guard var macro = document.macroList.first(where: { $0.id == id }) else { return }
+        macro.enabled = enabled
+        updateMacro(macro)
+    }
+
+    /// A blank or whitespace-only name reads as ungrouped rather than
+    /// creating a collection whose name renders as nothing -- the picker
+    /// derives its options from these strings, and an invisible option is
+    /// unselectable in practice.
+    func setMacroCollection(id: Int, _ collection: String?) {
+        guard var macro = document.macroList.first(where: { $0.id == id }) else { return }
+        let trimmed = collection?.trimmingCharacters(in: .whitespacesAndNewlines)
+        macro.collection = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        updateMacro(macro)
+    }
+
+    /// Copies a macro into the lowest free slot, keeping everything about it
+    /// except its id and name. Returns false (and sets `loadError`) when
+    /// every slot in the format's `0...MacroDefinition.maxID` range is
+    /// taken, rather than silently overwriting one -- see the plan for why
+    /// the board's reported slot count deliberately isn't the limit here.
+    @discardableResult
+    func duplicateMacro(id: Int) -> Bool {
+        guard let source = document.macroList.first(where: { $0.id == id }) else { return false }
+        let slot = document.nextMacroID
+        guard slot <= MacroDefinition.maxID else {
+            loadError = "Every macro slot (0-\(MacroDefinition.maxID)) is in use; "
+                + "delete a macro before duplicating one."
+            return false
+        }
+        var copy = source
+        copy.id = slot
+        copy.name = Self.copyName(for: source.name, taken: Set(document.macroList.map(\.name)))
+        document.macros = document.macroList + [copy]
+        isDirty = true
+        return true
+    }
+
+    /// "A" -> "A copy" -> "A copy 2" -> "A copy 3". Deliberately not
+    /// "A copy copy": the suffix counts copies of the original, which is
+    /// what someone duplicating three times is actually producing.
+    private static func copyName(for name: String, taken: Set<String>) -> String {
+        let base = "\(name) copy"
+        if !taken.contains(base) { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
+    /// One macro per file, so a single macro can be shared. A whole-library
+    /// file couldn't, and would replace rather than merge on the way back in.
+    func exportMacro(_ macro: MacroDefinition, to url: URL) {
+        _ = writeJSON(macro, to: url, errorContext: "export macro \"\(macro.name)\"")
+    }
+
+    /// Imports one exported macro into the lowest free slot. The id in the
+    /// file is ignored: it is the slot the macro happened to occupy in the
+    /// document it came from, and almost certainly collides here.
+    ///
+    /// Decodes through the same `MacroDefinition` path as `keymap.json`, so
+    /// a file carrying fields this build doesn't know -- or a known field
+    /// with a mistyped value -- is preserved rather than coerced or
+    /// rejected. What it will not accept is a file that isn't a macro at
+    /// all; that fails with a message naming the file.
+    @discardableResult
+    func importMacro(from url: URL) -> Bool {
+        let slot = document.nextMacroID
+        guard slot <= MacroDefinition.maxID else {
+            loadError = "Every macro slot (0-\(MacroDefinition.maxID)) is in use; "
+                + "delete a macro before importing one."
+            return false
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            var macro = try JSONDecoder().decode(MacroDefinition.self, from: data)
+            macro.id = slot
+            document.macros = document.macroList + [macro]
+            isDirty = true
+            return true
+        } catch {
+            loadError = "Couldn't import a macro from \(url.lastPathComponent): "
+                + error.localizedDescription
+            return false
+        }
     }
 
     /// Applies `transform` to the macro currently open, if any.

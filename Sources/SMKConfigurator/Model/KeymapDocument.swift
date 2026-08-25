@@ -35,6 +35,14 @@ struct KeymapDocument: Codable, Equatable {
         return candidate
     }
 
+    /// Every collection name currently in use, sorted. Derived rather than
+    /// stored: a collection is just a string on a macro, so emptying the
+    /// last macro out of one makes it disappear on its own, with no
+    /// separate list to keep in sync or garbage-collect.
+    var macroCollections: [String] {
+        Set(macroList.compactMap(\.collection)).sorted()
+    }
+
     /// A fresh, empty keymap sized for `design`: one layer, every cell
     /// (including gaps, which the firmware never reads since no switch
     /// exists there) set to "none". Keeping a full rectangular grid, gaps

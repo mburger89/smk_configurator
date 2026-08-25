@@ -314,6 +314,43 @@ struct MacroEditingTests {
         #expect(e.loadError == expected)
     }
 
+    @Test("a disabled macro's overflow is not the upload's problem: the overflow guard skips macros the payload will never contain")
+    func sendToDeviceIgnoresOverflowOnDisabledMacro() throws {
+        let e = editor()
+        // Same overflowing repeat count as sendToDeviceRefusesOverflowingMacro
+        // above, but this macro is disabled -- compileKeymap and MacroBudget
+        // both filter document.macroList down to `\.enabled` before doing
+        // anything with it, so this macro contributes zero bytes to the
+        // payload and the firmware never reads its (invalid) repeat count.
+        // The overflow guard must agree, or it blocks an upload the document
+        // can actually perform.
+        //
+        // Paired with an unrecognized token in the layers (guard 3, a
+        // guaranteed *synchronous* compile failure) rather than left
+        // otherwise-clean: if every guard passed, sendToDevice() would reach
+        // the real `Task { ... USBRawHIDTransport ... }` step and could open
+        // a genuine USB/BLE connection on a dev machine with a board
+        // plugged in -- see sendToDeviceGuardPassesWithinCapacity's comment
+        // on why that risk is deliberately avoided in this test file. The
+        // pairing keeps this test hardware-safe while still proving what
+        // matters: the error that comes back is the compiler's, never the
+        // disabled macro's overflow message, because the overflow guard
+        // exempted it before the compile guard ever ran.
+        e.document.layers[0][0][0] = "totally-bogus-token"
+        e.document.macros = [
+            MacroDefinition(id: 0, name: "m",
+                            steps: [.repeatBlock(count: 300, steps: [.delay(ms: 1)])],
+                            enabled: false),
+        ]
+
+        e.sendToDevice()
+
+        #expect(e.isSendingToDevice == false)
+        let message = try #require(e.loadError)
+        #expect(message.contains("totally-bogus-token"))
+        #expect(message != MacroOverflow.repeatCountTooLarge(count: 300).message)
+    }
+
     @Test("a library row derives its trigger from wherever the macro is bound")
     func rowFindsTrigger() {
         var doc = KeymapDocument(
@@ -383,5 +420,154 @@ struct MacroEditingTests {
 
         #expect(e.macroWorkspace == .library)
         #expect(e.selectedStepIndex == nil)
+    }
+
+    @Test("disabling a macro marks the document dirty and keeps the macro")
+    func disableKeepsMacro() {
+        let e = editor()
+        e.createMacro()
+        e.isDirty = false
+        e.setMacroEnabled(id: 0, false)
+        #expect(e.document.macroList.count == 1)
+        #expect(e.document.macroList[0].enabled == false)
+        #expect(e.isDirty)
+    }
+
+    @Test("assigning a collection stores it, and clearing it stores nil")
+    func collectionAssignment() {
+        let e = editor()
+        e.createMacro()
+        e.setMacroCollection(id: 0, "Work")
+        #expect(e.document.macroList[0].collection == "Work")
+        e.setMacroCollection(id: 0, nil)
+        #expect(e.document.macroList[0].collection == nil)
+    }
+
+    @Test("a blank or whitespace collection reads as ungrouped")
+    func blankCollectionIsNil() {
+        let e = editor()
+        e.createMacro()
+        e.setMacroCollection(id: 0, "   ")
+        #expect(e.document.macroList[0].collection == nil)
+    }
+
+    @Test("collections derive from macros, so emptying one removes it")
+    func collectionsDerive() {
+        let e = editor()
+        e.createMacro()                       // id 0
+        e.createMacro()                       // id 1
+        e.setMacroCollection(id: 0, "Work")
+        e.setMacroCollection(id: 1, "Play")
+        #expect(e.document.macroCollections == ["Play", "Work"])
+        e.setMacroCollection(id: 1, nil)
+        #expect(e.document.macroCollections == ["Work"])
+    }
+
+    @Test("duplicating takes the lowest free slot and a derived name")
+    func duplicateTakesLowestFreeSlot() {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "Sign off", steps: [.delay(ms: 20)]))
+        #expect(e.duplicateMacro(id: 0))
+        #expect(e.document.macroList.count == 2)
+        let copy = e.document.macroList[1]
+        #expect(copy.id == 1)
+        #expect(copy.name == "Sign off copy")
+        #expect(copy.steps == [.delay(ms: 20)])
+    }
+
+    @Test("duplicating again doesn't collide with the first copy's name")
+    func duplicateNamesDoNotCollide() {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "A", steps: []))
+        e.duplicateMacro(id: 0)
+        e.duplicateMacro(id: 0)
+        #expect(e.document.macroList.map(\.name) == ["A", "A copy", "A copy 2"])
+    }
+
+    @Test("duplicating refuses when every slot is taken")
+    func duplicateRefusesWhenFull() {
+        let e = editor()
+        e.document.macros = (0...MacroDefinition.maxID).map {
+            MacroDefinition(id: $0, name: "M\($0)", steps: [])
+        }
+        #expect(e.duplicateMacro(id: 0) == false)
+        #expect(e.document.macroList.count == MacroDefinition.maxID + 1)
+        #expect(e.loadError != nil)
+    }
+
+    @Test("a duplicate carries enabled and collection across")
+    func duplicateCarriesFields() {
+        let e = editor()
+        e.createMacro()
+        e.setMacroCollection(id: 0, "Work")
+        e.setMacroEnabled(id: 0, false)
+        e.duplicateMacro(id: 0)
+        #expect(e.document.macroList[1].collection == "Work")
+        #expect(e.document.macroList[1].enabled == false)
+    }
+
+    @Test("a macro exports and imports back, keeping its steps and fields")
+    func exportImportRoundTrips() throws {
+        let e = editor()
+        e.createMacro()
+        e.updateMacro(MacroDefinition(id: 0, name: "Sign off", steps: [.delay(ms: 30)],
+                                      enabled: false, collection: "Work"))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        e.exportMacro(e.document.macroList[0], to: url)
+        #expect(e.importMacro(from: url))
+
+        let imported = e.document.macroList[1]
+        #expect(imported.name == "Sign off")
+        #expect(imported.steps == [.delay(ms: 30)])
+        #expect(imported.enabled == false)
+        #expect(imported.collection == "Work")
+    }
+
+    @Test("import assigns a fresh slot rather than the id in the file")
+    func importAssignsFreshSlot() throws {
+        let e = editor()
+        e.createMacro()   // occupies slot 0
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let json = #"{"id":0,"name":"Imported","steps":[]}"#
+        try Data(json.utf8).write(to: url)
+
+        #expect(e.importMacro(from: url))
+        #expect(e.document.macroList.map(\.id) == [0, 1])
+        #expect(e.document.macroList[1].name == "Imported")
+    }
+
+    @Test("importing a file that isn't a macro fails and names the file")
+    func importRejectsNonMacro() throws {
+        let e = editor()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("not-a-macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"hello":"world"}"#.utf8).write(to: url)
+
+        #expect(e.importMacro(from: url) == false)
+        #expect(e.document.macroList.isEmpty)
+        #expect(e.loadError?.contains(url.lastPathComponent) == true)
+    }
+
+    @Test("importing refuses when every slot is taken")
+    func importRefusesWhenFull() throws {
+        let e = editor()
+        e.document.macros = (0...MacroDefinition.maxID).map {
+            MacroDefinition(id: $0, name: "M\($0)", steps: [])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macro-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"id":0,"name":"Imported","steps":[]}"#.utf8).write(to: url)
+
+        #expect(e.importMacro(from: url) == false)
+        #expect(e.loadError != nil)
     }
 }

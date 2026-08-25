@@ -30,6 +30,7 @@ struct BinaryFormatAgreementTests {
 
     enum FixtureError: Error, CustomStringConvertible {
         case noArrayLiteral
+        case noElseBranch
         case noClosingBracket
         case invalidByte(String)
 
@@ -38,6 +39,10 @@ struct BinaryFormatAgreementTests {
             case .noArrayLiteral:
                 return "DefaultKeymapGenerated.swift no longer contains " +
                     "\"let defaultKeymapBytes: [UInt8] = [\" -- generator output shape changed"
+            case .noElseBranch:
+                return "DefaultKeymapGenerated.swift has no \"#else\" branch -- the generator " +
+                    "emits one #if chain over every board and the #else is smk_kbd, the board " +
+                    "keymap.json describes and the one a flagless build compiles"
             case .noClosingBracket:
                 return "DefaultKeymapGenerated.swift's byte array literal has no closing \"]\""
             case .invalidByte(let token):
@@ -70,11 +75,31 @@ struct BinaryFormatAgreementTests {
     /// output shape ever changes (different variable name, different
     /// bracket placement, a non-numeric token), this throws rather than
     /// silently matching against an empty or wrong array.
+    ///
+    /// Takes the array from the **`#else` branch specifically**, not the
+    /// first one in the file. The generator emits one `#if`/`#elseif` chain
+    /// over every board in `~/esp/SMK/boards/`, each branch declaring its own
+    /// `defaultKeymapBytes`; the first branch is currently `nrf52840dk`.
+    /// Three boards share `keymap.json`'s layers via `layersFrom` and differ
+    /// only in their matrices, so matching the first branch compares this
+    /// compiler's smk_kbd matrix against another board's and diverges at
+    /// byte 2 (`colsAreDriven`) with byte-identical layers after it -- which
+    /// is exactly what happened when the firmware's cJSON retirement turned
+    /// a single-payload file into that chain. `#else` is smk_kbd: the board
+    /// `keymap.json`'s `matrix` actually describes, and the payload a build
+    /// with no `SMK_BOARD_*` flag compiles.
     static func parseGeneratedBytes(from text: String) throws -> [UInt8] {
-        guard let markerRange = text.range(of: "let defaultKeymapBytes: [UInt8] = [") else {
+        // Matched with its trailing newline: a bare "#else" is a prefix of
+        // "#elseif", so the loose form finds the chain's second *branch*
+        // (feather_nrf52840, a six-byte header) instead of its else.
+        guard let elseRange = text.range(of: "\n#else\n") else {
+            throw FixtureError.noElseBranch
+        }
+        let afterElse = text[elseRange.upperBound...]
+        guard let markerRange = afterElse.range(of: "let defaultKeymapBytes: [UInt8] = [") else {
             throw FixtureError.noArrayLiteral
         }
-        let afterMarker = text[markerRange.upperBound...]
+        let afterMarker = afterElse[markerRange.upperBound...]
         guard let closeRange = afterMarker.range(of: "\n]") else {
             throw FixtureError.noClosingBracket
         }
