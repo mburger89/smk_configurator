@@ -4,11 +4,14 @@ import Testing
 
 /// The cross-repo agreement check for the binary keymap wire format.
 ///
-/// Three independent implementations of this format now exist: this editor's
+/// Four independent implementations of this format now exist: this editor's
 /// `compileKeymap` (`Sources/SMKConfigurator/Model/KeymapCompiler.swift`),
 /// the firmware's decoder (`~/esp/SMK/Sources/SMKCore/KeymapBinary.swift`),
-/// and the firmware's build-time generator
-/// (`~/esp/SMK/generate_default_keymap.sh`). Nothing but a test keeps them
+/// the firmware's build-time generator
+/// (`~/esp/SMK/generate_default_keymap.sh`), and the firmware's test-only
+/// encoder (`~/esp/SMK/Tests/SMKCoreTests/PayloadBuilder.swift`, pinned
+/// against that generator by its own `builderMatchesShellGenerator` --
+/// this suite covers the first three only). Nothing but a test keeps them
 /// agreeing -- this format has already diverged once (an implementer, told
 /// the layout lived in a doc that turned out to be on an unmerged branch,
 /// invented an incompatible 0-based-tag scheme where the real contract uses
