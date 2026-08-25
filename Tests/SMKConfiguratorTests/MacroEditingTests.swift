@@ -314,6 +314,43 @@ struct MacroEditingTests {
         #expect(e.loadError == expected)
     }
 
+    @Test("a disabled macro's overflow is not the upload's problem: the overflow guard skips macros the payload will never contain")
+    func sendToDeviceIgnoresOverflowOnDisabledMacro() throws {
+        let e = editor()
+        // Same overflowing repeat count as sendToDeviceRefusesOverflowingMacro
+        // above, but this macro is disabled -- compileKeymap and MacroBudget
+        // both filter document.macroList down to `\.enabled` before doing
+        // anything with it, so this macro contributes zero bytes to the
+        // payload and the firmware never reads its (invalid) repeat count.
+        // The overflow guard must agree, or it blocks an upload the document
+        // can actually perform.
+        //
+        // Paired with an unrecognized token in the layers (guard 3, a
+        // guaranteed *synchronous* compile failure) rather than left
+        // otherwise-clean: if every guard passed, sendToDevice() would reach
+        // the real `Task { ... USBRawHIDTransport ... }` step and could open
+        // a genuine USB/BLE connection on a dev machine with a board
+        // plugged in -- see sendToDeviceGuardPassesWithinCapacity's comment
+        // on why that risk is deliberately avoided in this test file. The
+        // pairing keeps this test hardware-safe while still proving what
+        // matters: the error that comes back is the compiler's, never the
+        // disabled macro's overflow message, because the overflow guard
+        // exempted it before the compile guard ever ran.
+        e.document.layers[0][0][0] = "totally-bogus-token"
+        e.document.macros = [
+            MacroDefinition(id: 0, name: "m",
+                            steps: [.repeatBlock(count: 300, steps: [.delay(ms: 1)])],
+                            enabled: false),
+        ]
+
+        e.sendToDevice()
+
+        #expect(e.isSendingToDevice == false)
+        let message = try #require(e.loadError)
+        #expect(message.contains("totally-bogus-token"))
+        #expect(message != MacroOverflow.repeatCountTooLarge(count: 300).message)
+    }
+
     @Test("a library row derives its trigger from wherever the macro is bound")
     func rowFindsTrigger() {
         var doc = KeymapDocument(

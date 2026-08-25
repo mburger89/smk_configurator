@@ -116,12 +116,20 @@ struct MacroLibraryFilter: Equatable {
 /// rather than a reserved string: the picker's domain is built from
 /// user-entered collection names, so any sentinel drawn from the same
 /// `String` space collides with a macro that happens to use that exact
-/// name -- and `_BuiltinPickerStyle` maps selections back by
-/// `firstIndex(of:)` on `"\(value)"`, so the collision is silent and
-/// unfixable at the binding: two rows read identically, the first always
-/// wins, and a macro genuinely in a collection named the same as the
-/// sentinel could never be filtered for. `MacroLibraryRowView` dropped a
-/// `"--"` sentinel from its collection field for the same reason.
+/// name. `_BuiltinPickerStyle` maps a selection back to a value by
+/// `firstIndex(of:)` on the typed `[Value]` array itself -- only the
+/// *rendered* row labels go through `"\($0)"` for display. That distinction
+/// matters here because with the old `Value == String` sentinel design the
+/// values *are* the labels, so a name collision in the value space is
+/// exactly a `firstIndex(of:)` collision too: two rows read identically,
+/// the first always wins, and a macro genuinely in a collection named the
+/// same as the sentinel could never be filtered for. It would not
+/// generalize to every `Value` type, though -- `CollectionFilterOption`
+/// itself is the counterexample: `.all` and `.named("All")` render the same
+/// label ("All") but remain distinct, `Equatable`-inequal values, so
+/// `firstIndex(of:)` still resolves them correctly. `MacroLibraryRowView`
+/// dropped a `"--"` sentinel from its collection field for the same reason
+/// this type replaces the string sentinel here.
 enum CollectionFilterOption: Equatable, CustomStringConvertible {
     case all
     case named(String)
@@ -148,6 +156,27 @@ enum CollectionFilterOption: Equatable, CustomStringConvertible {
     /// the picker's `get`.
     static func selected(for collection: String?) -> CollectionFilterOption {
         collection.map(CollectionFilterOption.named) ?? .all
+    }
+
+    /// Reconciled form of `selected(for:)`, for the picker's actual `get`:
+    /// falls back to `.all` when `collection` names a collection no longer
+    /// present in `options` -- the last macro in it moved out or was
+    /// deleted, or the document was reloaded or imported wholesale, and
+    /// `filter.collection` (`@State`, never itself reconciled against
+    /// `editor.document.macroCollections`) is now stale.
+    ///
+    /// Left unreconciled, `filter.collection` still resolves to a `.named`
+    /// value via the plain `selected(for:)` above, but `options` no longer
+    /// contains it -- so `_BuiltinPickerStyle` computes `selectedIndex` by
+    /// `firstIndex(of:)` and gets `nil`. The table correctly shows zero
+    /// rows (nothing matches a collection nothing is in), but the picker
+    /// renders with *nothing* selected rather than showing the stale name,
+    /// which reads as a bug rather than the "no such collection" state it
+    /// actually is. A pure static function, like `selected(for:)` itself,
+    /// so this is testable without a view.
+    static func selected(for collection: String?, among options: [CollectionFilterOption]) -> CollectionFilterOption {
+        let candidate = selected(for: collection)
+        return options.contains(candidate) ? candidate : .all
     }
 
     /// The `MacroLibraryFilter.collection` value this option resolves to
@@ -208,7 +237,7 @@ struct MacroLibraryView: View {
                                 isOverCapacity: capacityWarning != nil,
                                 open: { editor.openMacro(id: row.id) },
                                 setEnabled: { editor.setMacroEnabled(id: row.id, $0) },
-                                setCollection: { editor.setMacroCollection(id: row.id, $0) },
+                                setCollection: { setCollection(for: row.id, to: $0) },
                                 duplicate: { editor.duplicateMacro(id: row.id) },
                                 export: { exportMacro(row) },
                                 delete: { confirmDelete(row) }
@@ -246,7 +275,12 @@ struct MacroLibraryView: View {
             Picker(
                 of: CollectionFilterOption.options(for: editor.document.macroCollections),
                 selection: Binding(
-                    get: { CollectionFilterOption.selected(for: filter.collection) },
+                    get: {
+                        CollectionFilterOption.selected(
+                            for: filter.collection,
+                            among: CollectionFilterOption.options(for: editor.document.macroCollections)
+                        )
+                    },
                     set: { choice in
                         guard let choice else { return }
                         filter.collection = choice.filterValue
@@ -264,6 +298,40 @@ struct MacroLibraryView: View {
             ToolbarPill(label: "New macro", isAccent: true, action: editor.createMacro)
         }
         .padding(EdgeInsets(top: 16, bottom: 12, leading: 16, trailing: 16))
+    }
+
+    /// `MacroLibraryRowView`'s collection field writes through on every
+    /// keystroke, not on commit (see that view's doc comment on
+    /// `collectionField` for why: SwiftCrossUI has no focus-loss hook, so
+    /// committing only on submission would silently discard an edit when
+    /// the user clicks away instead). With a collection filter active, the
+    /// first keystroke that changes a row's collection away from the
+    /// filtered one makes the row stop matching `filter`, `ForEach` tears
+    /// its node down, and the field being typed into vanishes out from
+    /// under the cursor.
+    ///
+    /// Fix: clear the active filter the moment a row's collection is
+    /// edited. A visible row necessarily matches the current filter, so
+    /// this is unconditional whenever a filter is active -- no need to
+    /// check whether *this* edit is the one that would have broken the
+    /// match. This is the predictable rule, not a workaround: editing a
+    /// macro out of the collection you're filtering by drops the filter so
+    /// you can see what you did, the same way clearing any other filter
+    /// would reveal more rows rather than fewer.
+    ///
+    /// Two alternatives were rejected. Exempting the row being edited from
+    /// the filter is architecturally awkward: the in-progress text lives in
+    /// `collectionDraft`, `@State` private to `MacroLibraryRowView`, and
+    /// this view -- which owns `filter` and runs the match -- cannot see
+    /// it. Committing the edit on submission instead of per keystroke would
+    /// dodge the problem, but SwiftCrossUI has no focus-loss hook to commit
+    /// on, so a user who clicks away without pressing return would lose the
+    /// edit entirely -- a worse failure than the one being fixed here.
+    private func setCollection(for id: Int, to value: String?) {
+        editor.setMacroCollection(id: id, value)
+        if filter.collection != nil {
+            filter.collection = nil
+        }
     }
 
     private func importMacro() {

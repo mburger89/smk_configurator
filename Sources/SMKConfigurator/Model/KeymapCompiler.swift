@@ -372,7 +372,7 @@ func compileKeymap(_ document: KeymapDocument) throws -> [UInt8] {
     // `none` rather than a dangling `macro:` reference the frozen firmware
     // decoder would have to tolerate.
     let macros = document.macroList.filter(\.enabled)
-    let disabledMacroIDs = Set(document.macroList.lazy.filter { !$0.enabled }.map(\.id))
+    let disabledMacroIDs = Set(document.macroList.filter { !$0.enabled }.map(\.id))
 
     var bytes: [UInt8] = []
     bytes.reserveCapacity(6 + rowCount + colCount + layerCount * rowCount * colCount * 2)

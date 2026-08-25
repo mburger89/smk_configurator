@@ -378,6 +378,18 @@ struct MacroDefinition: Codable, Equatable, Hashable, Identifiable {
             // A preserved malformed value and a real one would otherwise
             // both be written, leaving the same key twice in one object.
             // The real value wins: the user set it in this build.
+            //
+            // The skip is non-default-only, which is deliberately asymmetric:
+            // a file with `{"enabled":"yes"}` decodes as enabled (the
+            // malformed value stashed in `unknownFields`) and, so long as it
+            // stays enabled, re-encodes with the original `"yes"` still
+            // preserved. But toggle it off then back on in this build and
+            // `enabled` passes back through its default (`true`), so the
+            // guard below no longer suppresses the stash and `"enabled":"yes"`
+            // is written out again alongside nothing contradicting it. That
+            // is not a bug: the malformed value was never discarded, only
+            // shadowed by a real one while that real one held a non-default
+            // value, and reappears exactly when it stops being shadowed.
             if key == CodingKeys.enabled.stringValue && !enabled { continue }
             if key == CodingKeys.collection.stringValue && collection != nil { continue }
             guard let codingKey = DynamicCodingKey(stringValue: key) else { continue }

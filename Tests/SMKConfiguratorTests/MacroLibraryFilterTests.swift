@@ -152,6 +152,24 @@ struct CollectionFilterOptionTests {
         #expect(CollectionFilterOption.selected(for: nil) == .all)
         #expect(CollectionFilterOption.selected(for: "Work") == .named("Work"))
     }
+
+    @Test("a stale collection name -- no longer among the options -- falls back to .all")
+    func selectedAmongFallsBackToAllForStaleName() {
+        let options = CollectionFilterOption.options(for: ["Dev"])
+        #expect(CollectionFilterOption.selected(for: "Work", among: options) == .all)
+    }
+
+    @Test("a live collection name -- still among the options -- resolves normally")
+    func selectedAmongResolvesLiveName() {
+        let options = CollectionFilterOption.options(for: ["Dev", "Work"])
+        #expect(CollectionFilterOption.selected(for: "Work", among: options) == .named("Work"))
+    }
+
+    @Test("no active filter still resolves to .all when reconciled")
+    func selectedAmongResolvesNilToAll() {
+        let options = CollectionFilterOption.options(for: ["Dev"])
+        #expect(CollectionFilterOption.selected(for: nil, among: options) == .all)
+    }
 }
 
 @Suite("The collection-field draft display rule")

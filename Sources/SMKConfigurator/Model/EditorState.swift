@@ -278,16 +278,23 @@ class EditorState {
     /// original "capacity, then compile" — here's why, in the order these
     /// guards actually run:
     ///
-    /// 1. `MacroDefinition.overflows`: a one-byte bytecode field (a `.text`
-    ///    step's `msPerChar`, a `.repeatBlock`'s `count`, a macro's `id`, a
-    ///    `.layer` step's target index, plus the three checks the compiled-
-    ///    size/JSON-size guards already implied for name/step-count/payload
-    ///    length) can hold a value up to 255 no matter what any size meter
-    ///    says — a 300-count repeat is a handful of bytes either way, small
-    ///    enough to sail through every other guard, but wraps around in the
-    ///    one byte the firmware reads it into. UI sliders keep this from
-    ///    happening via the editor, but a decoded `keymap.json` isn't bound
-    ///    by the UI, so this runs here too.
+    /// 1. `MacroDefinition.overflows`, checked only for `enabled` macros: a
+    ///    one-byte bytecode field (a `.text` step's `msPerChar`, a
+    ///    `.repeatBlock`'s `count`, a macro's `id`, a `.layer` step's target
+    ///    index, plus the three checks the compiled-size/JSON-size guards
+    ///    already implied for name/step-count/payload length) can hold a
+    ///    value up to 255 no matter what any size meter says — a 300-count
+    ///    repeat is a handful of bytes either way, small enough to sail
+    ///    through every other guard, but wraps around in the one byte the
+    ///    firmware reads it into. UI sliders keep this from happening via
+    ///    the editor, but a decoded `keymap.json` isn't bound by the UI, so
+    ///    this runs here too. A disabled macro is exempt: `compileKeymap`
+    ///    filters `document.macroList` down to `\.enabled` (as does
+    ///    `MacroBudget`), so a disabled macro contributes zero bytes to the
+    ///    payload — the firmware reads no byte for a macro that was never
+    ///    written into it — and blocking an upload over a field it will
+    ///    never see would be refusing a flash the document can actually
+    ///    perform.
     /// 2. The re-entrancy guard, moved first among the remaining checks
     ///    (previously between the capacity and compile guards) so an
     ///    already-in-flight send skips the compiling this method now does
@@ -325,7 +332,7 @@ class EditorState {
     /// touches a transport and each guard's effect is observable without
     /// awaiting anything.
     func sendToDevice() {
-        let overflows = document.macroList.flatMap(\.overflows)
+        let overflows = document.macroList.filter(\.enabled).flatMap(\.overflows)
         guard overflows.isEmpty else {
             loadError = overflows.map(\.message).joined(separator: " ")
             return

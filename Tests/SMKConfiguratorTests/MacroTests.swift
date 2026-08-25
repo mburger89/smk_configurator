@@ -208,16 +208,25 @@ struct MacroTests {
         ])
     }
 
-    @Test("an unknown per-macro field (e.g. a future build's 'enabled' flag) is preserved rather than dropped on save")
+    @Test("an unknown per-macro field (e.g. a future build's 'repeatWhileHeld' flag) is preserved rather than dropped on save")
     func unknownMacroFieldIsPreserved() throws {
+        // "enabled" no longer exercises this: this build decodes it into
+        // the real `enabled` property, so a payload keyed on it would
+        // round-trip through `encode(to:)`'s `if !enabled` line rather than
+        // through `unknownFields`, leaving the
+        // `CodingKeys(stringValue:) == nil` branch (Macro.swift's
+        // `init(from:)`) with zero coverage. "repeatWhileHeld" -- the same
+        // example CLAUDE.md and this file's doc comment (Macro.swift:297)
+        // now use -- is a field genuinely unknown to this build, so it can
+        // only survive by going through `unknownFields`.
         let json = """
-        {"id":1,"name":"n","steps":[],"enabled":false}
+        {"id":1,"name":"n","steps":[],"repeatWhileHeld":true}
         """
         let macro = try JSONDecoder().decode(MacroDefinition.self, from: Data(json.utf8))
 
         let reencoded = try JSONEncoder().encode(macro)
         let object = try JSONSerialization.jsonObject(with: reencoded) as! [String: Any]
-        #expect(object["enabled"] as? Bool == false)
+        #expect(object["repeatWhileHeld"] as? Bool == true)
         #expect(object["id"] as? Int == 1)
         #expect(object["name"] as? String == "n")
     }

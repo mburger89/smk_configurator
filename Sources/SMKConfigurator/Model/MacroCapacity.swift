@@ -76,6 +76,16 @@ struct MacroBudget: Equatable {
         // so counting them here would report a cost the board never pays --
         // and since macros share one budget with layers, "disable a macro to
         // fit" has to actually free bytes or the feature is theatre.
+        //
+        // `compileKeymap` applies this same `\.enabled` filter itself
+        // (`KeymapCompiler.swift`'s `macros = document.macroList.filter(\.enabled)`),
+        // so filtering again here is a no-op on the compiling path below
+        // (`compiledMacroBytes(_:)`'s successful-probe branch). It is kept
+        // regardless because it is *not* a no-op on that function's
+        // non-compiling fallback (`macros.reduce(0) { $0 + $1.compiledSize }`),
+        // which sums whatever array it's handed with no filter of its own --
+        // without this line, a disabled macro with an unencodable step would
+        // silently count against capacity again via that fallback.
         let counted = macros.filter(\.enabled)
         self.capacity = capacity
         self.source = source
@@ -95,6 +105,18 @@ struct MacroBudget: Equatable {
     init(capacity: MacroCapacity, source: MacroCapacitySource, document: KeymapDocument) {
         var withoutMacros = document
         withoutMacros.macros = nil
+        // This probe compiles with `macros` stripped entirely (`nil`, not
+        // "all disabled"), so `compileKeymap`'s `disabledMacroIDs` is empty
+        // here and any cell holding a `macro:N` token compiles as `macro:N`
+        // (tag `.macro`) rather than the `none` a *real* compile would
+        // substitute for a disabled macro's cells (`KeymapCompiler.swift`).
+        // That is byte-identical today only because every cell -- `.macro`
+        // or `.none` alike -- is exactly one `(tag, param)` pair, so the
+        // substitution never changes `layerBytes`'s length, only which tag
+        // occupies it. This invariant lives in two files with nothing
+        // enforcing it between them: if a future cell encoding ever became
+        // variable-width, this probe would need its own macro-aware
+        // substitution to stay accurate.
         if let base = try? compileKeymap(withoutMacros) {
             self.init(capacity: capacity, source: source, macros: document.macroList, layerBytes: base.count)
         } else {

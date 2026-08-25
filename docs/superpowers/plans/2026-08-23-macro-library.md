@@ -1495,16 +1495,27 @@ collection picker sit between the budget summary and the action pills:
             ))
             .frame(width: 180)
 
-            // "All" is not a collection, it is the absence of the filter.
-            // The named options derive from what macros actually use, so an
-            // emptied collection disappears from this picker on its own.
+            // `.all` is not a collection, it is the absence of the filter --
+            // `CollectionFilterOption` keeps that out of `String` space so a
+            // collection literally named "All" still gets its own row (a
+            // reserved `"All"` string sentinel would collide with it: see
+            // that type's doc comment for why the picker's own
+            // `firstIndex(of:)` matching makes that collision silent and
+            // unfixable at the binding). The named options derive from what
+            // macros actually use, so an emptied collection disappears from
+            // this picker on its own.
             Picker(
-                of: [Self.allCollections] + editor.document.macroCollections,
+                of: CollectionFilterOption.options(for: editor.document.macroCollections),
                 selection: Binding(
-                    get: { filter.collection ?? Self.allCollections },
+                    get: {
+                        CollectionFilterOption.selected(
+                            for: filter.collection,
+                            among: CollectionFilterOption.options(for: editor.document.macroCollections)
+                        )
+                    },
                     set: { choice in
                         guard let choice else { return }
-                        filter.collection = (choice == Self.allCollections) ? nil : choice
+                        filter.collection = choice.filterValue
                     }
                 )
             )
@@ -1516,11 +1527,19 @@ collection picker sit between the budget summary and the action pills:
             ToolbarPill(label: "New macro", isAccent: true, action: editor.createMacro)
 ```
 
+`CollectionFilterOption` (an `enum` with `.all` and `.named(String)` cases,
+plus `options(for:)`, `selected(for:)`, `selected(for:among:)`, and
+`filterValue`) is defined once alongside `MacroLibraryFilter`, not inline
+here — see the shipped `MacroLibraryView.swift` for its full doc comments,
+which explain both the sentinel-collision reasoning above and why the
+picker's `get` is reconciled against the current option list rather than
+resolving `filter.collection` directly (a collection that stops existing
+between renders must fall back to `.all`, not to a value the picker can't
+find).
+
 and add to the view:
 
 ```swift
-    private static let allCollections = "All"
-
     private func importMacro() {
         Task {
             guard let url = await chooseFile(title: "Import macro JSON",

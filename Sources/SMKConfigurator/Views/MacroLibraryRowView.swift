@@ -228,8 +228,13 @@ struct MacroLibraryRowView: View {
         Text(text)
             .font(.system(size: 11))
             .foregroundColor(color ?? chrome.textSecondary)
-            .padding(.trailing, 12)
+            // `.onTapGesture` before `.padding`, not after: applied first it
+            // scopes the tap target to the glyph's own text, so the padding
+            // added on top sits outside the hit region as blank spacing
+            // between glyphs. The other order was confirmed live -- the
+            // blank strip to the right of 🗑 deleted the row.
             .onTapGesture(perform: action)
+            .padding(.trailing, 12)
             .help(help)
     }
 
