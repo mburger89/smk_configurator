@@ -219,3 +219,107 @@ now renders every rail mode that way.*
 - **Workaround.** The style takes `help: String?` and applies `.help` to the
   `Button` inside, before `.disabled`.
 - **Severity.** Low.
+
+## MG-14 — no `layoutPriority` on the legacy stacks
+
+- **What.** `.layoutPriority(_:)` exists only on `ProposalElementGroup`
+  (`NativeModifiedContent.swift:296`); a legacy `Column`/`Row` child cannot
+  take one, and a proposal `VStack` cannot hold the palette drawer's `Button`s
+  (MG-1). The legacy stacks divide space by SwiftUI's flexibility rule, so of
+  a greedy board area and a 260…530 drawer the drawer is offered half of what
+  is left, never "everything it wants first". Minimal reproduction:
+  `Column(gap: Pixels(16)) { ScrollView(.vertical) { … }.frame(minHeight: Pixels(240), maxHeight: Pixels(.infinity)); drawer.frame(minHeight: Pixels(260), maxHeight: Pixels(530)) }`
+  in an 800-tall slot offers the drawer (800 − 16) / 2 = 392, not 530 — derived
+  from the stack rule (MetalUI `CN-B`), not measured: an app cannot read a
+  laid-out frame back (MG-12).
+- **Where.** KEY mode's main column (`Views/KeyModeViews.swift`,
+  `KeyMainContentView`): the old build served the palette drawer first with
+  `.layoutPriority(1)` so it reached its no-scroll maximum in a tall window.
+- **Workaround.** The board's scroll area is capped at the board's own
+  height (`KeyboardBoardView.naturalHeight(of:)`, at least
+  `WindowMetrics.boardMinHeight`), so it is the less flexible child and is
+  served first; the drawer then gets the rest up to its maximum. At the
+  window's minimum height the board area works out at about 258 and the drawer
+  at its 260 floor (a couple of points into the column's padding; derived, not
+  measured); in a window
+  taller than both maxima the leftover space sits below the drawer instead of
+  growing the board.
+- **Severity.** Medium — the drawer's height now depends on the design's row
+  count, and an exact "serve this first" is not expressible.
+
+## MG-15 — a `Component`'s layout record holds its whole content type: a large app overflows the stack in debug
+
+- **What.** `ComponentLayout<C>` stores `C.Content` and
+  `C.Content.GroupLayout` inline (`Component.swift`), and a `switch` in a
+  builder keeps every branch's type. So a shell `Component` that switches
+  between pane `Component`s carries the full static layout type of **every**
+  pane of **every** mode at once, and the debug build's generic frames for it
+  grow with the sum. With lane 2's four real panes in place, building the
+  window root (`rootView(editor:)`) crashed with `EXC_BAD_ACCESS` in
+  `___chkstk_darwin` on an 8 MB main-thread stack — in every rail mode,
+  including MACROS, whose own panes were still one-line placeholders — while
+  each pane rendered alone, and the three KEY panes side by side, without
+  trouble. Reproduction: this branch's `ContentView` with the twelve pane
+  `content`s not wrapped in `pane { }` (`Views/KeyModeViews.swift`), then
+  `swift test --filter ShellRenderTests` (signal 11) or
+  `renderFrame({ rootView(editor: editor) }, …)` in any mode.
+- **Where.** `Views/ContentView.swift`'s list/main/inspector `switch`es over
+  the KEY, DSN, THM, DEV and MACROS panes.
+- **Workaround.** Every pane wraps its content in `pane { … }`
+  (`AnyElement(Box { … })`), erasing its type at the pane boundary. The suite
+  then passes; the app's real main thread has the same 8 MB.
+- **Severity.** High — nothing warns until a debug build crashes, the crash
+  is far from the code that grew, and the fix (type erasure at boundaries) is
+  undocumented. MetalUI's own "Windows threads have 1 MB stacks" rule is the
+  same hazard seen from the demo side; an app on the later Windows backend will
+  meet it sooner.
+
+## MG-16 — a `some Element` call inside a builder `for` loop does not compile
+
+- **What.** In an `@ElementBuilder` body, a `for` loop whose body calls a
+  function returning `some Element` (or `some ElementGroup`) fails with
+  `error: underlying type for opaque result type 'some Element' could not be
+  inferred from return expression`, pointing at the `for`. The same call
+  outside a loop compiles, and a concrete type or a `Component` inside the loop
+  compiles. Minimal reproduction (Swift 6.4, `swiftlang-6.4.0.33.1`):
+  ```swift
+  @MainActor func cell(_ i: Int) -> some Element { Text("\(i)") }
+  struct Repro: Component {
+      var items = [1, 2, 3]
+      var content: some ElementGroup { Column { for i in items { cell(i) } } }
+  }
+  ```
+  Possibly the compiler's `for`-in-builder transform rather than MetalUI's
+  `buildArray`; not isolated further.
+- **Where.** The palette drawer's sections, the KEY inspector's theme rows,
+  the layer rows.
+- **Workaround.** The loop bodies are small `Component`s (`PaletteSection`,
+  `ThemeSwatchRow`, `LayerRow`) instead of private helpers returning opaque
+  types.
+- **Severity.** Low — easy once known, but the diagnostic names neither the
+  loop body nor the cause.
+
+## MG-17 — no public input injection for an app's tests
+
+- **What.** `Window` has no public way to deliver an `InputEvent` (a click, a
+  drag, a drop) from a test; `onInput` is a hook, and `InputEvent` dispatch is
+  internal. An app cannot test "drag this chip onto that key" end to end.
+- **Where.** The KEY board's drop destinations and the palette chips' drags
+  (`Views/KeyCapView.swift`, `Views/PaletteDrawerView.swift`).
+- **Workaround.** The drop logic is a plain function (`PaletteDrop`), tested
+  with the model's `assign` (`PaneLogicTests`); the gesture itself is
+  unverified until someone drags a chip in the running app.
+- **Severity.** Medium — every interaction an app adds is untestable below a
+  human check.
+
+## MG-18 — no `.labelsHidden()`: a titleless `Picker`/`Stepper` keeps a leading gap and has no label
+
+- **What.** `Picker` and `Stepper` always lay out `Text(title)`, 8, the
+  control (`Picker.swift:113`, `Stepper.swift:94`); `.labelsHidden()` is not
+  offered. An empty title leaves an 8-point leading inset and publishes an
+  unlabelled control.
+- **Where.** The KEY inspector's Key / Matrix / Theme segmented picker and the
+  palette's layer-number stepper.
+- **Workaround.** Title `""`; the stepper adds `.accessibilityLabel("Layer for
+  MO and TG")`. The segmented picker stays unlabelled.
+- **Severity.** Low.

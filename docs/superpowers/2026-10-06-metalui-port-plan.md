@@ -655,6 +655,44 @@ visited in light and dark), placeholders for KEY/DSN/THM/DEV gone; drag a chip
 onto a key changes it and marks the document dirty; `swift build` 0 `error:`;
 `swift test` ≥ 225 all pass; W1, W3, W5, W7, W9, W15 gone from these files.
 
+**Lane 2 status (2026-10-06).** §1.5–§1.8 built in the listed files; no
+KEY/DSN/THM/DEV placeholder left. `swift build`: 0 `error:`. `swift test`:
+`Test run with 247 tests in 30 suites passed` (XCTest `Executed 0 tests`) — 229
+plus `PaneLogicTests` (14: drop payload round trip and raw-text refusal, a drop
+marking the document dirty, DSN grid edits, key/cell sizes, DEV status text)
+and `PaneRenderTests` (4: each pane headless in its edge states). Both are
+macOS-only and join the Linux/Windows exclude list in `Package.swift` (§4.1).
+Mutation: letting `PaletteDrop` accept raw text reddened "text dragged in from
+another app is refused…".
+- **Deleted, not ported:** W1 (every row, chip, key, cell, tab and link is a
+  real `Button`), W3 (`.disabled` on "+" layer chip and Delete), W5 (drag a
+  chip onto a key; a click on a chip assigns it to the inspected key; the
+  armed ring and Reassign are gone — `EditorState.selectedToken` and friends
+  stay, unused by views), W7 (segmented `Picker`), W9 (the hover trash is a
+  button nested in the layer row's button), W15 (`Stepper`).
+- **New shared pieces** (in `KeyModeViews.swift`): `pane { }` (type erasure,
+  MG-15 — **lane 3's macro panes must wrap their content in it too**),
+  `ListRowButton`, `DesignRow`, `ThemeRow`, `LinkButton`, `ListColumn`,
+  `ListSection`, `InspectorColumn`, `InspectorHeading`, `DetailLine`,
+  `LayerRow`, `ThemeSwatchRow`; `ThemeRole`/`Swatch` in `ThemeSwatchField.swift`;
+  `PaletteDrop` in `KeyCapView.swift`; `DesignGridEditing` in
+  `DesignGridEditorView.swift`; `DeviceTransportStatus`/`DeviceStatusText` in
+  `DeviceModeViews.swift`.
+- **Faithful, though §1.6 reads otherwise:** the 1.5 width preset is labelled
+  "1.50", as the previous build's `%.2f` printed it.
+- **Decision to confirm (W5):** Reassign is removed outright; a key changes
+  by drag or by clicking a chip while the key is inspected.
+- **Not seen:** the screen was locked for the whole lane
+  (`CGSSessionScreenIsLocked` true), so no launch — no box of §1.5–§1.8 is
+  ticked against the running app, the glyphs (⋮⋮ → × ✕) are unchecked, and
+  dragging a chip onto a key is unverified as a gesture (MG-17); the tests
+  prove each pane builds and lays out without trapping and the drop logic
+  marks the document dirty. Lane 3 (or whoever next has the screen) launches
+  first and checks these.
+- **Gaps:** MG-14 (no `layoutPriority` on legacy stacks; the board area is
+  capped at the board's height instead), MG-15 (the debug-build stack overflow
+  that `pane { }` works around), MG-16, MG-17, MG-18.
+
 ### Lane 3 — MACROS mode, README, parity check
 
 **Files (only these):** `Views/MacroLibraryView.swift`,

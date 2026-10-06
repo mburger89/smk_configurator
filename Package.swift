@@ -99,11 +99,14 @@ let package = Package(
         .testTarget(
             name: "SMKConfiguratorTests",
             dependencies: ["SMKConfigurator"],
-            // Both import MetalUI, which is not declared here: macOS only.
-            // IconLoaderTests also needs the bundled PNGs; ShellRenderTests
-            // draws the shell. Any later test file importing MetalUI joins
+            // These import MetalUI, which is not declared here, or test types
+            // under `Views/`, which this target excludes: macOS only.
+            // IconLoaderTests also needs the bundled PNGs; ShellRenderTests and
+            // PaneRenderTests draw; PaneLogicTests tests view-level helpers.
+            // Any later test file importing MetalUI or naming a view type joins
             // this list.
-            exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift"]
+            exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift",
+                      "PaneRenderTests.swift", "PaneLogicTests.swift"]
         ),
     ]
 )
