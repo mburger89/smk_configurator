@@ -448,8 +448,11 @@ over the same `Sources/SMKConfigurator/` tree:
 - **Linux, Windows**: a library `.target` with `exclude: ["Views", "main.swift",
   "Resources"]`, depending only on `CHidapi` — no UI dependency, MetalUI is not
   even declared there; test target `SMKConfiguratorTests` with
-  `exclude: ["IconLoaderTests.swift"]` (it needs the bundled PNGs and
-  MetalUI's `ColorScheme`).
+  `exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift"]` (both import
+  MetalUI, which is not declared there; `IconLoaderTests` also needs the
+  bundled PNGs). **Every later test file that imports MetalUI joins this
+  exclude list**, or Linux `swift test` and Windows `--build-tests` fail with
+  `no such module 'MetalUI'`.
 
 The MetalUI dependency and its URL exist only inside `#if os(macOS)` in
 `Package.swift`, so Linux/Windows never resolve it (MetalUI's manifest is
@@ -611,7 +614,15 @@ inspector placeholder's body killed the run). Additions beyond the list:
 `PaletteLayout` also exposes its chip metrics and `chunk(_:into:)` for lane 2;
 `KeymapFileActions` (in `AppCommands.swift`) holds the dialog helpers
 `ContentView`'s theme import/export reuse; `PanePlaceholder` (in
-`UIStyle.swift`) goes with the last placeholder. **Not seen**: the screen was
+`UIStyle.swift`) goes with the last placeholder.
+**Lane 1 fix pass (2026-10-06).** Linux/Windows test target now excludes
+`ShellRenderTests.swift` too (§4.1; a Docker run of the previous tree failed
+`--build-tests` with `no such module 'MetalUI'`). `ShellRenderTests` gained a
+windowless test over the public `renderFrame` with `PortableTextSystem` +
+`SystemFonts` (test-only product dependencies), and MG-12 was rewritten to
+what that path really lacks. `swift test`: `Test run with 229 tests in 25
+suites passed` (XCTest `Executed 0 tests`). The on-screen checks below move to
+lane 2, which launches the app first with the screen unlocked. **Not seen**: the screen was
 locked for the whole lane, so no launch — the visual "Done means" items (rail
 switching, Appearance live, palette changing with the scheme, menus) are
 unverified by eye; the render test proves only that every mode builds and lays

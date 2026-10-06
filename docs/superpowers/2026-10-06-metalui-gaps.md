@@ -172,24 +172,40 @@ written. Later lanes append.
   returning `Edges<Length>`.
 - **Severity.** Low — a three-line helper, but every port writes it.
 
-## MG-12 — an app cannot build a frame headlessly
+## MG-12 — a headless frame cannot select the dark scheme, run lifecycle, or report layout
 
-- **What.** `renderFrame(_:size:scaleFactor:textSystem:atlas:theme:)` is
-  public but needs a `TextSystem`; the `MetalUI` product re-exports the
-  protocol but no conformer (`CoreTextTextSystem` is in `MetalUIText`, not a
-  library product), and an app cannot write a stub one because `FontKey` and
-  `GlyphImage` have only `package` initialisers
-  (`MetalUIScene/FontKey.swift:113`, `GlyphImage.swift:47`). So an app's tests
-  cannot lay out an element tree without a window.
-- **Where.** The port's wish for tests that "build a pane's element tree
-  headlessly through MetalUI's public API".
-- **Workaround.** `ShellRenderTests` opens a real AppKit window with
-  `startsDisplayLink: false` and calls the public `Window.drawFrameIfNeeded()`
-  after each mode change — build, layout, prepaint, paint, in every rail mode,
-  both macro sub-states and both schemes. It works in a locked session (no
-  display needed) and a layout refusal traps there; it sees no pixels and
-  cannot query layout results (no public read of a node's frame).
-- **Severity.** Medium — app-level layout tests are trap detectors only.
+*Rewritten in the lane-1 fix pass. The first version claimed an app cannot
+build a frame headlessly at all; that was wrong. The `MetalUIPortableText` and
+`MetalUISystemFonts` products give an app a `TextSystem`
+(`PortableTextSystem(resolver: try SystemFonts.resolver())`), `GlyphAtlas` has
+a public `init(width:height:)`, and the public `renderFrame(_:size:scaleFactor:
+textSystem:atlas:theme:)` returns a `Scene`. `ShellRenderTests.everyModeRendersHeadlessly`
+now renders every rail mode that way.*
+
+- **What.** Three things the headless path does not cover:
+  1. **No dark scheme.** `renderFrame`'s `theme:` sets the tokens only and
+     leaves `colorScheme` light (MetalUI `Frame.swift:502`, `CR-K` item 3), so
+     palette keys and `Color(light:dark:)` resolve light. The obvious
+     workaround, `renderFrame({ rootView(…).environment(\.colorScheme, .dark) }, …)`,
+     does not compile: `EnvironmentScope` is not an `Element`, and
+     `renderFrame` takes `Root: Element`.
+  2. **No lifecycle.** A headless `renderFrame` runs no
+     `onAppear`/`onDisappear`/`onChange` (MetalUI CLAUDE.md, Lifecycle), so the
+     DEV pane's monitor start or the load-error alert is unreachable there.
+  3. **No layout read-back.** The result is a `Scene` (rects, glyphs, images
+     in device pixels). There is no public read of a node's frame, so a test
+     can assert "something drew" but not "the inspector is 248 wide".
+- **Where.** `Tests/SMKConfiguratorTests/ShellRenderTests.swift`.
+- **Workaround.** Two tests. `everyModeRendersHeadlessly` (no window, light
+  only) asserts every rail mode yields rects and glyphs.
+  `everyModeDraws` opens a real AppKit window with `startsDisplayLink: false`
+  and calls the public `Window.drawFrameIfNeeded()` after each mode change, in
+  every rail mode, both macro sub-states and both schemes (through
+  `window.preferredColorScheme`), which runs the app's themes and the lifecycle
+  drain. It works in a locked session. Both trap on a layout refusal; neither
+  sees pixels or layout results.
+- **Severity.** Low. App-level layout tests can only detect traps and empty
+  output.
 
 ## MG-13 — `.help` reaches neither a `Component` nor an `EnvironmentScope`
 

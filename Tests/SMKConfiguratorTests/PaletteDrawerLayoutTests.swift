@@ -2,7 +2,13 @@ import Testing
 @testable import SMKConfigurator
 
 /// Guards the premise behind removing the palette's per-section
-/// `ScrollView(.horizontal)`.
+/// `ScrollView(.horizontal)`, and that the drawer keeps needing none.
+///
+/// Today the drawer is MetalUI's legacy vertical `ScrollView`, which scrolls
+/// one axis only: a chip row wider than the drawer could not be scrolled to,
+/// so the widest row must fit the narrowest drawer. The history below is why
+/// the horizontal scrollers were removed (historical: it describes the
+/// SwiftCrossUI build this app was ported from).
 ///
 /// Those inner scroll views were nested inside the drawer's vertical one, and
 /// swift-cross-ui's AppKit backend maps every `ScrollView` onto a plain

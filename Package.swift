@@ -76,6 +76,10 @@ let package = Package(
             dependencies: [
                 "SMKConfigurator",
                 .product(name: "MetalUI", package: "MetalUI"),
+                // A `TextSystem` a test can construct, so `renderFrame` can
+                // build a frame with no window (ShellRenderTests).
+                .product(name: "MetalUIPortableText", package: "MetalUI"),
+                .product(name: "MetalUISystemFonts", package: "MetalUI"),
             ]
         ),
     ]
@@ -95,8 +99,11 @@ let package = Package(
         .testTarget(
             name: "SMKConfiguratorTests",
             dependencies: ["SMKConfigurator"],
-            // Needs the bundled PNGs and MetalUI's `ColorScheme`: macOS only.
-            exclude: ["IconLoaderTests.swift"]
+            // Both import MetalUI, which is not declared here: macOS only.
+            // IconLoaderTests also needs the bundled PNGs; ShellRenderTests
+            // draws the shell. Any later test file importing MetalUI joins
+            // this list.
+            exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift"]
         ),
     ]
 )

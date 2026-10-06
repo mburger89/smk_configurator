@@ -1,5 +1,7 @@
 import Foundation
 import MetalUI
+import MetalUIPortableText
+import MetalUISystemFonts
 import Testing
 @testable import SMKConfigurator
 
@@ -11,9 +13,12 @@ import Testing
 /// pane builds and lays out without trapping". It cannot see whether anything
 /// looks right.
 ///
-/// It opens a real (never displayed by the test) AppKit window: MetalUI's
-/// public `renderFrame(_:size:…)` needs a `TextSystem`, and the `MetalUI`
-/// product vends none an app can construct (gap MG-12).
+/// `everyModeDraws` opens a real (never displayed by the test) AppKit window,
+/// so the window's own path runs: the app's `lightTheme`/`darkTheme`, the
+/// window-stamped colour scheme and the lifecycle drain. `everyModeRendersHeadlessly`
+/// builds the same tree with no window through the public `renderFrame`,
+/// over `PortableTextSystem` + `SystemFonts` (gap MG-12 says what that path
+/// does not cover).
 @MainActor
 @Suite("The shell builds and lays out in every mode", .serialized)
 struct ShellRenderTests {
@@ -51,6 +56,25 @@ struct ShellRenderTests {
             window.drawFrameIfNeeded()
         }
         #expect(editor.railMode == .macros)
+    }
+
+    @Test("every rail mode builds a non-empty scene with no window")
+    func everyModeRendersHeadlessly() throws {
+        let defaults = UserDefaults(suiteName: "ShellRenderTests-\(UUID().uuidString)")!
+        let editor = EditorState(userDefaults: defaults)
+        let textSystem = PortableTextSystem(resolver: try SystemFonts.resolver())
+        let atlas = GlyphAtlas(width: 2048, height: 2048)
+        // Light only: `renderFrame`'s `theme:` sets tokens, never the colour
+        // scheme, and an `.environment(\.colorScheme, …)` root is not an
+        // `Element` it accepts (gap MG-12).
+        for mode in RailMode.allCases {
+            editor.railMode = mode
+            let scene = renderFrame({ rootView(editor: editor) },
+                                    size: WindowMetrics.idealSize, scaleFactor: 2,
+                                    textSystem: textSystem, atlas: atlas)
+            #expect(!scene.rects.isEmpty, "\(mode): no rects")
+            #expect(!scene.glyphs.isEmpty, "\(mode): no glyphs")
+        }
     }
 
     @Test("the window's height bounds come from the palette's")
