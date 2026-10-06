@@ -102,11 +102,13 @@ let package = Package(
             // These import MetalUI, which is not declared here, or test types
             // under `Views/`, which this target excludes: macOS only.
             // IconLoaderTests also needs the bundled PNGs; ShellRenderTests and
-            // PaneRenderTests draw; PaneLogicTests tests view-level helpers.
+            // PaneRenderTests draw; PaneLogicTests tests view-level helpers;
+            // MacroPaneTests does both for MACROS mode.
             // Any later test file importing MetalUI or naming a view type joins
             // this list.
             exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift",
-                      "PaneRenderTests.swift", "PaneLogicTests.swift"]
+                      "PaneRenderTests.swift", "PaneLogicTests.swift",
+                      "MacroPaneTests.swift"]
         ),
     ]
 )

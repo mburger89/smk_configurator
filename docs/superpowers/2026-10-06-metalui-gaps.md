@@ -14,7 +14,7 @@ silently. Ids are `MG-<n>`, never reused.
 
 Entries MG-1…MG-10 come from the planning survey (reading MetalUI's source and
 docs against the app's 3,400 lines of views), before any port code was
-written. Later lanes append.
+written. Later lanes appended MG-11…MG-22.
 
 ---
 
@@ -84,7 +84,9 @@ written. Later lanes append.
   (`MacroLibraryRowView.swift:82`).
 - **Workaround.** The checkbox. `DesignModeViews.swift:65` and
   `DesignGridEditorView.swift:88` were a checkbox and the platform default
-  already.
+  already. *Lane 3, at launch:* the checked state is an accent-filled square
+  with no check mark (MetalUI's documented one look, `Toggle.swift` header),
+  so a column of ON checkboxes reads as filled/empty squares.
 - **Severity.** Low.
 
 ## MG-5 — file dialogs take no starting directory and no title
@@ -305,9 +307,12 @@ now renders every rail mode that way.*
   drag, a drop) from a test; `onInput` is a hook, and `InputEvent` dispatch is
   internal. An app cannot test "drag this chip onto that key" end to end.
 - **Where.** The KEY board's drop destinations and the palette chips' drags
-  (`Views/KeyCapView.swift`, `Views/PaletteDrawerView.swift`).
-- **Workaround.** The drop logic is a plain function (`PaletteDrop`), tested
-  with the model's `assign` (`PaneLogicTests`); the gesture itself is
+  (`Views/KeyCapView.swift`, `Views/PaletteDrawerView.swift`); lane 3: the
+  ADD STEP rows' drags onto the "Add a step" card (`MacroStepTypeRow`,
+  `ContentView.addStepCard`), and every click in the macro panes.
+- **Workaround.** The drop logic is a plain function (`PaletteDrop`; lane 3's
+  `MacroStepDrop`), tested with the model's `assign`/`appendStep`
+  (`PaneLogicTests`, `MacroPaneLogicTests`); the gesture itself is
   unverified until someone drags a chip in the running app.
 - **Severity.** Medium — every interaction an app adds is untestable below a
   human check.
@@ -319,7 +324,84 @@ now renders every rail mode that way.*
   offered. An empty title leaves an 8-point leading inset and publishes an
   unlabelled control.
 - **Where.** The KEY inspector's Key / Matrix / Theme segmented picker and the
-  palette's layer-number stepper.
+  palette's layer-number stepper; lane 3: the macro inspector's Step / Macro /
+  Timing picker, its Operation/Layer/Key pickers, the library's collection
+  menu picker, and the library row's ON checkbox (`Toggle("")` keeps the
+  7-point box-to-label gap after the box).
 - **Workaround.** Title `""`; the stepper adds `.accessibilityLabel("Layer for
-  MO and TG")`. The segmented picker stays unlabelled.
+  MO and TG")`. The segmented picker stays unlabelled. Lane 3's titleless
+  pickers and the ON checkbox each carry an `.accessibilityLabel`.
 - **Severity.** Low.
+
+## MG-19 — `.id(_:)` takes only a `String`
+
+- **What.** Both spellings of the explicit-identity modifier take `String`
+  (`ExplicitIdentity.swift:110`, `Box.swift:869`); SwiftUI's `.id(_:)` takes
+  any `Hashable`. Minimal reproduction: `.id(row.id)` with an `Int` id fails
+  with "cannot convert value of type 'Int' to expected argument type 'String'".
+- **Where.** The macro library's rows (`Views/MacroLibraryView.swift`), keyed
+  by macro id so a row's collection-field draft stays with its macro when the
+  filter changes; the inspector's step editor, keyed by the selected index.
+- **Workaround.** `.id("macro-\(row.id)")`, `.id("step-\(index)")`.
+- **Severity.** Low.
+
+## MG-20 — `TextField`/`TextEditor` draw no field chrome, and there is no `.textFieldStyle`
+
+- **What.** MetalUI's `TextField` and `TextEditor` paint the text, caret and
+  selection only — no bezel, background or border — and `.textFieldStyle`
+  (`.roundedBorder`, `.plain`) is not offered. SwiftUI's macOS default is a
+  rounded-border field. Not listed in `docs/divergences.md`. Seen at the
+  lane-3 launch: the library's "Search macros" and each row's "Collection"
+  field read as loose placeholder text, the text step's editor as a floating
+  line.
+- **Where.** Every field: the library search and collection fields, the macro
+  name, the text step's `TextEditor`, the DSN name field, the THM hex fields.
+- **Workaround.** An app helper, `StyledElement.fieldChrome()`
+  (`Views/UIStyle.swift`): 6/3 padding, `Chrome.surface`, radius 5, a 1-point
+  `Chrome.chipBorder`, written before `.frame`. Applied to all six fields
+  (lane 3's parity pass also applied it to lane 2's DSN and THM fields).
+- **Severity.** Medium — every app with a form writes this, and without it a
+  field is not recognisable as one.
+
+## MG-21 — the segmented picker's look is two shared tokens; MetalUI's dark track is navy
+
+- **What.** A segmented `Picker` paints its track `.surfaceSecondary` and the
+  selected segment `.surface` (`Picker.swift:130`). `Theme.dark`'s
+  `surfaceSecondary` is `#27304A`, a navy chosen against MetalUI's own dark
+  surfaces. An app that retints `.surface` (here to the palette's grey
+  `#2C2C2E`, port plan §3.4) gets a track that is *more* saturated than the
+  selected segment, so in dark mode the **unselected** segments looked
+  highlighted and the selected one plain. Seen at the lane-3 launch in the
+  KEY inspector (Key selected, Matrix and Theme tinted) and the macro
+  inspector; a capture with Timing selected confirmed the inversion.
+- **Where.** Every segmented picker (KEY inspector tabs, macro inspector tabs,
+  the layer step's Operation).
+- **Workaround.** `ChromeTheme.apply(to:)` (`Views/Palette.swift`) also sets
+  `app.darkTheme.surfaceSecondary = .rgb(0x1C1C1E)`, a track darker than
+  `surface`, so the selected segment is the lighter one, as on macOS.
+- **Severity.** Low, but silent: nothing ties the two tokens together, and
+  the picker has no per-control colour.
+
+## MG-22 — a recursive component needs type erasure, and `AnyElement` takes an `Element` only
+
+- **What.** The step editor shows a repeat block's editor, which shows step
+  editors for the steps inside it. `some ElementGroup` content cannot be
+  recursive, so one side must be erased; `AnyElement` erases an `Element`, not
+  an `ElementGroup` (a `Component`), so the erasure is
+  `AnyElement(Box { … })`. SwiftUI's `AnyView` takes any view.
+- **Where.** `MacroStepEditor` → `RepeatBlockEditor`
+  (`Views/MacroInspectorView.swift`).
+- **Workaround.** The app's `pane { }` helper (`AnyElement(Box(content:))`,
+  `Views/KeyModeViews.swift`, introduced for MG-15) around the repeat-block
+  editor.
+- **Severity.** Low.
+
+---
+
+**Final (lane 3, 2026-10-06).** MG-1…MG-22. None was fixed in MetalUI by this
+branch. The ones an app meets first: MG-1 (legacy vocabulary for everything
+with a control), MG-15 (debug-build stack overflow without type erasure),
+MG-20 (fields with no chrome), MG-17 (no input injection for app tests),
+MG-14 (no `layoutPriority` on legacy stacks). Launch-only findings (MG-20,
+MG-21, MG-4's check mark) came from the first launch of the port, in lane 3;
+lanes 1 and 2 ran with the screen locked.

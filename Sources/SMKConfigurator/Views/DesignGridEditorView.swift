@@ -39,6 +39,7 @@ struct DesignGridEditorView: Component {
                 .foregroundColor(Chrome.textSecondary)
             TextField("Design name", text: $draft.name)
                 .font(.system(size: 13))
+                .fieldChrome()
                 .frame(width: Pixels(220))
             Spacer()
             PillButton(label: "+ Row") { DesignGridEditing.addRow(to: &draft.wrappedValue) }

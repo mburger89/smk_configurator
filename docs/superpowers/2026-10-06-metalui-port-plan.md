@@ -40,112 +40,112 @@ decision" with its replacement). The final check ticks this list.
 
 ### 1.1 Window, app, menus
 
-- [ ] One window titled **"SMK Keymap Configurator"** (`App.swift:9`).
-- [ ] Opens 1440 wide × `idealWindowHeight` (chrome + KEY content with the
+- [x] One window titled **"SMK Keymap Configurator"** (`App.swift:9`).
+- [x] Opens 1440 wide × `idealWindowHeight` (chrome + KEY content with the
       palette at its max, `ContentView.swift:51`, `App.swift:17`); resizable
       down to 1440 × `minWindowHeight` (`ContentView.swift:45`, `:69`).
-- [ ] View ▸ Appearance ▸ **Light / Dark / System**, the current one checked,
+- [x] View ▸ Appearance ▸ **Light / Dark / System**, the current one checked,
       persisted (`EditorState.setAppearanceMode`), applied app-wide
       (`App.swift:12`, `:18-32`).
-- [ ] Layout: [titlebar 50 → *deleted by decision*] / [icon rail 64 | divider |
+- [x] Layout: [titlebar 50 → *deleted by decision*] / [icon rail 64 | divider |
       list column 260 (212 in the macro editor, none in the macro library) |
       divider | main (flex) | divider | inspector 300 (248 in the macro editor,
       none in the library)] / divider / status bar 26 (`ContentView.swift:53-69`).
-- [ ] DSN/THM draft workspaces seeded from the active design/theme on first
+- [x] DSN/THM draft workspaces seeded from the active design/theme on first
       appearance (`ContentView.swift:70-75`).
-- [ ] A non-nil `editor.loadError` shows an alert with its message, then clears
+- [x] A non-nil `editor.loadError` shows an alert with its message, then clears
       (`ContentView.swift:76-82`).
 
 ### 1.2 File actions (were the titlebar's icon buttons; now the File menu)
 
-- [ ] **New** → `editor.newDocument()` (`TitlebarView.swift:15`).
-- [ ] **Open…** → open panel ("Open keymap.json", starts in `~/esp/SMK`) →
+- [x] **New** → `editor.newDocument()` (`TitlebarView.swift:15`).
+- [x] **Open…** → open panel ("Open keymap.json", starts in `~/esp/SMK`) →
       `editor.load(from:)` (`:18-28`).
-- [ ] **Save** → `editor.save(to: fileURL)`, or Save As when untitled (`:29-37`).
-- [ ] **Save As…** → save panel ("Save keymap.json", default `keymap.json`)
+- [x] **Save** → `editor.save(to: fileURL)`, or Save As when untitled (`:29-37`).
+- [x] **Save As…** → save panel ("Save keymap.json", default `keymap.json`)
       (`:38-40`, `:80-89`).
-- [ ] **Import…** → open panel ("Import keymap.json") → `editor.load(from:)`
+- [x] **Import…** → open panel ("Import keymap.json") → `editor.load(from:)`
       (`:41-51`).
-- [ ] **Export…** → save panel ("Export keymap", `keymap.json`) →
+- [x] **Export…** → save panel ("Export keymap", `keymap.json`) →
       `editor.exportKeymap(to:)` (`:52-62`).
-- [ ] **Advanced Mode** on/off → `editor.setShowAdvanced` (`:63-70`, `:76-78`).
-- [ ] Tooltips "New", "Open", "Save", "Save As", "Import", "Export" — replaced
+- [x] **Advanced Mode** on/off → `editor.setShowAdvanced` (`:63-70`, `:76-78`).
+- [x] Tooltips "New", "Open", "Save", "Save As", "Import", "Export" — replaced
       by menu item titles (MG-3).
 
 ### 1.3 Icon rail (`IconRailView.swift`, `UIStyle.swift:204-239`)
 
-- [ ] Five 40×40 rounded (radius 9) buttons, 16 apart, 16 top/bottom padding,
+- [x] Five 40×40 rounded (radius 9) buttons, 16 apart, 16 top/bottom padding,
       in a 64-wide `Chrome.bar` column: **Keymap** (key), **Designs**,
       **Themes**, **Device**, **Macros** — each with that tooltip.
-- [ ] Active: `glassActiveFill` tile and the *dark* (white) icon variant
+- [x] Active: `glassActiveFill` tile and the *dark* (white) icon variant
       whatever the scheme; inactive: `glassFill` and the scheme's icon.
-- [ ] Missing PNG → fallback label (KEY/DSN/THM/DEV/MAC), 11 pt semibold.
+- [x] Missing PNG → fallback label (KEY/DSN/THM/DEV/MAC), 11 pt semibold.
 
 ### 1.4 Status bar (`StatusBarView.swift`)
 
-- [ ] 26 high, `Chrome.bar`, 11 pt `textTertiary`, 16 side padding, items 16
+- [x] 26 high, `Chrome.bar`, 11 pt `textTertiary`, 16 side padding, items 16
       apart: 7-pt dot (`connectedDot`/`disconnectedDot`) + "USB Connected" /
       "USB Disconnected"; "<design> · R×C"; "N layers"; "fw v0.9.0".
-- [ ] Macro warning (not in MACROS mode): "Macros may not fit (estimated)"
+- [x] Macro warning (not in MACROS mode): "Macros may not fit (estimated)"
       (regular, tertiary) or "Macros won't fit" (semibold, `dangerText`), tooltip
       = the full block reason (`:73-78`).
-- [ ] Trailing "<file> — unsaved changes" when dirty.
-- [ ] `editor.refreshDeviceStatus()` on appear (`:49-51`).
+- [x] Trailing "<file> — unsaved changes" when dirty.
+- [x] `editor.refreshDeviceStatus()` on appear (`:49-51`).
 
 ### 1.5 KEY mode
 
 List column (`KeyModeViews.swift:8-168`), 260 wide, `Chrome.column`,
 scrolling, 12/10 padding, sections 18 apart:
-- [ ] DESIGNS: a row per design — name (12 pt, semibold + `accent` when
+- [x] DESIGNS: a row per design — name (12 pt, semibold + `accent` when
       active), trailing "R×C" (11 pt tertiary), `accentWash` radius-6 fill when
       active; click → select design (also re-seeds the DSN draft).
-- [ ] THEMES: a row per theme — 10-pt dot in the theme's accent, name; click →
+- [x] THEMES: a row per theme — 10-pt dot in the theme's accent, name; click →
       select theme (re-seeds the THM draft).
-- [ ] LAYERS header with a trailing 20×20 "+" chip (adds a layer; dimmed and
+- [x] LAYERS header with a trailing 20×20 "+" chip (adds a layer; dimmed and
       inert at `EditorState.maxLayerCount`).
-- [ ] A row per layer: "⋮⋮", "Layer n" (+ " — Base" for 0); click → current
+- [x] A row per layer: "⋮⋮", "Layer n" (+ " — Base" for 0); click → current
       layer; on hover (not layer 0) a trailing trash glyph → alert "Delete
       Layer n?" with **Delete** / **Cancel**.
 
 Main (`KeyModeViews.swift:172-219`), `Chrome.canvas`, padding 20:
-- [ ] The board in a vertical scroll area (min 240 high): one row per design
+- [x] The board in a vertical scroll area (min 240 high): one row per design
       row, 6 apart; keycaps 46 high, width `units × 46 + (units−1) × 10`, 10
       apart, radius 6, fill `theme.background(for: token)`, label 12 pt in
       `theme.keyText`; a macro token shows the macro's name
       (`KeyCapView.swift`, `KeyboardBoardView.swift`).
-- [ ] Board card: the theme's background colour, radius 10.
-- [ ] Inspected key: 2-pt `accent` ring. Click a key → inspect it.
-- [ ] Palette drawer below the board, served first (`layoutPriority`), min 260,
+- [x] Board card: the theme's background colour, radius 10.
+- [x] Inspected key: 2-pt `accent` ring. Click a key → inspect it.
+- [x] Palette drawer below the board, served first (`layoutPriority`), min 260,
       max `PaletteDrawerView.maxHeight`, `Chrome.surface` radius 10, scrolling
       vertically (`PaletteDrawerView.swift:137-155`):
-  - [ ] LAYERS & SPECIAL first: boxed layer picker (− n + → MO(n) TG(n);
+  - [x] LAYERS & SPECIAL first: boxed layer picker (− n + → MO(n) TG(n);
         n clamped to `0…maxAssignableLayerIndex`), then trans, none,
         toggle_conn chips.
-  - [ ] Every `KeyName.allGroups` section, Modifiers inserted after
+  - [x] Every `KeyName.allGroups` section, Modifiers inserted after
         Navigation, titles 10-pt bold uppercase tertiary, chips chunked at most
         13 per row (`chipsPerRow`, pinned by `PaletteDrawerLayoutTests`).
-  - [ ] MACROS: up to 13 macro chips, "+N more", or "No macros yet.".
-  - [ ] Chip 44×26, radius 4, `chipBackground`, 1-pt `chipBorder`, label 11 pt.
-- [ ] Placing an action on a key — **changed by decision** (§2.2 W5): drag a
+  - [x] MACROS: up to 13 macro chips, "+N more", or "No macros yet.".
+  - [x] Chip 44×26, radius 4, `chipBackground`, 1-pt `chipBorder`, label 11 pt.
+- [x] Placing an action on a key — **changed by decision** (§2.2 W5): drag a
       chip onto a key; clicking a chip assigns it to the inspected key.
 
 Inspector (`KeyModeViews.swift:225-399`), 300 wide, padding 14:
-- [ ] **Key / Matrix / Theme** tabs (a segmented `Picker`, §2.2 W8).
-- [ ] Key: label 20 pt semibold ("—" if empty); "<canonical> · layer n";
+- [x] **Key / Matrix / Theme** tabs (a segmented `Picker`, §2.2 W8).
+- [x] Key: label 20 pt semibold ("—" if empty); "<canonical> · layer n";
       Advanced on → Row · Col, Row GPIO, Col GPIO, Driven axis, Canonical
       (monospaced); off → Row · Col only; **Clear** (and **Reassign**, see
       §2.2 W5); "No key selected" when none.
-- [ ] Matrix: design name, "R rows · C cols", Rows: …, Cols: …, "Columns/Rows
+- [x] Matrix: design name, "R rows · C cols", Rows: …, Cols: …, "Columns/Rows
       are driven".
-- [ ] Theme: theme name, eight swatch rows (14-pt swatch with 1-pt
+- [x] Theme: theme name, eight swatch rows (14-pt swatch with 1-pt
       `dividerLight` ring, label, hex monospaced 10 pt).
 
 ### 1.6 DSN mode
 
-- [ ] List (`DesignModeViews.swift:6-76`): DESIGNS rows (as KEY), "+ New
+- [x] List (`DesignModeViews.swift:6-76`): DESIGNS rows (as KEY), "+ New
       Design…" (13 pt accent, click → blank draft); MATRIX GPIO: "Rows: …",
       "Cols: …", "Columns are driven" checkbox (edits the draft).
-- [ ] Main (`DesignGridEditorView.swift`): header on `surface` — "Name:" +
+- [x] Main (`DesignGridEditorView.swift`): header on `surface` — "Name:" +
       name field, **+ Row**, **− Row**, **+ Col**, **− Col** pills; the grid on
       black in a scroll area, padding 20 — cells 44 high, width
       `w × 52 + (w−1) × 4` (a gap is 52 wide, black, "×"), radius 6, width text
@@ -153,56 +153,56 @@ Inspector (`KeyModeViews.swift:225-399`), 300 wide, padding 14:
       (`DesignCellView.swift`); footer on `surface` — "Selected (r, c):" + width
       presets 1, 1.25, 1.5, 1.75, 2, 2.25, 2.75 + "Gap" toggle, or "Select a cell
       to edit its width". Row/col removal clears an out-of-range selection.
-- [ ] Inspector (`DesignModeViews.swift:80-109`): "Design actions",
+- [x] Inspector (`DesignModeViews.swift:80-109`): "Design actions",
       "R rows · C cols · <name> matrix", **Save Design** (primary),
       **Duplicate…**, **Delete** (destructive, disabled for an unsaved draft).
 
 ### 1.7 THM mode
 
-- [ ] List (`ThemeModeViews.swift:6-67`): THEMES rows, "+ New Theme…"; COLOR
+- [x] List (`ThemeModeViews.swift:6-67`): THEMES rows, "+ New Theme…"; COLOR
       ROLES: eight `ThemeSwatchField`s — Background, Key background, Font colour,
       Modifier keys, Layer keys, Special keys, Empty keys, Accent / selection —
       18-pt swatch, ring `dividerLight` (2-pt red when the hex is invalid),
       label, `#RRGGBB` field 76 wide monospaced 10 pt.
-- [ ] Main (`:72-95`): the board rendered with the draft theme, read-only;
+- [x] Main (`:72-95`): the board rendered with the draft theme, read-only;
       "Live preview — updates as color roles change".
-- [ ] Inspector (`:99-129`): "Theme actions", "Editing: <name>", **Save Theme**
+- [x] Inspector (`:99-129`): "Theme actions", "Editing: <name>", **Save Theme**
       (primary), **Duplicate…**, **Import…** (open panel "Import theme JSON"),
       **Export…** (save panel "Export theme", "<name>.json").
 
 ### 1.8 DEV mode (`DeviceModeViews.swift`)
 
-- [ ] List: TRANSPORTS — "USB (RP2040)" card (dot, "Connected"/"Not
+- [x] List: TRANSPORTS — "USB (RP2040)" card (dot, "Connected"/"Not
       connected"); macOS: "BLE (ESP32-C6)" card — dot `connectedDot` (ready) /
       `dangerText` (connected, failed) / `disconnectedDot`, headline
       ("Connected", "Linked — service missing", "Unavailable", "Not
       connected"), the state's summary line. Cards: `surface`, radius 8, 1-pt
       `dividerLight` border, padding 10.
-- [ ] Main: 14-pt status dot; headline 20 pt ("Connected via USB", "Connected
+- [x] Main: 14-pt status dot; headline 20 pt ("Connected via USB", "Connected
       via BLE", "Linked — upload service missing", the BLE summary, "Not
       connected"); "<design> · <MCU> · fw v0.9.0"; **Send to Device** /
       "Sending…" (primary, 180 wide, disabled while sending); macOS **Test
       Connection**; progress ("Starting upload…", "Sending chunk i of n…",
       "Committing…"); "Last sent just now / Ns ago / Nm ago / Nh ago".
-- [ ] On appear: `refreshDeviceStatus()` + `DeviceMonitor.shared.start`; on
+- [x] On appear: `refreshDeviceStatus()` + `DeviceMonitor.shared.start`; on
       disappear: `DeviceMonitor.shared.stop()` (`:215-221`).
-- [ ] Inspector: "Device info" — Board, MCU, Matrix, Firmware, Layers on
+- [x] Inspector: "Device info" — Board, MCU, Matrix, Firmware, Layers on
       device; macOS: BLE, Peripheral, Signal ("n dBm"), Max write ("n B").
 
 ### 1.9 MACROS mode — library (`MacroLibraryView.swift`, `MacroLibraryRowView.swift`)
 
-- [ ] Whole body (no list or inspector column), `Chrome.canvas`.
-- [ ] Header: "Macros" 19 pt semibold; budget summary (11 pt tertiary);
+- [x] Whole body (no list or inspector column), `Chrome.canvas`.
+- [x] Header: "Macros" 19 pt semibold; budget summary (11 pt tertiary);
       "Search macros" field (180); collection picker (140: All + every
       collection in use; a stale selection reads All); **Record new**
       (disabled, tooltip "Recording macros from the board isn't implemented
       yet."); **Import** (open panel "Import macro JSON"); **New macro**
       (accent).
-- [ ] Capacity banner: block reason, 11 pt semibold `dangerText` on
+- [x] Capacity banner: block reason, 11 pt semibold `dangerText` on
       `dangerText` @ 0.12.
-- [ ] Column headings MACRO 240, TRIGGER 130, STEPS 90, BYTES 90, COLLECTION
+- [x] Column headings MACRO 240, TRIGGER 130, STEPS 90, BYTES 90, COLLECTION
       130, ON 60.
-- [ ] Row (`column` fill, radius 6, min height 40 / 64 with a warning):
+- [x] Row (`column` fill, radius 6, min height 40 / 64 with a warning):
       name (semibold) + disabled-and-bound warning (10 pt danger, 2 lines);
       trigger "RnCn"/"Unbound"; steps; bytes (danger when over capacity);
       collection field (writes through; spaces survive the normaliser);
@@ -212,45 +212,45 @@ Inspector (`KeyModeViews.swift:225-399`), 300 wide, padding 14:
       this macro to a file", "Delete this macro"; clicking the informational
       cells opens the macro; a disabled macro's informational cells dimmed to
       0.55.
-- [ ] Editing a collection clears an active collection filter
+- [x] Editing a collection clears an active collection filter
       (`MacroLibraryView.swift:330-335`).
-- [ ] Delete: bound → alert naming key and layer, **Delete Anyway** /
+- [x] Delete: bound → alert naming key and layer, **Delete Anyway** /
       **Cancel**; unbound → "Delete “name”?" **Delete** / **Cancel**.
-- [ ] Empty: "No macros yet. Create one to place it on a key." / "No macros
+- [x] Empty: "No macros yet. Create one to place it on a key." / "No macros
       match this search or collection.".
 
 ### 1.10 MACROS mode — step editor
 
 List column (`MacroEditorViews.swift:73-225`), 212 wide, padding 14/12:
-- [ ] ADD STEP: five rows (36 high, `chipBackground`, radius 6) — 28×28 badge
+- [x] ADD STEP: five rows (36 high, `chipBackground`, radius 6) — 28×28 badge
       KEY/TXT/DLY/LYR/RPT filled with the active theme's key/empty/modifier/
       layer background (RPT: `pillBackground`), text `keyText`; label
       Keystroke / Type text / Delay / Switch layer / Repeat block; click →
       insert after the selection.
-- [ ] CAPTURE: "Record from board" disabled (tooltip as above) + "Recording
+- [x] CAPTURE: "Record from board" disabled (tooltip as above) + "Recording
       from the board isn't available yet.".
-- [ ] SLOT: 5-high track (`dividerLight`) with a fill (`accent`, `dangerText`
+- [x] SLOT: 5-high track (`dividerLight`) with a fill (`accent`, `dangerText`
       when it cannot flash) at `fillFraction`, summary label, block reason.
-- [ ] **Back to library**.
+- [x] **Back to library**.
 
 Main (`ContentView.swift:140-191`, `MacroEditorViews.swift:253-285`,
 `MacroStepRowView.swift`), `Chrome.canvas`:
-- [ ] Canvas header: macro name 19 pt + `canvasSummary` monospaced 12 pt;
+- [x] Canvas header: macro name 19 pt + `canvasSummary` monospaced 12 pt;
       **Test run** (tooltip "Walks the macro's steps and shows the timing trace
       in the inspector. Doesn't send keystrokes."; switches the inspector to
       Timing); **Save** (accent; closes the editor).
-- [ ] "Select a step to reorder or delete" (11 pt tertiary).
-- [ ] Step rows, 6 apart, scrolling: ▲ ▼ (8 pt bold), then a card (radius 7;
+- [x] "Select a step to reorder or delete" (11 pt tertiary).
+- [x] Step rows, 6 apart, scrolling: ▲ ▼ (8 pt bold), then a card (radius 7;
       selected `accentWash` + `accent` border, else `column` + `dividerLight`)
       with index (mono), 30×18 type badge, payload summary, trailing metadata
       (mono); trailing ✕ delete. Click card → select.
-- [ ] Append zone "Add a step" (44 high) — appends a keystroke step
+- [x] Append zone "Add a step" (44 high) — appends a keystroke step
       (§2.2 W6 adds dropping a step type on it).
 
 Inspector (`MacroInspectorView.swift`), 248 wide, padding 14/15, scrolling:
-- [ ] **Step / Macro / Timing** tabs (segmented, shared
+- [x] **Step / Macro / Timing** tabs (segmented, shared
       `editor.macroInspectorTab`).
-- [ ] Step tab, per step type: keystroke — "Key" + current key + key chooser,
+- [x] Step tab, per step type: keystroke — "Key" + current key + key chooser,
       "Modifiers" (8 multi-select chips, 4 per row), "Hold" slider 10…500
       quantised to 10 ms + "n ms"; text — `TextEditor` 80 high, "Typing speed"
       slider 10…100 + "n ms/char"; delay — slider 0…5000 + "n ms"; layer —
@@ -260,19 +260,62 @@ Inspector (`MacroInspectorView.swift`), 248 wide, padding 14/15, scrolling:
       opens the new step), nested editor "Step i of n" + "Back to list" +
       **Delete step**; raw — "Unsupported step (kept on save)"; **Delete step**
       (destructive); "Select a step to edit it." when none.
-- [ ] Macro tab: NAME field; BOUND KEY "Layer n · RnCn" / "Unbound".
-- [ ] Timing tab: ESTIMATED DURATION (18 pt); PER STEP payload + "n ms" rows;
+- [x] Macro tab: NAME field; BOUND KEY "Layer n · RnCn" / "Unbound".
+- [x] Timing tab: ESTIMATED DURATION (18 pt); PER STEP payload + "n ms" rows;
       "Test run estimates timing only. It doesn't send keystrokes.".
 
 ### 1.11 Icons, colours, shortcuts
 
-- [ ] Eleven icons × light/dark PNGs (`Resources/macOS/Icons/`), every
+- [x] Eleven icons × light/dark PNGs (`Resources/macOS/Icons/`), every
       `AppIcon` case resolvable (`IconLoaderTests`). Five are drawn (rail);
       six become unused by MG-3.
-- [ ] Every colour in §3, light and dark.
-- [ ] Shortcuts: today the app binds none of its own. **New by decision**:
+- [x] Every colour in §3, light and dark.
+- [x] Shortcuts: today the app binds none of its own. **New by decision**:
       ⌘N, ⌘O, ⌘S, ⇧⌘S on the File menu; the standard AppKit menu (About,
       Hide, Quit, Close, Edit, Window) comes with every MetalUI app.
+
+---
+
+### 1.12 Changes by decision (the final parity pass)
+
+Each item above is ticked against the code; the ones that differ from the
+SwiftCrossUI build differ on purpose:
+
+- **Titlebar deleted** (W8, MG-3): its six file actions are File-menu items
+  with ⌘N/⌘O/⌘S/⇧⌘S; Advanced Mode is a checked View-menu item; the tooltips
+  became the menu titles. The six toolbar PNGs stay bundled, undrawn.
+- **Dialog titles and the `~/esp/SMK` start directory are gone** (MG-5) —
+  Open, Save As, Import, Export, theme Import/Export, macro Import/Export.
+- **Placing an action on a key** (W5): drag a chip onto a key, or click a chip
+  to assign it to the inspected key; the armed ring and Reassign are gone.
+- **Every switch is a checkbox** (MG-4): Advanced Mode (now a menu item), the
+  library's ON column.
+- **Colour emoji → monochrome ✕** (MG-6): the layer row's and the library
+  row's delete glyphs.
+- **The keystroke step's key chooser is a menu picker** (W16, MG-8), each
+  option titled "<group> — <key>", where the old build had grouped chip rows
+  in horizontal scrollers. The current key still shows above it; modifier
+  chips are unchanged.
+- **ADD STEP rows are drag sources** (W6): drop one on "Add a step" to append
+  that type (accent ring while targeted); a click still inserts after the
+  selection, and a click on the card still appends a keystroke.
+- **Palette drawer priority** (MG-14): the board area is capped at the board's
+  height instead of the drawer being served first.
+- **Fields have a drawn border** (MG-20) and **the dark segmented track is
+  re-tinted** (MG-21) — looks MetalUI does not supply.
+- **"1.50"**, not "1.5", on the DSN width preset (the old `%.2f`).
+
+**Seen at a launch (lane 3, dark scheme, screen unlocked):** KEY mode (rail,
+lists, board, palette drawer, Key inspector, status bar), the MACROS library
+(header, search, collection menu, disabled Record new, rows with a
+disabled-and-bound warning dimmed, glyphs ⧉ ↑ ✕), the step editor (ADD STEP
+badges in theme colours, CAPTURE, SLOT, step cards ▲▼✕, Add a step) and the
+inspector (Step tab for a text step and a repeat block with its nested list
+and ADD STEP, Timing tab). The window opened 1440 wide with the File, Edit,
+View, Window menus. **Not seen:** DSN, THM and DEV by eye, the light scheme,
+the menus opened, any alert, a file dialog, a drag, a click — the launches
+were driven by a temporary (uncommitted) `main.swift` preset, not by input
+(MG-17). The headless tests build every pane in its edge states.
 
 ---
 
@@ -735,3 +778,32 @@ README describes the MetalUI app; gaps file final.
   is the alternative. Not in the lanes' files; `swift run` is unaffected.
 - macOS builds need a Swift 6.4 toolchain (MetalUI's manifest), where
   SwiftCrossUI needed 6.2.
+
+**Lane 3 status (2026-10-06).** §1.9–§1.10 built; no placeholder left
+(`grep -rn "not yet ported" Sources` empty; `PanePlaceholder` removed from
+`UIStyle.swift`). §1 ticked, with the deliberate differences in §1.12.
+`swift build`: 0 `error:`. `swift test`: see the commit message / report for
+the exact line (256 at the first lane-3 run: 247 + `MacroPaneRenderTests` 3 +
+`MacroPaneLogicTests` 6, `MacroPaneTests.swift`, macOS-only and on the
+Linux/Windows exclude list). Mutations: letting `MacroStepDrop` accept any
+first string reddened "text dragged in from another app is refused; the first
+step type wins"; a `fatalError` in `RepeatBlockEditor.content` killed
+"inspector: every tab, every step type selected, MO(0), a repeat block with
+contents".
+- **Deleted, not ported:** W1/W9/W10/W11 in the macro panes (every row, card,
+  glyph, chip, ▲▼✕ and link is a real `Button`; library rows nest their
+  controls), W3 (Record new / Record from board are `.disabled` buttons), W4
+  (`.opacity(0.55)` on a disabled macro's informational cells), W6 (drop zone),
+  W7 (segmented Step/Macro/Timing), W12 (`layerOpLabels`; the op picker tags
+  `LayerOp`), W13 (non-optional selections; the collection picker tags by
+  position since `CollectionFilterOption` is not `Hashable`), W16 (menu key
+  chooser).
+- **Outside lane 3's file list, touched for the parity pass:**
+  `Views/UIStyle.swift` (`PanePlaceholder` removed, `fieldChrome()` added),
+  `Views/Palette.swift` (dark `surfaceSecondary`, MG-21),
+  `Views/ThemeSwatchField.swift` and `Views/DesignGridEditorView.swift`
+  (`fieldChrome()` on their fields), `.github/workflows/linux-build.yml` (a
+  stale comment).
+- **Gaps:** MG-19…MG-22 new; MG-4, MG-17, MG-18 extended; the gaps file is
+  final.
+

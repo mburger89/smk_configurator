@@ -68,6 +68,7 @@ struct ThemeSwatchField: Component {
             Spacer()
             TextField("#RRGGBB", text: $color.hex)
                 .font(.system(size: 10, design: .monospaced))
+                .fieldChrome()
                 .frame(width: Pixels(76))
         }
     }

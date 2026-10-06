@@ -35,6 +35,6 @@ jobs:
         run: swift build --target SMKConfigurator
 
       - name: Test
-        # The model and device tests (every suite but IconLoaderTests, which
-        # needs the macOS app's bundled PNGs).
+        # The model and device tests. The suites that import MetalUI or test
+        # view types are excluded off macOS in Package.swift.
         run: swift test

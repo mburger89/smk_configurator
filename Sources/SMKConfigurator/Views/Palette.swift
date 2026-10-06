@@ -142,5 +142,11 @@ enum ChromeTheme {
         app.darkTheme.separator = .rgb(0x3A3A3C)
         app.darkTheme.surface = .rgb(0x2C2C2E)
         app.darkTheme.textPrimary = .rgb(0xFFFFFF)
+        // A segmented picker's track is `.surfaceSecondary` under a selected
+        // segment of `.surface`. MetalUI's dark default track is a navy
+        // (#27304A), which against the grey `surface` above made the
+        // *unselected* segments look highlighted; a track darker than
+        // `surface` makes the selected segment the lighter one, as on macOS.
+        app.darkTheme.surfaceSecondary = .rgb(0x1C1C1E)
     }
 }

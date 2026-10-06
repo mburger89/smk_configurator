@@ -42,6 +42,10 @@ struct ContentView: Component {
     @State var showingLoadError = false
     @State var loadErrorMessage = ""
 
+    /// Whether an ADD STEP row is being dragged over the "Add a step" card,
+    /// written by its drop destination's `isTargeted` callback (input).
+    @State var addStepCardTargeted = false
+
     var content: some ElementGroup {
         Column {
             paneRow
@@ -191,11 +195,24 @@ struct ContentView: Component {
 
     /// Appends a fresh keystroke step at the very end, independent of the
     /// current selection, complementing the palette's insert-after-selection
-    /// placement. (Dropping a step type dragged from the ADD STEP rows onto it
-    /// is lane 3's, port plan §2.2 W6.)
+    /// placement. It is also the drop zone for an ADD STEP row dragged from the
+    /// palette column (`MacroStepTypeRow`, `MacroStepDrop`): the dropped type is
+    /// appended, and the card wears an accent ring while one is over it. The
+    /// previous build offered the click as a substitute for this drop (port
+    /// plan §2.2 W6).
     private var addStepCard: some Element {
         let editor = editor
-        return Button {
+        let targeted = $addStepCardTargeted
+        // The card sits in a `Box` so the outer padding is a margin: padding
+        // on the button itself would sit inside its fill and hit area.
+        return Box {
+            card(editor: editor, targeted: targeted)
+        }
+        .padding(Insets.edges(leading: 16, bottom: 12, trailing: 16))
+    }
+
+    private func card(editor: EditorState, targeted: Binding<Bool>) -> some Element {
+        Button {
             editor.appendStep(MacroStepType.keystroke.makeStep())
         } label: {
             Text("Add a step")
@@ -206,7 +223,13 @@ struct ContentView: Component {
         .buttonStyle(.plain)
         .background(Chrome.pillBackground.opacity(0.6))
         .cornerRadius(Pixels(8))
-        .padding(Insets.edges(leading: 16, bottom: 12, trailing: 16))
+        .border(addStepCardTargeted ? Chrome.accent : Color.clear, width: Pixels(2))
+        .help("Click to append a keystroke, or drop a step type here to append it")
+        .dropDestination(for: String.self, action: { items, _ in
+            guard let type = MacroStepDrop.type(from: items) else { return false }
+            editor.appendStep(type.makeStep())
+            return true
+        }, isTargeted: { targeted.wrappedValue = $0 })
     }
 
     @ElementBuilder

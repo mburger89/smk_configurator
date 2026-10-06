@@ -154,28 +154,15 @@ struct StatusDot: Component {
     }
 }
 
-/// A pane not yet rebuilt on MetalUI: its label centred on the pane's own
-/// background at the pane's width (`nil`: flexible, for a main column). Used by
-/// the placeholder files lane 1 of the port left for lanes 2 and 3; it goes
-/// when the last of them does.
-struct PanePlaceholder: Component {
-    var label: String
-    var width: Float?
-    var background: Color
-
-    var content: some ElementGroup {
-        if let width {
-            body.frame(minWidth: Pixels(width), maxWidth: Pixels(width), maxHeight: Pixels(.infinity))
-                .background(background)
-        } else {
-            body.frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity))
-                .background(background)
-        }
-    }
-
-    private var body: Text {
-        Text(label)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(Chrome.textTertiary)
+extension StyledElement {
+    /// A text field's rounded-border look: MetalUI's `TextField` and
+    /// `TextEditor` draw no field chrome of their own and offer no
+    /// `.textFieldStyle(.roundedBorder)` (gap MG-20), so a bare field reads as
+    /// loose text. Write it before `.frame`.
+    func fieldChrome() -> some Element {
+        padding(Insets.symmetric(horizontal: 6, vertical: 3))
+            .background(Chrome.surface)
+            .cornerRadius(Pixels(5))
+            .border(Chrome.chipBorder, width: Pixels(1))
     }
 }
