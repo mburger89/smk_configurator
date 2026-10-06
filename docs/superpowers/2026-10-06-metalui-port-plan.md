@@ -601,6 +601,23 @@ switches all five modes, each pane a visible placeholder, status bar live,
 menus present, Appearance switches light/dark live, palette keys visibly change
 with the scheme; gaps file appended for anything new.
 
+**Lane 1 status (2026-10-06).** Landed as above. `swift build`: 0 `error:`,
+no app warnings. `swift test`: `Test run with 228 tests in 25 suites passed`
+(XCTest `Executed 0 tests`): the 225 baseline plus `ShellRenderTests` (3),
+which opens a real window and draws the shell in every rail mode, both macro
+sub-states and both schemes through the public `Window.drawFrameIfNeeded()`
+(MG-12) — a layout trap fails it; mutation-checked (a `fatalError` in the DEV
+inspector placeholder's body killed the run). Additions beyond the list:
+`PaletteLayout` also exposes its chip metrics and `chunk(_:into:)` for lane 2;
+`KeymapFileActions` (in `AppCommands.swift`) holds the dialog helpers
+`ContentView`'s theme import/export reuse; `PanePlaceholder` (in
+`UIStyle.swift`) goes with the last placeholder. **Not seen**: the screen was
+locked for the whole lane, so no launch — the visual "Done means" items (rail
+switching, Appearance live, palette changing with the scheme, menus) are
+unverified by eye; the render test proves only that every mode builds and lays
+out without trapping, and `paletteFollowsTheScheme` that all 19 keys resolve
+differently in light and dark. Lane 2 should launch first. Gaps: MG-11…MG-13.
+
 ### Lane 2 — KEY, DSN, THM and DEV panes
 
 **Files (only these):** `Views/KeyModeViews.swift`,

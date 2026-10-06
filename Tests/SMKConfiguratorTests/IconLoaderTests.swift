@@ -1,5 +1,5 @@
 import Foundation
-import SwiftCrossUI
+import MetalUI
 import Testing
 @testable import SMKConfigurator
 

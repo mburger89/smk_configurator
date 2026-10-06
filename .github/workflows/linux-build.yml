@@ -25,15 +25,16 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y libgtk-4-dev libgtk-3-dev clang libhidapi-dev
+          sudo apt install -y clang libhidapi-dev
 
       - name: Build
-        # Scoped to the app's own target, not a bare `swift build` — the
-        # latter builds every target in the full dependency graph,
-        # including swift-cross-ui's swift-winui dependency (Windows-only,
-        # needs Windows SDK headers like wtypesbase.h that don't exist on
-        # Linux/macOS). swift-cross-ui's own CI never runs a bare
-        # `swift build` for exactly this reason — it always scopes to
-        # specific targets (see .build/checkouts/swift-cross-ui/.github/
-        # workflows/build-test-and-docs.yml's `linux` job).
+        # On Linux `SMKConfigurator` is the UI-free library over Model/ and
+        # Device/ (Package.swift's `#else` branch): the app's UI is MetalUI on
+        # macOS only for now, so this job is what proves the model and device
+        # code build with no UI dependency.
         run: swift build --target SMKConfigurator
+
+      - name: Test
+        # The model and device tests (every suite but IconLoaderTests, which
+        # needs the macOS app's bundled PNGs).
+        run: swift test

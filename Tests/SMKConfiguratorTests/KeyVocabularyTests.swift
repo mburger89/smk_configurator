@@ -91,8 +91,8 @@ struct KeyVocabularyTests {
     @Test("drawer max height stays within a 1366x768 laptop's room")
     @MainActor
     func drawerHeightIsBounded() {
-        #expect(PaletteDrawerView.maxHeight <= 540)
-        #expect(PaletteDrawerView.maxHeight > PaletteDrawerView.minHeight)
+        #expect(PaletteLayout.maxHeight <= 540)
+        #expect(PaletteLayout.maxHeight > PaletteLayout.minHeight)
     }
 
     @Test("palette renders every group the vocabulary defines")
@@ -110,11 +110,11 @@ struct KeyVocabularyTests {
     @Test("every key group reaches the rendered section list")
     @MainActor
     func keySectionsCoverEveryGroup() {
-        let rendered = Set(PaletteDrawerView.keySections.map(\.title))
+        let rendered = Set(PaletteLayout.keySections.map(\.title))
         for group in KeyName.allGroups {
             #expect(rendered.contains(group.title), "\(group.title) is not rendered")
         }
         #expect(rendered.contains("Modifiers"))
-        #expect(PaletteDrawerView.keySections.count == KeyName.allGroups.count + 1)
+        #expect(PaletteLayout.keySections.count == KeyName.allGroups.count + 1)
     }
 }

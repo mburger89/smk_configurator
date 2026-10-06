@@ -154,3 +154,52 @@ written. Later lanes append.
   `ImageBitmap`. Icons stay pre-tinted light/dark PNGs, chosen with
   `@Environment(\.colorScheme)`.
 - **Severity.** Low.
+
+## MG-11 — no edge-set padding on legacy elements
+
+- **What.** SwiftUI's `.padding(.horizontal, 16)`, `.padding(.top, 8)` and
+  `.padding(EdgeInsets(…))` have no legacy spelling. A legacy element takes
+  `.padding(Pixels)` or `.padding(Edges<Length>)` — CSS order (top, right,
+  bottom, left), each edge wrapped as `.pixels(Pixels(n))`
+  (`Sources/MetalUI/Box.swift:1152`, `:1177`); the proposal path takes
+  `Edges<Pixels>` (`NativeModifiedContent.swift:88`). Neither has an
+  `Edge.Set` form.
+- **Where.** Every pane: the previous build wrote `EdgeInsets(top:bottom:
+  leading:trailing:)` or `.padding(.horizontal, n)` at about 40 sites
+  (status bar, macro editor column, list columns, rows).
+- **Workaround.** An app helper, `Insets.edges(top:leading:bottom:trailing:)`
+  and `Insets.symmetric(horizontal:vertical:)` (`Views/UIStyle.swift`),
+  returning `Edges<Length>`.
+- **Severity.** Low — a three-line helper, but every port writes it.
+
+## MG-12 — an app cannot build a frame headlessly
+
+- **What.** `renderFrame(_:size:scaleFactor:textSystem:atlas:theme:)` is
+  public but needs a `TextSystem`; the `MetalUI` product re-exports the
+  protocol but no conformer (`CoreTextTextSystem` is in `MetalUIText`, not a
+  library product), and an app cannot write a stub one because `FontKey` and
+  `GlyphImage` have only `package` initialisers
+  (`MetalUIScene/FontKey.swift:113`, `GlyphImage.swift:47`). So an app's tests
+  cannot lay out an element tree without a window.
+- **Where.** The port's wish for tests that "build a pane's element tree
+  headlessly through MetalUI's public API".
+- **Workaround.** `ShellRenderTests` opens a real AppKit window with
+  `startsDisplayLink: false` and calls the public `Window.drawFrameIfNeeded()`
+  after each mode change — build, layout, prepaint, paint, in every rail mode,
+  both macro sub-states and both schemes. It works in a locked session (no
+  display needed) and a layout refusal traps there; it sees no pixels and
+  cannot query layout results (no public read of a node's frame).
+- **Severity.** Medium — app-level layout tests are trap detectors only.
+
+## MG-13 — `.help` reaches neither a `Component` nor an `EnvironmentScope`
+
+- **What.** `.help(_:)` exists on `StyledElement` (returning `Self`) and on
+  `ProposalElementGroup` (`Tooltip.swift:30`, `:42`), not on `ElementGroup`:
+  a legacy `Component`, or anything after `.disabled(_:)`/`.font(_:)` (an
+  `EnvironmentScope`), cannot take a tooltip from its caller.
+- **Where.** The shared button styles (`PillButton` in `Views/UIStyle.swift`):
+  "Record new" and "Test run" carry tooltips, and the style ends in
+  `.disabled(!isEnabled)`.
+- **Workaround.** The style takes `help: String?` and applies `.help` to the
+  `Button` inside, before `.disabled`.
+- **Severity.** Low.
