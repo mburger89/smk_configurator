@@ -7,9 +7,23 @@ Bluetooth — without rebuilding or reflashing firmware.
 
 The UI is built with [MetalUI](https://github.com/mburger89/MetalUI), a
 GPU-accelerated Swift UI framework with SwiftUI's vocabulary. **The app runs on
-macOS today.** The keymap model and device code build and test on Linux and
-Windows too, with no UI dependency; a Linux/Windows UI on MetalUI's SDL backend
+macOS today.** The keymap model and device code also build on Linux and
+Windows (and test on Linux), with no UI dependency; a Linux/Windows UI on MetalUI's SDL backend
 is a later, separate step.
+
+## Status
+
+| Platform | UI | Model and device code |
+|---|---|---|
+| macOS | the MetalUI app (`swift run SMKConfigurator`) | built and tested (`swift test`) |
+| Linux | pending — waits on MetalUI's SDL backend | built and tested in CI |
+| Windows | pending — waits on MetalUI's SDL backend | built, tests compiled (not run) in CI |
+
+The app was ported from SwiftCrossUI to MetalUI in one step; how, and every
+deliberate difference from the previous build, is in
+`docs/superpowers/2026-10-06-metalui-port-plan.md`. What MetalUI could not
+express, and the workaround used for each, is in
+`docs/superpowers/2026-10-06-metalui-gaps.md`.
 
 ## What it does
 

@@ -491,10 +491,11 @@ over the same `Sources/SMKConfigurator/` tree:
 - **Linux, Windows**: a library `.target` with `exclude: ["Views", "main.swift",
   "Resources"]`, depending only on `CHidapi` — no UI dependency, MetalUI is not
   even declared there; test target `SMKConfiguratorTests` with
-  `exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift"]` (both import
-  MetalUI, which is not declared there; `IconLoaderTests` also needs the
-  bundled PNGs). **Every later test file that imports MetalUI joins this
-  exclude list**, or Linux `swift test` and Windows `--build-tests` fail with
+  `exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift",
+  "PaneRenderTests.swift", "PaneLogicTests.swift", "MacroPaneTests.swift"]`
+  (at the end of lane 3: each imports MetalUI, which is not declared there, or
+  tests a `Views/` type; `IconLoaderTests` also needs the bundled PNGs).
+  **Every later test file that imports MetalUI joins this exclude list**, or Linux `swift test` and Windows `--build-tests` fail with
   `no such module 'MetalUI'`.
 
 The MetalUI dependency and its URL exist only inside `#if os(macOS)` in
@@ -571,8 +572,9 @@ Three **sequential** lanes, each on files the others do not touch. At the end
 of every lane: `swift build` with 0 `error:`, `swift test` ≥ 225 tests all
 passing (summary line recorded exactly; sum several if printed), a commit, and
 — screen unlocked only — a launch of a few seconds to see the window, then
-kill it. A MetalUI shortfall found in a lane is appended to the gaps file
-(next id after the last `## MG-`) with its workaround, never patched in
+kill it. A MetalUI shortfall found in a lane is added to the gaps file
+(the "next unused id" its header names; the file is ordered by severity, so
+its last heading is not the newest) with its workaround, never patched in
 MetalUI. Each lane's report names its decisions-to-confirm.
 
 Shared rules for every lane: the legacy vocabulary (MG-1); every reusable piece
@@ -782,8 +784,9 @@ README describes the MetalUI app; gaps file final.
 **Lane 3 status (2026-10-06).** §1.9–§1.10 built; no placeholder left
 (`grep -rn "not yet ported" Sources` empty; `PanePlaceholder` removed from
 `UIStyle.swift`). §1 ticked, with the deliberate differences in §1.12.
-`swift build`: 0 `error:`. `swift test`: see the commit message / report for
-the exact line (256 at the first lane-3 run: 247 + `MacroPaneRenderTests` 3 +
+`swift build`: 0 `error:`. `swift test`: `Test run with 256 tests in 32 suites
+passed` (XCTest `Executed 0 tests`; re-taken from a clean `.build` by the
+branch check, §6) — 256 at the first lane-3 run too: 247 + `MacroPaneRenderTests` 3 +
 `MacroPaneLogicTests` 6, `MacroPaneTests.swift`, macOS-only and on the
 Linux/Windows exclude list). Mutations: letting `MacroStepDrop` accept any
 first string reddened "text dragged in from another app is refused; the first
@@ -806,4 +809,63 @@ contents".
   stale comment).
 - **Gaps:** MG-19…MG-22 new; MG-4, MG-17, MG-18 extended; the gaps file is
   final.
+
+## 6. Branch check (2026-10-06, `2e7643e..b6d4c28`)
+
+The parity and branch checker's pass over the finished branch. Only documents
+changed in this pass (this section, §4.1's exclude list, §5's id rule, the
+lane-3 count, the gaps file's order, `README.md`); no code.
+
+- **macOS** (Swift 6.4, after `rm -rf .build`): `swift build` — 0 `error:`,
+  0 `warning:`; `swift test` — `Test run with 256 tests in 32 suites passed`
+  (XCTest `Executed 0 tests, with 0 failures`), `BinaryFormatAgreementTests`
+  and every model suite among them.
+- **Linux library, in containers** (`git archive HEAD`, `apt-get install clang
+  libhidapi-dev`, then the workflow's two commands): `swift:6.4-noble` and
+  `swift:6.2-noble` (6.2.4, the toolchain `linux-build.yml` pins) both build
+  `--target SMKConfigurator` with no error and print `Test run with 217 tests
+  in 21 suites passed`. The 39 tests / 11 suites fewer than macOS are the five
+  excluded files (34 / 9) and the two CoreBluetooth-gated suites
+  (`BLEConnectionStateTests`, `BLEUploadUUIDsTests`: 5 / 2, gated before this
+  branch too). Run on aarch64; CI is x86_64.
+- **Imports, by reading** (a macOS `--target` build proves nothing here): every
+  `Model/` file imports only `Foundation` (`EditorState` also `Observation`,
+  which ships with the Linux and Windows toolchains); `Device/` adds `CHidapi`;
+  CoreBluetooth only under `#if canImport(CoreBluetooth)` (`BLECentral`,
+  `BLETransport`, `BLEUploadUUIDs`, five sites in `EditorState`, one in
+  `DeviceMonitor`). MetalUI is declared only inside `#if os(macOS)` in
+  `Package.swift`.
+- **Windows: not run** (no Windows host). Reasoned: the library's imports are
+  as above; `vcpkg.json` still supplies hidapi; the new "Build tests" step
+  compiles the library and its tests. The pre-existing "Build" step reads
+  `$LASTEXITCODE` after `Start-Process … -Passthru | Out-Null`, which does not
+  set it, so that step cannot see a failure; "Build tests" rebuilds the same
+  target with a plain `swift build`, so a compile error now fails the job
+  there. That step is untouched by this branch.
+- **SwiftCrossUI**: absent from `Package.swift`, `Package.resolved`,
+  `Sources/`, the workflows, and `Tests/` (one historical comment in
+  `PaletteDrawerLayoutTests.swift`). Still described by the repo's `CLAUDE.md`
+  (flagged above, outside every lane's files) and by dated plans/specs under
+  `docs/superpowers/` (history, left as written).
+- **Model/ and Device/**: `Device/` is byte-identical to `2e7643e`. `Model/`
+  differs only as §4.3 lists: `EditorState.swift` and `KeyboardTheme.swift`,
+  and five new files whose every non-blank code line is found in the
+  `2e7643e` views (checked line by line), except `enum PaletteLayout {` (the
+  rename) and `PaletteLayout.chunk(_:into:)` (lane 1's documented addition):
+  moves, not rewrites. Pre-existing tests change only by §4.3 item 4's renames.
+- **§1 inventory**: every box re-checked against the source (strings, sizes
+  and wiring: menus and shortcuts, window sizes from `WindowMetrics`, the
+  load-error `onChange` → `.alert`, draft seeding `onAppear`, the DEV monitor
+  `onAppear`/`onDisappear`, the status bar's `refreshDeviceStatus`, `.disabled`
+  on the "+" layer chip, Delete design and both Record buttons, the
+  hover-revealed layer delete, a collection edit clearing the filter, the two
+  drop destinations). Each is present, or deliberately changed as §1.12 lists;
+  none missing. Checked by reading, not by input: no box was clicked in a
+  running app (MG-17).
+- **Gaps file**: 22 entries, each with what, where, workaround and severity;
+  reordered by severity (2 high, 5 medium, 15 low) with the next unused id in
+  its header. Spot-checked against MetalUI `e54c3f6`: `.id(_:)` takes a
+  `String` only, `.help` exists on `StyledElement`/`ProposalElementGroup`
+  only, `layoutPriority` on the proposal path only, no `labelsHidden`,
+  `toggleStyle` or `textFieldStyle`.
 

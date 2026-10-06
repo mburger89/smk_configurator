@@ -16,7 +16,20 @@ Entries MG-1…MG-10 come from the planning survey (reading MetalUI's source and
 docs against the app's 3,400 lines of views), before any port code was
 written. Later lanes appended MG-11…MG-22.
 
+**Ordered by severity** (high, medium, low; within a band, the entry an app
+meets first comes first), not by id, so the last heading is not the newest
+entry. **Next unused id: MG-23.** A new entry takes it, goes into its band and
+the table below, and moves this line.
+
+| severity | entries |
+|---|---|
+| high | MG-1, MG-15 |
+| medium | MG-20, MG-17, MG-14, MG-2, MG-3 |
+| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22 |
+
 ---
+
+# High
 
 ## MG-1 — controls are not proposal elements, so SwiftUI stacks cannot hold them
 
@@ -43,6 +56,96 @@ written. Later lanes appended MG-11…MG-22.
   `.frame`/background/corner radius after).
 - **Severity.** High — it decides the vocabulary of the entire port and makes
   a SwiftUI → MetalUI port a rewrite of every container rather than a rename.
+
+## MG-15 — a `Component`'s layout record holds its whole content type: a large app overflows the stack in debug
+
+- **What.** `ComponentLayout<C>` stores `C.Content` and
+  `C.Content.GroupLayout` inline (`Component.swift`), and a `switch` in a
+  builder keeps every branch's type. So a shell `Component` that switches
+  between pane `Component`s carries the full static layout type of **every**
+  pane of **every** mode at once, and the debug build's generic frames for it
+  grow with the sum. With lane 2's four real panes in place, building the
+  window root (`rootView(editor:)`) crashed with `EXC_BAD_ACCESS` in
+  `___chkstk_darwin` on an 8 MB main-thread stack — in every rail mode,
+  including MACROS, whose own panes were still one-line placeholders — while
+  each pane rendered alone, and the three KEY panes side by side, without
+  trouble. Reproduction: this branch's `ContentView` with the twelve pane
+  `content`s not wrapped in `pane { }` (`Views/KeyModeViews.swift`), then
+  `swift test --filter ShellRenderTests` (signal 11) or
+  `renderFrame({ rootView(editor: editor) }, …)` in any mode.
+- **Where.** `Views/ContentView.swift`'s list/main/inspector `switch`es over
+  the KEY, DSN, THM, DEV and MACROS panes.
+- **Workaround.** Every pane wraps its content in `pane { … }`
+  (`AnyElement(Box { … })`), erasing its type at the pane boundary. The suite
+  then passes; the app's real main thread has the same 8 MB.
+- **Severity.** High — nothing warns until a debug build crashes, the crash
+  is far from the code that grew, and the fix (type erasure at boundaries) is
+  undocumented. MetalUI's own "Windows threads have 1 MB stacks" rule is the
+  same hazard seen from the demo side; an app on the later Windows backend will
+  meet it sooner.
+
+# Medium
+
+## MG-20 — `TextField`/`TextEditor` draw no field chrome, and there is no `.textFieldStyle`
+
+- **What.** MetalUI's `TextField` and `TextEditor` paint the text, caret and
+  selection only — no bezel, background or border — and `.textFieldStyle`
+  (`.roundedBorder`, `.plain`) is not offered. SwiftUI's macOS default is a
+  rounded-border field. Not listed in `docs/divergences.md`. Seen at the
+  lane-3 launch: the library's "Search macros" and each row's "Collection"
+  field read as loose placeholder text, the text step's editor as a floating
+  line.
+- **Where.** Every field: the library search and collection fields, the macro
+  name, the text step's `TextEditor`, the DSN name field, the THM hex fields.
+- **Workaround.** An app helper, `StyledElement.fieldChrome()`
+  (`Views/UIStyle.swift`): 6/3 padding, `Chrome.surface`, radius 5, a 1-point
+  `Chrome.chipBorder`, written before `.frame`. Applied to all six fields
+  (lane 3's parity pass also applied it to lane 2's DSN and THM fields).
+- **Severity.** Medium — every app with a form writes this, and without it a
+  field is not recognisable as one.
+
+## MG-17 — no public input injection for an app's tests
+
+- **What.** `Window` has no public way to deliver an `InputEvent` (a click, a
+  drag, a drop) from a test; `onInput` is a hook, and `InputEvent` dispatch is
+  internal. An app cannot test "drag this chip onto that key" end to end.
+- **Where.** The KEY board's drop destinations and the palette chips' drags
+  (`Views/KeyCapView.swift`, `Views/PaletteDrawerView.swift`); lane 3: the
+  ADD STEP rows' drags onto the "Add a step" card (`MacroStepTypeRow`,
+  `ContentView.addStepCard`), and every click in the macro panes.
+- **Workaround.** The drop logic is a plain function (`PaletteDrop`; lane 3's
+  `MacroStepDrop`), tested with the model's `assign`/`appendStep`
+  (`PaneLogicTests`, `MacroPaneLogicTests`); the gesture itself is
+  unverified until someone drags a chip in the running app.
+- **Severity.** Medium — every interaction an app adds is untestable below a
+  human check.
+
+## MG-14 — no `layoutPriority` on the legacy stacks
+
+- **What.** `.layoutPriority(_:)` exists only on `ProposalElementGroup`
+  (`NativeModifiedContent.swift:296`); a legacy `Column`/`Row` child cannot
+  take one, and a proposal `VStack` cannot hold the palette drawer's `Button`s
+  (MG-1). The legacy stacks divide space by SwiftUI's flexibility rule, so of
+  a greedy board area and a 260…530 drawer the drawer is offered half of what
+  is left, never "everything it wants first". Minimal reproduction:
+  `Column(gap: Pixels(16)) { ScrollView(.vertical) { … }.frame(minHeight: Pixels(240), maxHeight: Pixels(.infinity)); drawer.frame(minHeight: Pixels(260), maxHeight: Pixels(530)) }`
+  in an 800-tall slot offers the drawer (800 − 16) / 2 = 392, not 530 — derived
+  from the stack rule (MetalUI `CN-B`), not measured: an app cannot read a
+  laid-out frame back (MG-12).
+- **Where.** KEY mode's main column (`Views/KeyModeViews.swift`,
+  `KeyMainContentView`): the old build served the palette drawer first with
+  `.layoutPriority(1)` so it reached its no-scroll maximum in a tall window.
+- **Workaround.** The board's scroll area is capped at the board's own
+  height (`KeyboardBoardView.naturalHeight(of:)`, at least
+  `WindowMetrics.boardMinHeight`), so it is the less flexible child and is
+  served first; the drawer then gets the rest up to its maximum. At the
+  window's minimum height the board area works out at about 258 and the drawer
+  at its 260 floor (a couple of points into the column's padding; derived, not
+  measured); in a window
+  taller than both maxima the leftover space sits below the drawer instead of
+  growing the board.
+- **Severity.** Medium — the drawer's height now depends on the design's row
+  count, and an exact "serve this first" is not expressible.
 
 ## MG-2 — no `@Environment(Type.self)` / `.environment(object)`
 
@@ -74,6 +177,8 @@ written. Later lanes appended MG-11…MG-22.
   item. The six toolbar icon PNGs stay bundled (`AppIcon` keeps its cases, so
   `IconLoaderTests` keeps its contract) but nothing draws them.
 - **Severity.** Medium — the file actions lose their one-click icons.
+
+# Low
 
 ## MG-4 — `Toggle` has only the checkbox look
 
@@ -222,60 +327,6 @@ now renders every rail mode that way.*
   `Button` inside, before `.disabled`.
 - **Severity.** Low.
 
-## MG-14 — no `layoutPriority` on the legacy stacks
-
-- **What.** `.layoutPriority(_:)` exists only on `ProposalElementGroup`
-  (`NativeModifiedContent.swift:296`); a legacy `Column`/`Row` child cannot
-  take one, and a proposal `VStack` cannot hold the palette drawer's `Button`s
-  (MG-1). The legacy stacks divide space by SwiftUI's flexibility rule, so of
-  a greedy board area and a 260…530 drawer the drawer is offered half of what
-  is left, never "everything it wants first". Minimal reproduction:
-  `Column(gap: Pixels(16)) { ScrollView(.vertical) { … }.frame(minHeight: Pixels(240), maxHeight: Pixels(.infinity)); drawer.frame(minHeight: Pixels(260), maxHeight: Pixels(530)) }`
-  in an 800-tall slot offers the drawer (800 − 16) / 2 = 392, not 530 — derived
-  from the stack rule (MetalUI `CN-B`), not measured: an app cannot read a
-  laid-out frame back (MG-12).
-- **Where.** KEY mode's main column (`Views/KeyModeViews.swift`,
-  `KeyMainContentView`): the old build served the palette drawer first with
-  `.layoutPriority(1)` so it reached its no-scroll maximum in a tall window.
-- **Workaround.** The board's scroll area is capped at the board's own
-  height (`KeyboardBoardView.naturalHeight(of:)`, at least
-  `WindowMetrics.boardMinHeight`), so it is the less flexible child and is
-  served first; the drawer then gets the rest up to its maximum. At the
-  window's minimum height the board area works out at about 258 and the drawer
-  at its 260 floor (a couple of points into the column's padding; derived, not
-  measured); in a window
-  taller than both maxima the leftover space sits below the drawer instead of
-  growing the board.
-- **Severity.** Medium — the drawer's height now depends on the design's row
-  count, and an exact "serve this first" is not expressible.
-
-## MG-15 — a `Component`'s layout record holds its whole content type: a large app overflows the stack in debug
-
-- **What.** `ComponentLayout<C>` stores `C.Content` and
-  `C.Content.GroupLayout` inline (`Component.swift`), and a `switch` in a
-  builder keeps every branch's type. So a shell `Component` that switches
-  between pane `Component`s carries the full static layout type of **every**
-  pane of **every** mode at once, and the debug build's generic frames for it
-  grow with the sum. With lane 2's four real panes in place, building the
-  window root (`rootView(editor:)`) crashed with `EXC_BAD_ACCESS` in
-  `___chkstk_darwin` on an 8 MB main-thread stack — in every rail mode,
-  including MACROS, whose own panes were still one-line placeholders — while
-  each pane rendered alone, and the three KEY panes side by side, without
-  trouble. Reproduction: this branch's `ContentView` with the twelve pane
-  `content`s not wrapped in `pane { }` (`Views/KeyModeViews.swift`), then
-  `swift test --filter ShellRenderTests` (signal 11) or
-  `renderFrame({ rootView(editor: editor) }, …)` in any mode.
-- **Where.** `Views/ContentView.swift`'s list/main/inspector `switch`es over
-  the KEY, DSN, THM, DEV and MACROS panes.
-- **Workaround.** Every pane wraps its content in `pane { … }`
-  (`AnyElement(Box { … })`), erasing its type at the pane boundary. The suite
-  then passes; the app's real main thread has the same 8 MB.
-- **Severity.** High — nothing warns until a debug build crashes, the crash
-  is far from the code that grew, and the fix (type erasure at boundaries) is
-  undocumented. MetalUI's own "Windows threads have 1 MB stacks" rule is the
-  same hazard seen from the demo side; an app on the later Windows backend will
-  meet it sooner.
-
 ## MG-16 — a `some Element` call inside a builder `for` loop does not compile
 
 - **What.** In an `@ElementBuilder` body, a `for` loop whose body calls a
@@ -300,22 +351,6 @@ now renders every rail mode that way.*
   types.
 - **Severity.** Low — easy once known, but the diagnostic names neither the
   loop body nor the cause.
-
-## MG-17 — no public input injection for an app's tests
-
-- **What.** `Window` has no public way to deliver an `InputEvent` (a click, a
-  drag, a drop) from a test; `onInput` is a hook, and `InputEvent` dispatch is
-  internal. An app cannot test "drag this chip onto that key" end to end.
-- **Where.** The KEY board's drop destinations and the palette chips' drags
-  (`Views/KeyCapView.swift`, `Views/PaletteDrawerView.swift`); lane 3: the
-  ADD STEP rows' drags onto the "Add a step" card (`MacroStepTypeRow`,
-  `ContentView.addStepCard`), and every click in the macro panes.
-- **Workaround.** The drop logic is a plain function (`PaletteDrop`; lane 3's
-  `MacroStepDrop`), tested with the model's `assign`/`appendStep`
-  (`PaneLogicTests`, `MacroPaneLogicTests`); the gesture itself is
-  unverified until someone drags a chip in the running app.
-- **Severity.** Medium — every interaction an app adds is untestable below a
-  human check.
 
 ## MG-18 — no `.labelsHidden()`: a titleless `Picker`/`Stepper` keeps a leading gap and has no label
 
@@ -344,24 +379,6 @@ now renders every rail mode that way.*
   filter changes; the inspector's step editor, keyed by the selected index.
 - **Workaround.** `.id("macro-\(row.id)")`, `.id("step-\(index)")`.
 - **Severity.** Low.
-
-## MG-20 — `TextField`/`TextEditor` draw no field chrome, and there is no `.textFieldStyle`
-
-- **What.** MetalUI's `TextField` and `TextEditor` paint the text, caret and
-  selection only — no bezel, background or border — and `.textFieldStyle`
-  (`.roundedBorder`, `.plain`) is not offered. SwiftUI's macOS default is a
-  rounded-border field. Not listed in `docs/divergences.md`. Seen at the
-  lane-3 launch: the library's "Search macros" and each row's "Collection"
-  field read as loose placeholder text, the text step's editor as a floating
-  line.
-- **Where.** Every field: the library search and collection fields, the macro
-  name, the text step's `TextEditor`, the DSN name field, the THM hex fields.
-- **Workaround.** An app helper, `StyledElement.fieldChrome()`
-  (`Views/UIStyle.swift`): 6/3 padding, `Chrome.surface`, radius 5, a 1-point
-  `Chrome.chipBorder`, written before `.frame`. Applied to all six fields
-  (lane 3's parity pass also applied it to lane 2's DSN and THM fields).
-- **Severity.** Medium — every app with a form writes this, and without it a
-  field is not recognisable as one.
 
 ## MG-21 — the segmented picker's look is two shared tokens; MetalUI's dark track is navy
 
