@@ -13,7 +13,8 @@ import Testing
 /// pane builds and lays out without trapping". It cannot see whether anything
 /// looks right.
 ///
-/// `everyModeDraws` opens a real (never displayed by the test) AppKit window,
+/// `everyModeDraws` (macOS only: `App()` is AppKit's; `SDLWindowTests` is its
+/// Linux/Windows twin) opens a real (never displayed by the test) AppKit window,
 /// so the window's own path runs: the app's `lightTheme`/`darkTheme`, the
 /// window-stamped colour scheme and the lifecycle drain. `everyModeRendersHeadlessly`
 /// builds the same tree with no window through the public `renderFrame`,
@@ -22,6 +23,7 @@ import Testing
 @MainActor
 @Suite("The shell builds and lays out in every mode", .serialized)
 struct ShellRenderTests {
+    #if os(macOS)
     @Test("every rail mode, both macro sub-states, light and dark")
     func everyModeDraws() throws {
         let defaults = UserDefaults(suiteName: "ShellRenderTests-\(UUID().uuidString)")!
@@ -57,6 +59,7 @@ struct ShellRenderTests {
         }
         #expect(editor.railMode == .macros)
     }
+    #endif
 
     @Test("every rail mode builds a non-empty scene with no window")
     func everyModeRendersHeadlessly() throws {
@@ -79,7 +82,15 @@ struct ShellRenderTests {
 
     @Test("the window's height bounds come from the palette's")
     func windowMetrics() {
-        #expect(WindowMetrics.minWindowHeight == 27 + 40 + 32 + 240 + PaletteLayout.minHeight)
+        // The drawn toolbar strip takes 39 from the root off macOS (MetalUI
+        // divergence 136); macOS draws none.
+        #if os(macOS)
+        #expect(WindowMetrics.toolbarStripHeight == 0)
+        #else
+        #expect(WindowMetrics.toolbarStripHeight == 39)
+        #endif
+        #expect(WindowMetrics.minWindowHeight
+                == WindowMetrics.toolbarStripHeight + 27 + 40 + 32 + 240 + PaletteLayout.minHeight)
         #expect(WindowMetrics.idealWindowHeight > WindowMetrics.minWindowHeight)
         // Under the ~730pt of usable height a 1366x768 laptop has.
         #expect(WindowMetrics.minWindowHeight < 730)

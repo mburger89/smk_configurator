@@ -94,7 +94,6 @@ struct MacroInspectorView: Component {
             InspectorField(title: "Name") {
                 TextField("Macro name", text: name)
                     .font(.system(size: 13))
-                    .fieldChrome()
             }
             InspectorField(title: "Bound key", spacing: 4) {
                 Text(row.isBound ? "\(row.layerLabel) · \(row.triggerLabel)" : "Unbound")
@@ -306,8 +305,9 @@ struct MacroStepEditor: Component {
             InspectorField(title: "Text", spacing: 4) {
                 TextEditor(text: Binding(get: { text },
                                          set: { update(.text($0, delivery: delivery, msPerChar: msPerChar)) }))
+                    .textEditorStyle(.plain)
                     .font(.system(size: 12))
-                    .fieldChrome()
+                    .editorChrome()
                     .frame(height: Pixels(80))
             }
             InspectorField(title: "Typing speed", spacing: 4) {

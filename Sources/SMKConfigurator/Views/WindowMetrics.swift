@@ -8,10 +8,22 @@ enum WindowMetrics {
 
     /// The status bar's height.
     static let statusBarHeight: Double = 26
-    /// Everything the root stacks above and below the pane row: the 1-point
-    /// divider over the status bar and the status bar. (The previous build
-    /// also stacked a 50-point fake titlebar and its 2-point line here.)
-    static let chromeHeight: Double = statusBarHeight + 1
+    /// The strip MetalUI draws for a `.toolbar` where the platform has no
+    /// native toolbar -- SDL, on Linux and Windows -- above the root, taking
+    /// its height from the root without growing the window (MetalUI
+    /// divergence 136, ruling MD-K; its own constant is internal). 0 on
+    /// macOS, where the app declares no toolbar.
+    #if os(macOS)
+    static let toolbarStripHeight: Double = 0
+    #else
+    static let toolbarStripHeight: Double = 39
+    #endif
+
+    /// Everything the window holds above and below the pane row: the drawn
+    /// toolbar strip off macOS, the 1-point divider over the status bar and
+    /// the status bar. (The previous build also stacked a 50-point fake
+    /// titlebar and its 2-point line here.)
+    static let chromeHeight: Double = toolbarStripHeight + statusBarHeight + 1
 
     /// Guaranteed minimum for KEY mode's board scroll area -- without it the
     /// palette drawer below could take everything and squeeze the board down

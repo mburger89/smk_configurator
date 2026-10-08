@@ -19,14 +19,14 @@ written. Later lanes appended MG-11…MG-22. MG-23 onward come from the Linux/Wi
 
 **Ordered by severity** (high, medium, low; within a band, the entry an app
 meets first comes first), not by id, so the last heading is not the newest
-entry. **Next unused id: MG-26.** A new entry takes it, goes into its band and
+entry. **Next unused id: MG-27.** A new entry takes it, goes into its band and
 the table below, and moves this line.
 
 | severity | entries |
 |---|---|
 | high | MG-1, MG-15 |
 | medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24 |
-| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25 |
+| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25, MG-26 |
 
 ---
 
@@ -104,6 +104,15 @@ the table below, and moves this line.
   (lane 3's parity pass also applied it to lane 2's DSN and THM fields).
 - **Severity.** Medium — every app with a form writes this, and without it a
   field is not recognisable as one.
+- **Status at `70ed000`.** Fixed upstream: `TextField` draws SwiftUI's
+  bordered field by default and `.textFieldStyle(_:)`/`.textEditorStyle(_:)`
+  exist (MetalUI `MD-B`, `MD-C`, `MD-F`). Adopted by cross-platform lane 1,
+  because the old helper on top of the new default drew two borders: the five
+  `TextField`s drop the helper and keep MetalUI's chrome (`.surface` fill,
+  `.separator` border, radius 6, the control focus ring); the one `TextEditor`
+  keeps the app's chrome, renamed `editorChrome()`, over
+  `.textEditorStyle(.plain)`, since MetalUI's editor default is a fill with no
+  border and no text inset (its divergence 133).
 
 ## MG-17 — no public input injection for an app's tests
 
@@ -147,6 +156,9 @@ the table below, and moves this line.
   growing the board.
 - **Severity.** Medium — the drawer's height now depends on the design's row
   count, and an exact "serve this first" is not expressible.
+- **Status at `70ed000`.** Fixed upstream: a legacy container sees through a
+  `layoutPriority` layer (MetalUI `MD-G`). Not adopted; the workaround stays
+  (follow-up work, cross-platform plan §6).
 
 ## MG-2 — no `@Environment(Type.self)` / `.environment(object)`
 
@@ -164,6 +176,10 @@ the table below, and moves this line.
   unwrap.
 - **Severity.** Medium — mechanical, but it threads a parameter through every
   pane and leaf (`KeyCapView`, `PaletteChip`, …).
+- **Status at `70ed000`.** Fixed upstream: `@Environment(Type.self)` reads an
+  `@Observable` object provided by `.environment(_ object:)`, and a missing
+  one traps (MetalUI `MD-H`, its divergence 134). Not adopted; `let editor`
+  stays (follow-up work, cross-platform plan §6).
 
 ## MG-3 — no window toolbar API
 
@@ -178,6 +194,11 @@ the table below, and moves this line.
   item. The six toolbar icon PNGs stay bundled (`AppIcon` keeps its cases, so
   `IconLoaderTests` keeps its contract) but nothing draws them.
 - **Severity.** Medium — the file actions lose their one-click icons.
+- **Status at `70ed000`.** Fixed upstream: `.toolbar`/`.searchable` over a
+  closed item set, a native `NSToolbar` on AppKit, a drawn 39-point strip on
+  SDL (MetalUI `MD-I`, `MD-J`, `MD-K`). Used on Linux and Windows only, for
+  MG-23's workaround (cross-platform lane 2); macOS keeps the menu bar and no
+  toolbar, the user's decision above.
 
 ## MG-23 — `App.commands` draws nothing on SDL: menu-only actions are unreachable on Linux and Windows
 
@@ -484,6 +505,39 @@ now renders every rail mode that way.*
   nothing traps.
 - **Severity.** Low. A one-line workaround, but the app must know a family
   name per platform.
+
+## MG-26 — a MetalUI product filtered out of the app target on macOS breaks the test target's compile there (toolchain, not MetalUI)
+
+*Found by cross-platform lane 1 (2026-10-08, MetalUI `70ed000`, Swift 6.4
+`swiftlang-6.4.0.33.1`, the default build system).*
+
+- **What.** With `.product(name: "MetalUIPortableText", package: "MetalUI",
+  condition: .when(platforms: [.linux, .windows]))` (and the same for
+  `MetalUISystemFonts`) on the executable target -- the shape
+  `metalui new --cross-platform` generates -- while the test target names
+  both products **unconditionally**, `swift build --build-tests` on macOS
+  fails in the test target's dependency scan: `error: unable to resolve
+  module dependency: 'CFreeType'` (and `'CHarfBuzz'`, `'CSheenBidi'`,
+  `'CUnibreak'`). The test target's compile line carries
+  `-fmodule-map-file` for `CStbImage` and `MetalUIShaderTypes` only. The plain
+  `swift build` passes. Measured both ways: the two products conditional →
+  fails; the same two unconditional (only `MetalUISDL` kept conditional) →
+  passes. `--build-system native` not tried. The scaffold's own package has no
+  test target, so MetalUI's scaffold build test cannot see this.
+  Minimal reproduction: the scaffold's cross-platform manifest plus
+  `.testTarget(name: "T", dependencies: ["App", .product(name:
+  "MetalUIPortableText", package: "MetalUI")])` with one file
+  `import MetalUIPortableText`, then `swift build --build-tests` on macOS.
+- **Where.** `Package.swift`: the app's test target constructs
+  `PortableTextSystem` on macOS for `renderFrame` (`ShellRenderTests`,
+  `PaneRenderTests`, `MacroPaneTests`).
+- **Workaround.** `MetalUIPortableText` and `MetalUISystemFonts` are
+  unconditional dependencies of the executable target on every platform;
+  macOS links them unused. Only `MetalUISDL` stays `condition: portable`.
+- **Severity.** Low. A SwiftPM / swift-build defect rather than MetalUI's, but
+  every consumer that follows getting-started's manifest and tests with the
+  portable text system meets it; worth a line in MetalUI's getting-started or
+  a test target in its scaffold build test.
 
 ---
 

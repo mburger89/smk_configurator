@@ -122,7 +122,6 @@ struct MacroLibraryRowView: Component {
             }
         ))
         .font(.system(size: 12))
-        .fieldChrome()
         // 8 short of the column, so the field's border clears the ON column.
         .frame(width: Pixels(Float(MacroLibraryColumn.collection) - 8))
     }

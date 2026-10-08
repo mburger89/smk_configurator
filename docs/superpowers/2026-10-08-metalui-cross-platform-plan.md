@@ -472,3 +472,97 @@ mutations.)*
 
 **Planning baseline, macOS** (`d67f1cd`, before any change):
 `swift build`: `Build complete!`, 0 `error:`. `swift test`: `Test run with 256 tests in 32 suites passed` (XCTest: `Executed 0 tests`). `~/esp/SMK` is present on this Mac, so `BinaryFormatAgreementTests` ran rather than skipping. This is the count lane 1 must keep (at least 256) after the bump.
+
+### Lane 1 (2026-10-08)
+
+**The bump** (`e54c3f6` → `70ed000`, `swift package update`, before any
+other change), macOS: `swift build` `Build complete! (25.85 sec)`, 0
+`error:`, 0 `warning:`; `swift test` `Test run with 256 tests in 32 suites
+passed` (XCTest `Executed 0 tests`). No new warning, no deprecation, no count
+change. What it changed visibly: §1.4 item 1 (the double field border), below.
+
+**Field chrome (§1.4 item 1). Ruling: MetalUI's chrome on the five
+`TextField`s; the app's chrome on the one `TextEditor`.** The helper
+`fieldChrome()` is gone from every `TextField` (macro name, library search,
+collection, DSN name, THM hex), which now draw MetalUI's default bordered
+field: `.surface` fill (the app's theme sets it to the same #FFFFFF / #2C2C2E
+as `Chrome.surface`), a 1-point `.separator` border (#E3E3E5 / #3A3A3C,
+against the old `Chrome.chipBorder` #E0E0E2 / #48484A), radius 6 (was 5),
+insets 6/4 (was 6/3), and now the control focus ring while focused. The text
+step's `TextEditor` writes `.textEditorStyle(.plain)` and keeps the old look
+through the helper, renamed `editorChrome()`: MetalUI's editor default is a
+fill with no border and no text inset (its divergence 133). Gap MG-20 carries
+the status line. **Launch look:** the macOS app ran 6 seconds and was killed
+(exit 143 from SIGTERM, no crash output); it opened in KEY mode, which holds
+no text field, so the new field look itself was **not checked** on screen.
+
+**Manifest (§2).** Written as §2.2, with one change measured on macOS:
+`MetalUIPortableText` and `MetalUISystemFonts` are **unconditional**
+dependencies of the executable (only `MetalUISDL` is `condition: portable`).
+With all three conditional, `swift build --build-tests` on macOS failed in
+the test target's dependency scan (`unable to resolve module dependency:
+'CFreeType'`, also `CHarfBuzz`, `CSheenBidi`, `CUnibreak`); with the two
+unconditional it passed (gap MG-26, a toolchain defect). The test target
+takes every file; `MetalUISDL` is a `condition: portable` dependency there
+too. `SMK_UI_FREE=1` declares the old library shape, its exclude list plus
+`SDLWindowTests.swift`. `swift-tools-version` stays 6.2. SwiftPM re-evaluated
+the manifest when only the variable changed (`swift package describe` printed
+the library shape under `SMK_UI_FREE=1` and the executable without it, and
+the mutation below), so neither fallback in §2.1 was needed.
+
+**`main.swift`.** `makeApp()`: `App()` on macOS; off macOS
+`App(platform: try SDLPlatform(), textSystem: { PortableTextSystem(resolver:) })`
+over `SystemFonts.resolver()` with `.monospaced` registered as "DejaVu Sans
+Mono" (Linux) or "Consolas" (Windows), gap MG-25. `WindowMetrics.toolbarStripHeight`
+(39 off macOS, 0 on macOS) is inside `chromeHeight`; the `windowMetrics`
+test reads it.
+
+**Tests.** `everyModeDraws` is `#if os(macOS)`. New
+`SDLWindowTests.everyModeDrawsInAnSDLWindow` (`#if !os(macOS) &&
+canImport(MetalUISDL)`, suite `.enabled(if: SMK_RUN_SDL_WINDOW_TEST=1)`)
+opens a hidden `SDLPlatform` window built as `makeApp()` builds it and walks
+every rail mode, both macro sub-states and both schemes (14 draws). Where the
+window presents frames it expects one frame per draw and the window's scheme
+to follow; **under SDL's `offscreen` driver (MetalUI's image) `beginFrame()`
+answers `nil` and no frame builds**, so there it proves only that the window
+opens with the app's themes and sizes. The tree's build and layout on Linux
+are covered by the headless `renderFrame` tests, which now compile there
+(`ShellRenderTests.everyModeRendersHeadlessly`, `PaneRenderTests`,
+`MacroPaneTests`).
+
+**macOS after the lane** (`swift build` then `swift test`, this worktree):
+`Build complete!`, 0 `error:`, 0 `warning:`; `Test run with 256 tests in 32
+suites passed` (XCTest `Executed 0 tests`). The count is unchanged: the SDL
+test is not compiled on macOS.
+
+**Linux image** (OrbStack, aarch64, `swift-6.4-RELEASE`;
+`metalui-portable` rebuilt from MetalUI `70ed000` read-only, all layers
+cached; a derived image `smk-linux` = `FROM metalui-portable` + `apt-get
+install --no-install-recommends libhidapi-dev fonts-dejavu-core` (those two
+lines are the whole Dockerfile; lane 3 commits them as
+`Scripts/ci/Dockerfile.linux`); the
+worktree at `/work`, scratch paths on volume `smk-xp-build`):
+- `swift build --scratch-path /build/app`: `Build complete! (16.41 secs)`, 0
+  `error:`. The only warning is the existing pkg-config hint for `hidapi`
+  (Ubuntu ships no plain `hidapi.pc`; the manifest links `hidapi-hidraw`).
+- `swift test --scratch-path /build/app`: `Test run with 251 tests in 31
+  suites passed` (XCTest `Executed 0 tests`), the SDL suite reported
+  `skipped`. Against macOS's 256 in 32: the two `#if canImport(CoreBluetooth)`
+  suites and `everyModeDraws` are compiled out, the skipped SDL suite counts.
+  `BinaryFormatAgreementTests` skips (no `~/esp/SMK` in the image).
+- `SMK_RUN_SDL_WINDOW_TEST=1 swift test --filter SDLWindow`: `Test run with
+  1 test in 1 suite passed`; it printed `14 draws requested, 0 frames drawn,
+  SDL_VIDEO_DRIVER=offscreen`.
+- `timeout 5 /build/app/debug/SMKConfigurator`: exit **124** (still running
+  when killed; startup only, the offscreen driver presents nothing).
+
+**UI-free mutation** (`import MetalUI` added as line 1 of
+`Model/ActionToken.swift`, in the Linux image, scratch path `/build/ui-free`):
+`SMK_UI_FREE=1 swift build --build-tests` failed, `ActionToken.swift:1:8:
+error: no such module 'MetalUI'`; then plain `swift build`, same scratch path,
+mutation still in place: `Build complete! (26.81 secs)`. Reverted (`git diff`
+clean on `Model/`), then `SMK_UI_FREE=1 swift build --build-tests`:
+`Build complete!`, and `SMK_UI_FREE=1 swift test`: `Test run with 217 tests
+in 21 suites passed`.
+
+Windows was not touched (lane 3).
