@@ -14,13 +14,13 @@ struct MacroPaletteTests {
             MacroDefinition(id: 0, name: "a", steps: []),
             MacroDefinition(id: 4, name: "b", steps: []),
         ]
-        #expect(PaletteDrawerView.macroTokens(for: doc) == [.macro(0), .macro(4)])
+        #expect(PaletteLayout.macroTokens(for: doc) == [.macro(0), .macro(4)])
     }
 
     @Test("the MACROS section height doesn't grow with the macro count")
     func macroSectionHeightIsFixed() {
-        // PaletteDrawerView's height math is static and feeds
-        // ContentView.minWindowHeight. If this section grew with the
+        // PaletteLayout's height math is static and feeds
+        // WindowMetrics.minWindowHeight. If this section grew with the
         // document, the window's minimum height would depend on how many
         // macros the user owns.
         var few = KeymapDocument(
@@ -35,8 +35,8 @@ struct MacroPaletteTests {
         // The height is a `static let` taking no document, so it cannot vary
         // with content — this asserts it exists and is sane, while the token
         // counts below confirm the content really does vary.
-        #expect(PaletteDrawerView.macroSectionHeight > 0)
-        #expect(PaletteDrawerView.macroTokens(for: many).count == 40)
-        #expect(PaletteDrawerView.macroTokens(for: few).count == 1)
+        #expect(PaletteLayout.macroSectionHeight > 0)
+        #expect(PaletteLayout.macroTokens(for: many).count == 40)
+        #expect(PaletteLayout.macroTokens(for: few).count == 1)
     }
 }

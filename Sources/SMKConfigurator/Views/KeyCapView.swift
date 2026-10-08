@@ -1,74 +1,122 @@
-import SwiftCrossUI
+import MetalUI
 
-/// One physical key. Tapping it always focuses the Key inspector on this
-/// position (`EditorState.selectKey`); if something's armed from the
-/// palette drawer (`editor.selectedToken`) the tap also places it here first
-/// -- the click-to-select/click-to-place substitute for drag-and-drop
-/// described in the plan (SwiftCrossUI has no drag gesture as of v0.8.0).
+/// One physical key. Clicking it focuses the Key inspector on this position
+/// (`EditorState.selectKey`); dropping a palette chip on it assigns the chip's
+/// action to it on the current layer (and inspects it). While a chip is
+/// dragged over it, and while it is the inspected key, it wears a 2-point
+/// accent ring.
 ///
-/// `theme`/`interactive` let this same view render the read-only, live
-/// preview board in THM mode (`theme` overrides `editor.activeTheme`,
-/// `interactive: false` disables tap handling) as well as the editable KEY
-/// board, so both modes render pixel-identically.
-struct KeyCapView: View {
-    @Environment(EditorState.self) var editor
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
+/// The previous build had no drag and drop (SwiftCrossUI 0.8 has no drag
+/// gesture), so it armed a chip with one click and placed it with a second on
+/// a key (`editor.selectedToken`, the armed ring, the inspector's Reassign).
+/// That substitute is gone (port plan §2.2 W5): a chip is dragged here, or
+/// clicked to assign it to the inspected key (`PaletteChip`).
+///
+/// `theme`/`interactive` let the same view draw the THM mode's read-only live
+/// preview (`theme` overrides `editor.activeTheme`; `interactive: false`
+/// drops the click, the drop and the ring) as well as the editable KEY board,
+/// so both draw identically.
+struct KeyCapView: Component {
+    let editor: EditorState
     var row: Int
     var col: Int
     var widthUnits: Double
     var theme: KeyboardTheme? = nil
     var interactive: Bool = true
-    /// Resolves `macro:<id>` to the macro's name. Every other token's
-    /// `displayLabel` is self-sufficient ("A", "Ctrl", "MO1"...); `.macro(n)`
-    /// is the one that needs the document, so this stays optional and nil by
-    /// default -- existing call sites are untouched and fall back to the
-    /// token's own "M<id>" label.
-    var macroName: ((Int) -> String?)? = nil
 
-    static let unit: Double = 46
-    /// Column gap -- also used directly as `KeyboardBoardView`'s row
-    /// `HStack(spacing:)` so the two can't drift apart. Needed here to
-    /// compute a multi-unit key's width so it spans its columns exactly
-    /// (e.g. a 2.0-unit key spans two unit-width columns plus the one gap
-    /// between them).
-    static let spacing: Int = 10
+    /// Whether a dragged chip is over this key, written by the drop
+    /// destination's `isTargeted` callback (input, never a phase).
+    @State var isTargeted = false
 
-    var body: some View {
-        let token = editor.action(row: row, col: col)
-        let width = widthUnits * Self.unit + (widthUnits - 1) * Double(Self.spacing)
-        let activeTheme = theme ?? editor.activeTheme
-        let isArmed = interactive && editor.selectedToken == token && token != .none
-        let isInspected = interactive && editor.selectedKeyPosition == KeyPosition(row: row, col: col)
-        let label: String = {
-            if case .macro(let n) = token, let resolved = macroName?(n) {
-                return resolved
-            }
-            return token.displayLabel
-        }()
+    /// One key unit's side, and the column gap -- also `KeyboardBoardView`'s
+    /// row spacing, so a multi-unit key spans its columns exactly (a 2U key is
+    /// two unit-width columns plus the gap between them).
+    static let unit: Float = 46
+    static let spacing: Float = 10
 
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(activeTheme.background(for: token))
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundColor(activeTheme.keyText.color)
-        }
-        .frame(width: width, height: Self.unit)
-        .overlay {
-            if isArmed || isInspected {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(chrome.accent, style: StrokeStyle(width: 2))
+    static func width(units: Double) -> Float {
+        Float(units) * unit + (Float(units) - 1) * spacing
+    }
+
+    var content: some ElementGroup {
+        if interactive {
+            Button(action: inspect) {
+                face
             }
+            .buttonStyle(.plain)
+            .background(fill)
+            .cornerRadius(Pixels(6))
+            .border(isRinged ? Chrome.accent : Color.clear, width: Pixels(2))
+            .dropDestination(for: String.self, action: drop, isTargeted: { [$isTargeted] in
+                $isTargeted.wrappedValue = $0
+            })
+        } else {
+            face
+                .background(fill)
+                .cornerRadius(Pixels(6))
         }
-        .onTapGesture {
-            guard interactive else { return }
-            if let selected = editor.selectedToken {
-                editor.assign(selected, row: row, col: col)
-                editor.selectedToken = nil
-            }
-            editor.selectKey(row: row, col: col)
+    }
+
+    private var token: ActionToken {
+        editor.action(row: row, col: col)
+    }
+
+    private var activeTheme: KeyboardTheme {
+        theme ?? editor.activeTheme
+    }
+
+    private var fill: Color {
+        activeTheme.background(for: token).color
+    }
+
+    private var isRinged: Bool {
+        isTargeted || editor.selectedKeyPosition == KeyPosition(row: row, col: col)
+    }
+
+    /// A macro token shows its macro's name; every other token's
+    /// `displayLabel` is self-sufficient ("A", "Ctrl", "MO1", …).
+    private var label: String {
+        if case .macro(let id) = token, let name = editor.macroName(for: id) {
+            return name
         }
+        return token.displayLabel
+    }
+
+    private var face: ModifiedElement<Text> {
+        Text(label)
+            .font(.system(size: 12))
+            .foregroundColor(activeTheme.keyText.color)
+            .frame(width: Pixels(Self.width(units: widthUnits)), height: Pixels(Self.unit))
+    }
+
+    private func inspect() {
+        editor.selectKey(row: row, col: col)
+    }
+
+    private func drop(_ items: [String], _ location: Point<Pixels>) -> Bool {
+        guard let token = PaletteDrop.token(from: items) else { return false }
+        editor.assign(token, row: row, col: col)
+        editor.selectKey(row: row, col: col)
+        return true
+    }
+}
+
+/// What a palette chip carries while dragged, and how a key reads it back.
+/// A chip drags its token's `canonicalString` (a plain `String`, so the drag
+/// needs no custom content type); a key accepts the first dropped string that
+/// parses to a known action. Text dragged in from another app parses to
+/// `.raw` and is refused, so it cannot overwrite a key with junk.
+enum PaletteDrop {
+    static func payload(for token: ActionToken) -> String {
+        token.canonicalString
+    }
+
+    static func token(from items: [String]) -> ActionToken? {
+        for item in items {
+            let token = ActionToken.parse(item)
+            if case .raw = token { continue }
+            return token
+        }
+        return nil
     }
 }

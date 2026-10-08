@@ -1,5 +1,5 @@
 import Foundation
-import SwiftCrossUI
+import Observation
 
 /// Default location this app is pointed at: the reference `keymap.json` in
 /// the SMK firmware repo (see `~/esp/SMK/CLAUDE.md` -- copying it into
@@ -59,20 +59,13 @@ enum MacroWorkspace: Equatable, Hashable {
     }
 }
 
-/// Light/Dark/System, set via the `View ▸ Appearance` menu (see `App.swift`)
-/// and persisted across launches on `EditorState`.
+/// Light/Dark/System, set via the `View ▸ Appearance` menu (see
+/// `Views/AppCommands.swift`) and persisted across launches on `EditorState`.
+/// Its mapping onto the UI's colour scheme (`colorScheme`) lives with the
+/// views, in `Views/ThemeColor+MetalUI.swift`, so the model names no UI type.
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case light, dark, system
     var id: String { rawValue }
-
-    /// `nil` means "defer to the OS" — passed straight to `.preferredColorScheme`.
-    var colorScheme: ColorScheme? {
-        switch self {
-            case .light: .light
-            case .dark: .dark
-            case .system: nil
-        }
-    }
 }
 
 /// A single physical key on the board, identified by its matrix position --
@@ -85,7 +78,7 @@ struct KeyPosition: Equatable {
 }
 
 @MainActor
-@ObservableObject
+@Observable
 class EditorState {
     static let drawerHeightRange: ClosedRange<Double> = 120...480
 
@@ -100,7 +93,7 @@ class EditorState {
 
     /// Which rail mode (KEY/DSN/THM/DEV) the workspace is showing.
     var railMode: RailMode = .key
-    /// Global "power detail" switch in the titlebar; hides matrix/GPIO/
+    /// Global "power detail" switch (View ▸ Advanced Mode); hides matrix/GPIO/
     /// canonical-string detail in the Key inspector when off.
     var showAdvanced: Bool
     /// The physical key the Key inspector is currently showing, if any.
@@ -121,8 +114,8 @@ class EditorState {
     var macroCapacitySource: MacroCapacitySource = .floor
 
     /// Light/Dark/System override for the whole app, applied via
-    /// `.preferredColorScheme` at the app root (`App.swift`). Plain stored
-    /// property (no `didSet`, same reason as `drawerHeight` below) — use
+    /// `.preferredColorScheme` at the window root (`Views/ContentView.swift`).
+    /// Plain stored property (no `didSet`, see `drawerHeight` below) — use
     /// `setAppearanceMode(_:)` to change it.
     var appearanceMode: AppearanceMode
 
@@ -141,10 +134,11 @@ class EditorState {
     var lastSentAt: Date? = nil
 
     /// Persisted across launches so the drawer stays the size you left it.
-    /// Plain stored property (no `didSet`) -- the `@ObservableObject` macro
-    /// explicitly skips properties with accessors, so a `didSet` here would
-    /// silently stop it from publishing changes. Use `setDrawerHeight(_:)`
-    /// to change it (assigns, then persists to `UserDefaults` separately).
+    /// Plain stored property (no `didSet`), a convention kept from the
+    /// previous UI framework, whose observation macro skipped properties
+    /// with accessors (Observation's `@Observable` does not). Use
+    /// `setDrawerHeight(_:)` to change it (assigns, then persists to
+    /// `UserDefaults` separately).
     var drawerHeight: Double
 
     var activeDesign: KeyboardDesign
@@ -241,7 +235,7 @@ class EditorState {
 
     /// Writes the current document to `url` without changing `fileURL` or
     /// `isDirty` -- a "save a copy elsewhere" operation, distinct from
-    /// `save(to:)`/Save As, for the titlebar's Export pill.
+    /// `save(to:)`/Save As, for the File menu's Export… item.
     func exportKeymap(to url: URL) {
         _ = writeJSON(document, to: url, errorContext: "export keymap")
     }

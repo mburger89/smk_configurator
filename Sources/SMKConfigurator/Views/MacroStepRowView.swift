@@ -1,93 +1,85 @@
-import SwiftCrossUI
+import MetalUI
 
-/// One row in the macro sequence view: reorder controls, an index, a type
-/// badge, a per-type payload summary, right-aligned metadata, and delete.
+/// One row in the macro's step list: ▲ ▼ reorder buttons, the step card (index,
+/// type badge, payload summary, trailing metadata; a click selects it), and a
+/// trailing ✕ delete. The inspector's repeat-block editor reuses it for the
+/// steps inside a block.
 ///
-/// The reorder (▲▼) and delete (✕) controls must not be nested inside the
-/// row-selection `TapTarget`'s own content closure. SwiftCrossUI's
-/// `onTapGesture` has to be the outermost gesture on its subtree to reliably
-/// receive clicks (see the doc comment on `hoveredLayerIndex` in
-/// `KeyModeViews.swift` for the same constraint hit earlier with the layer
-/// list's delete glyph) -- a second, independent tap target can't be nested
-/// inside a first at all, they have to be siblings under a shared,
-/// gesture-free parent. So `controlColumn` and `deleteButton` sit as true
-/// siblings of the selectable `TapTarget` in this view's outer `HStack`,
-/// rather than inside its `content` closure.
-struct MacroStepRowView: View {
-    var step: MacroStep
-    var index: Int
-    var isSelected: Bool
-    var onSelect: () -> Void
-    var onMoveUp: () -> Void
-    var onMoveDown: () -> Void
-    var onDelete: () -> Void
+/// Every control is a real `Button`. The previous build had to keep ▲ ▼ and ✕
+/// as siblings of a hand-built tap target (port plan §2.2 W1, W9); here they
+/// are simply three buttons in one row.
+struct MacroStepRowView: Component {
+    let step: MacroStep
+    let index: Int
+    let isSelected: Bool
+    let onSelect: @MainActor () -> Void
+    let onMoveUp: @MainActor () -> Void
+    let onMoveDown: @MainActor () -> Void
+    let onDelete: @MainActor () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            controlColumn
-            TapTarget(
-                background: isSelected ? chrome.accentWash : chrome.column,
-                cornerRadius: 7,
-                border: isSelected ? chrome.accent : chrome.dividerLight,
-                action: onSelect
-            ) {
-                HStack(spacing: 12) {
-                    Text("\(index + 1)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(chrome.textTertiary)
-                        .frame(width: 14, alignment: .leading)
-                    typeBadge
-                    Text(step.payloadSummary)
-                        .font(.system(size: 12))
-                        .foregroundColor(chrome.textPrimary)
-                    Spacer()
-                    Text(step.metadataLabel)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(chrome.textTertiary)
-                }
-                .padding(EdgeInsets(top: 10, bottom: 10, leading: 13, trailing: 13))
+    var content: some ElementGroup {
+        Row(gap: Pixels(12)) {
+            Column(gap: Pixels(2)) {
+                arrow("▲", help: "Move up", action: onMoveUp)
+                arrow("▼", help: "Move down", action: onMoveDown)
             }
-            deleteButton
+            .alignItems(.center)
+            .frame(width: Pixels(11))
+            card
+            Button(action: onDelete) {
+                Text("✕")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Chrome.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Delete this step")
         }
+        .alignItems(.center)
+        .frame(maxWidth: Pixels(.infinity))
     }
 
-    /// ▲▼ reorder buttons, stacked in an 11pt-wide column. Each carries its
-    /// own independent `onTapGesture` -- see the type doc comment.
-    private var controlColumn: some View {
-        VStack(spacing: 2) {
-            Text("▲")
+    private var card: some Element {
+        Button(action: onSelect) {
+            Row(gap: Pixels(12)) {
+                Text("\(index + 1)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Chrome.textTertiary)
+                    .frame(width: Pixels(14), alignment: .leading)
+                Text(step.typeCode)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Chrome.textSecondary)
+                    .frame(width: Pixels(30), height: Pixels(18))
+                    .background(Chrome.chipBackground)
+                    .cornerRadius(Pixels(4))
+                // One line each: in the inspector's narrow repeat-block list
+                // the metadata otherwise wraps a letter at a time.
+                Text(step.payloadSummary)
+                    .font(.system(size: 12))
+                    .foregroundColor(Chrome.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                Text(step.metadataLabel)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Chrome.textTertiary)
+                    .lineLimit(1)
+            }
+            .alignItems(.center)
+            .padding(Insets.symmetric(horizontal: 13, vertical: 10))
+            .frame(maxWidth: Pixels(.infinity), alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .background(isSelected ? Chrome.accentWash : Chrome.column)
+        .cornerRadius(Pixels(7))
+        .border(isSelected ? Chrome.accent : Chrome.dividerLight, width: Pixels(1))
+    }
+
+    private func arrow(_ glyph: String, help: String, action: @escaping @MainActor () -> Void) -> some Element {
+        Button(action: action) {
+            Text(glyph)
                 .font(.system(size: 8, weight: .bold))
-                .foregroundColor(chrome.textSecondary)
-                .onTapGesture(perform: onMoveUp)
-            Text("▼")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundColor(chrome.textSecondary)
-                .onTapGesture(perform: onMoveDown)
+                .foregroundColor(Chrome.textSecondary)
         }
-        .frame(width: 11)
-    }
-
-    /// The three-letter step-type badge (`step.typeCode`).
-    private var typeBadge: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(chrome.chipBackground)
-            Text(step.typeCode)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(chrome.textSecondary)
-        }
-        .frame(width: 30, height: 18)
-    }
-
-    /// The trailing ✕ delete control -- a true sibling of the selection
-    /// `TapTarget`, not nested inside it. See the type doc comment.
-    private var deleteButton: some View {
-        Text("✕")
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(chrome.textTertiary)
-            .onTapGesture(perform: onDelete)
+        .buttonStyle(.plain)
+        .help(help)
     }
 }

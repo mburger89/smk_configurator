@@ -61,18 +61,6 @@ jobs:
           path: vcpkg_installed
           key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
 
-      # FIX 2: Isolate the SwiftCrossUIMacrosPlugin compilation first.
-      # This stops parallel worker threads from deadlocking/crashing the 6.2 compiler.
-      - name: Pre-compile Macro Targets
-        run: |
-          $triplet = "${{ steps.triplet.outputs.lowercase }}"
-          $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
-          $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
-
-          Write-Host "Pre-compiling macro plugins to prevent multi-threaded compiler assertions..."
-          # Pass -j 1 to ensure a safe, single-threaded preparation step for macros
-          swift build --target SwiftCrossUIMacrosPlugin -j 1
-
       - name: Build
         run: |
           $ErrorActionPreference = 'Continue'
@@ -105,3 +93,14 @@ jobs:
             Write-Host "===== Build failed permanently after 3 attempts with exit code $code ====="
             exit $code
           }
+
+      - name: Build tests
+        # Compile the model and device tests (the UI-free library's suites).
+        # Running them on Windows is part of the later Linux/Windows item:
+        # paths such as homeDirectoryForCurrentUser and UserDefaults suites
+        # have never been exercised there.
+        run: |
+          $triplet = "${{ steps.triplet.outputs.lowercase }}"
+          $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
+          $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
+          swift build --build-tests

@@ -1,55 +1,15 @@
-import SwiftCrossUI
+import MetalUI
 
-/// Design tokens for the "Power / Grouped List" redesign (see
-/// `design_handoff_1c_power_grouped_list/README.md`, section "Design
-/// Tokens") -- centralized here so every pane pulls from the same palette
-/// instead of re-deriving hex values.
-struct Chrome {
-    var scheme: ColorScheme
-
-    /// Titlebar / icon rail / status bar background.
-    var bar: Color { scheme == .dark ? .hex("#2B2B2D") : .hex("#F6F6F7") }
-    /// Main content canvas background.
-    var canvas: Color { scheme == .dark ? .hex("#1E1E20") : .hex("#ECECEE") }
-    /// List / inspector column background.
-    var column: Color { scheme == .dark ? .hex("#252527") : .hex("#FBFBFC") }
-    var divider: Color { scheme == .dark ? .hex("#3A3A3C") : .hex("#E3E3E5") }
-    var dividerLight: Color { scheme == .dark ? .hex("#333335") : .hex("#DDDDDD") }
-    var surface: Color { scheme == .dark ? .hex("#2C2C2E") : .white }
-
-    var accent: Color { scheme == .dark ? .hex("#0A84FF") : .hex("#007AFF") }
-    var accentWash: Color { accent.opacity(scheme == .dark ? 0.18 : 0.12) }
-
-    var textPrimary: Color { (scheme == .dark ? Color.white : .black).opacity(0.85) }
-    var textSecondary: Color { (scheme == .dark ? Color.white : .black).opacity(0.6) }
-    var textTertiary: Color { (scheme == .dark ? Color.white : .black).opacity(0.45) }
-
-    var pillBackground: Color { scheme == .dark ? .hex("#3A3A3C") : .hex("#ECEEF0") }
-    var chipBackground: Color { scheme == .dark ? .hex("#323234") : .hex("#F2F2F4") }
-    var chipBorder: Color { scheme == .dark ? .hex("#48484A") : .hex("#E0E0E2") }
-
-    /// Faux-glass tile fill for icon-only buttons (`ToolbarIconButton`) --
-    /// translucent rather than opaque like `pillBackground`, since a real
-    /// backdrop-blur material isn't available (see `ToolbarIconButton`'s doc
-    /// comment). Light mode needs a higher alpha than dark to stay visible
-    /// against `bar`'s near-white background.
-    var glassFill: Color { pillBackground.opacity(scheme == .dark ? 0.9 : 0.97) }
-    /// Same idea as `glassFill` but accent-tinted, for the icon rail's
-    /// active tab -- reads as "selected" without going fully opaque.
-    var glassActiveFill: Color { accent.opacity(scheme == .dark ? 0.8 : 0.75) }
-
-    var toggleOn: Color { scheme == .dark ? .hex("#30D158") : .hex("#34C759") }
-    var toggleOff: Color { scheme == .dark ? .hex("#48484A") : .hex("#E2E2E5") }
-
-    var dangerText: Color { scheme == .dark ? .hex("#FF453A") : .hex("#D92C2C") }
-    var connectedDot: Color { toggleOn }
-    var disconnectedDot: Color { scheme == .dark ? .hex("#6E6E73") : .hex("#B0B0B4") }
-}
+// Shared looks: the hex colour helper, padding insets, and the app's small
+// reusable pieces -- three button styles over a real MetalUI `Button`
+// (focusable, Space/Return, an accessibility press and a pressed wash for
+// free; the previous build drew fake buttons out of a filled shape plus a tap
+// gesture), the section header and the status dot.
 
 extension Color {
-    /// Parses a `#RRGGBB` (or bare `RRGGBB`) hex string. Falls back to an
-    /// unmistakable "bad hex" magenta on malformed input, mirroring
-    /// `ThemeColor.color`.
+    /// Parses a `#RRGGBB` (or bare `RRGGBB`) hex string as gamma sRGB, like
+    /// SwiftUI's `Color(red:green:blue:)`. Falls back to an unmistakable "bad
+    /// hex" magenta on malformed input, mirroring `ThemeColor.color`.
     static func hex(_ hex: String, opacity: Double = 1) -> Color {
         let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
         guard digits.count == 6, let value = UInt32(digits, radix: 16) else {
@@ -62,221 +22,147 @@ extension Color {
     }
 }
 
+/// Per-edge padding for the legacy `.padding(_ edges:)`, which takes
+/// `Edges<Length>` in CSS order (top, right, bottom, left); SwiftUI's
+/// `.padding(.horizontal, n)`/`EdgeInsets` are not offered on legacy elements
+/// (gap MG-11).
+enum Insets {
+    static func edges(top: Float = 0, leading: Float = 0, bottom: Float = 0, trailing: Float = 0) -> Edges<Length> {
+        Edges(top: .pixels(Pixels(top)), right: .pixels(Pixels(trailing)),
+              bottom: .pixels(Pixels(bottom)), left: .pixels(Pixels(leading)))
+    }
+
+    static func symmetric(horizontal: Float = 0, vertical: Float = 0) -> Edges<Length> {
+        edges(top: vertical, leading: horizontal, bottom: vertical, trailing: horizontal)
+    }
+}
+
 /// An 11px bold, uppercase, tertiary-gray section header -- used atop every
 /// grouped list section (`DESIGNS`, `THEMES`, `LAYERS`, `COLOR ROLES`, …).
-struct SectionHeader: View {
+struct SectionHeader: Component {
     var title: String
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
+    var content: some ElementGroup {
         Text(title.uppercased())
             .font(.system(size: 11, weight: .bold))
-            .foregroundColor(chrome.textTertiary)
+            .foregroundColor(Chrome.textTertiary)
     }
 }
 
-/// A tappable pill/chip: rounded-rect fill + centered/leading label, built
-/// from the same `ZStack` + `onTapGesture` pattern already used throughout
-/// this app for custom-styled tap targets (`KeyCapView`, `PaletteChip`,
-/// `DesignCellView`) since SwiftCrossUI's native `Button` can't be
-/// re-skinned per-platform.
-struct TapTarget<Content: View>: View {
-    var background: Color
-    /// Set this to half the frame's side length for a circular target --
-    /// there's deliberately no `Circle` branch here, see `body`.
-    var cornerRadius: Double
-    /// Hairline stroke traced around the shape -- used by the icon-only
-    /// glass tiles (`ToolbarIconButton`) to read as a distinct button
-    /// against a translucent background. `.clear` (the default) everywhere
-    /// else, rather than an optional, so `body` stays branch-free.
-    var border: Color = .clear
-    var action: () -> Void
-    @ViewBuilder var content: () -> Content
-
-    /// The shape and the label must be the `ZStack`'s only two *direct*
-    /// children, and neither may come from an `if`/`else` branch.
-    /// SwiftCrossUI's `ZStack` overlays the children of its immediate
-    /// `TupleView` (it logs "ZStack will not function correctly with
-    /// non-TupleView content" otherwise); views grouped by a conditional
-    /// land in a nested container that stacks them *vertically* instead.
-    /// That's what turned the titlebar's icon buttons into a column of
-    /// fill-circle / glyph / border-ring, and squashed the icon rail's
-    /// 40x40 tiles to 40x30. So: no `if` in here, the border is always
-    /// stroked (`.clear` when unwanted), and a circle is expressed as a
-    /// `cornerRadius` of half the side rather than as a `Circle` branch.
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(background)
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(border, style: StrokeStyle(width: 1))
-                }
-            content()
-        }
-        .onTapGesture(perform: action)
-    }
-}
-
-/// A 12px text pill in the titlebar toolbar group (`New`, `Open`, `Save`, …),
-/// also used for accent-filled/disabled variants elsewhere (macro library's
-/// `New macro`/`Record new`, macro canvas's `Test run`/`Save`).
-///
-/// The horizontal padding lives on the `Text` *inside* `TapTarget`'s content
-/// closure, not as a modifier on the returned view -- padding applied
-/// outside `TapTarget` only pads the already-hugging pill within its own
-/// layout box, it does not grow the `RoundedRectangle` fill (see
-/// `TapTarget.body`'s two-pass ZStack sizing: the fill only picks up a
-/// sibling's larger size when that size is baked into the sibling's own
-/// layout, i.e. inside the closure). The explicit `.frame(height: 29)`
-/// mirrors `InspectorButton`/`PaletteChip` rather than relying on font
-/// metrics to land at a particular height.
-struct ToolbarPill: View {
+/// A 12px text pill (DSN's `+ Row`/width presets, the macro library's `New
+/// macro`/`Record new`, the macro canvas's `Test run`/`Save`). `isAccent`
+/// fills it with the accent and white text. A disabled pill is a disabled
+/// `Button` -- `Button`'s own 0.5 look -- instead of fading every colour by
+/// hand.
+struct PillButton: Component {
     var label: String
     var isAccent: Bool = false
     var isEnabled: Bool = true
-    var action: () -> Void
+    var help: String? = nil
+    var action: @MainActor () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        let fade = isEnabled ? 1.0 : 0.4
-        TapTarget(
-            background: (isAccent ? chrome.accent : chrome.pillBackground).opacity(fade),
-            cornerRadius: 6,
-            action: { if isEnabled { action() } }
-        ) {
+    var content: some ElementGroup {
+        let button = Button(action: action) {
             Text(label)
                 .font(.system(size: 12, weight: isAccent ? .semibold : .regular))
-                .foregroundColor((isAccent ? .white : chrome.textPrimary).opacity(fade))
-                .padding(.horizontal, 10)
+                .foregroundColor(isAccent ? Color.white : Chrome.textPrimary)
+                .padding(Insets.symmetric(horizontal: 10))
+                .frame(height: Pixels(29))
         }
-        .frame(height: 29)
-        .fixedSize(horizontal: true, vertical: false)
-    }
-}
-
-/// An icon-only glass tile in the titlebar toolbar group (`New`, `Open`,
-/// `Save`, `Save As`, `Import`, `Export`) with a `.help()` tooltip carrying
-/// the action name. Distinct from `ToolbarPill` (used elsewhere for
-/// dynamic text pills, e.g. DSN's `+ Row`/width presets) since those have
-/// no natural icon and must keep showing text. A circular `TapTarget`
-/// (`chrome.glassFill` translucent tint, `chrome.chipBorder` hairline
-/// stroke) -- SwiftCrossUI has no backdrop-blur/Material API, so a plain
-/// translucent fill is the closest approximation to a real glass material.
-struct ToolbarIconButton: View {
-    var icon: AppIcon
-    var tooltip: String
-    var action: () -> Void
-
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        // cornerRadius is half of the 30x30 frame below, i.e. a circle --
-        // see `TapTarget.body` for why this isn't a `Circle`.
-        TapTarget(
-            background: chrome.glassFill,
-            cornerRadius: 15,
-            border: chrome.chipBorder,
-            action: action
-        ) {
-            if let url = IconLoader.url(for: icon, colorScheme: colorScheme) {
-                Image(url).resizable().frame(width: 15, height: 15)
-            } else {
-                Text(icon.fallbackLabel)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(chrome.textPrimary)
-            }
-        }
-        .frame(width: 30, height: 30)
-        .help(tooltip)
-    }
-}
-
-/// One of the four icon-rail buttons (KEY/DSN/THM/DEV) -- a platform-native
-/// icon with a `.help()` tooltip carrying the full name. Rounded-rect
-/// (unlike the titlebar's circular `ToolbarIconButton`), but keeps the
-/// same translucent glass tint colors.
-struct RailButton: View {
-    var icon: AppIcon
-    var tooltip: String
-    var isActive: Bool
-    var action: () -> Void
-
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        TapTarget(
-            background: isActive ? chrome.glassActiveFill : chrome.glassFill,
-            cornerRadius: 9,
-            action: action
-        ) {
-            iconImage
-        }
-        .frame(width: 40, height: 40)
-        .help(tooltip)
-    }
-
-    /// Active tabs sit on the accent-tinted glass fill (`chrome.glassActiveFill`)
-    /// -- this always uses the white-tinted ("dark" folder) icon variant
-    /// when active, regardless of the app's actual color scheme, since it
-    /// needs to read against that blue tint either way.
-    @ViewBuilder
-    private var iconImage: some View {
-        if let url = IconLoader.url(for: icon, colorScheme: isActive ? .dark : colorScheme) {
-            Image(url).resizable().frame(width: 22, height: 22)
+        .buttonStyle(.plain)
+        .background(isAccent ? Chrome.accent : Chrome.pillBackground)
+        .cornerRadius(Pixels(6))
+        if let help {
+            button.help(help).disabled(!isEnabled)
         } else {
-            Text(icon.fallbackLabel)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(isActive ? .white : chrome.textSecondary)
+            button.disabled(!isEnabled)
         }
     }
 }
 
-/// A full-width stacked action button in an inspector column (`Save
-/// Design`, `Duplicate…`, `Delete`, …). `isPrimary` gives the blue-filled
-/// treatment used for the one emphasized action per pane.
-struct InspectorButton: View {
+/// A full-width action button in an inspector column (`Save Design`,
+/// `Duplicate…`, `Delete`, …). `isPrimary` gives the accent fill used for the
+/// one emphasized action per pane; `isDestructive` the danger label.
+struct InspectorButton: Component {
     var label: String
     var isPrimary: Bool = false
     var isDestructive: Bool = false
     var isEnabled: Bool = true
-    var action: () -> Void
+    var action: @MainActor () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        let fade = isEnabled ? 1.0 : 0.4
-        TapTarget(
-            background: (isPrimary ? chrome.accent : chrome.pillBackground).opacity(fade),
-            cornerRadius: 7,
-            action: { if isEnabled { action() } }
-        ) {
+    var content: some ElementGroup {
+        Button(action: action) {
             Text(label)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(
-                    (isPrimary ? .white : (isDestructive ? chrome.dangerText : chrome.textPrimary))
-                        .opacity(fade)
-                )
+                .foregroundColor(isPrimary ? Color.white : (isDestructive ? Chrome.dangerText : Chrome.textPrimary))
+                .frame(maxWidth: Pixels(.infinity), minHeight: Pixels(30), maxHeight: Pixels(30))
         }
-        .frame(height: 30)
+        .buttonStyle(.plain)
+        .background(isPrimary ? Chrome.accent : Chrome.pillBackground)
+        .cornerRadius(Pixels(7))
+        .disabled(!isEnabled)
     }
 }
 
-/// A colored presence dot (`● USB Connected`, transport cards, …).
-struct StatusDot: View {
-    var color: Color
-    var diameter: Double = 8
+/// One of the five icon-rail buttons (KEY/DSN/THM/DEV/MAC): a 40×40 glass
+/// tile with the scheme's icon and a tooltip carrying the full name. The whole
+/// tile is the button's label, so the whole tile is its hit target.
+struct RailButton: Component {
+    var icon: AppIcon
+    var tooltip: String
+    var isActive: Bool
+    var action: @MainActor () -> Void
 
-    var body: some View {
+    @Environment(\.colorScheme) var colorScheme
+
+    var content: some ElementGroup {
+        Button(action: action) {
+            Stack {
+                iconImage
+            }
+            .frame(width: Pixels(40), height: Pixels(40))
+        }
+        .buttonStyle(.plain)
+        .background(isActive ? Chrome.glassActiveFill : Chrome.glassFill)
+        .cornerRadius(Pixels(9))
+        .help(tooltip)
+    }
+
+    /// Active tabs sit on the accent-tinted glass, so they always use the
+    /// white ("dark" folder) icon, whatever the app's scheme.
+    @ElementBuilder
+    private var iconImage: some ElementGroup {
+        if let bitmap = IconLoader.bitmap(for: icon, colorScheme: isActive ? .dark : colorScheme) {
+            Image(decorative: bitmap, scale: IconLoader.bitmapScale)
+        } else {
+            Text(icon.fallbackLabel)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(isActive ? Color.white : Chrome.textSecondary)
+        }
+    }
+}
+
+/// A coloured presence dot (`● USB Connected`, transport cards, …).
+struct StatusDot: Component {
+    var color: Color
+    var diameter: Float = 8
+
+    var content: some ElementGroup {
         Circle()
             .fill(color)
-            .frame(width: diameter, height: diameter)
+            .frame(width: Pixels(diameter), height: Pixels(diameter))
+    }
+}
+
+extension StyledElement {
+    /// A text field's rounded-border look: MetalUI's `TextField` and
+    /// `TextEditor` draw no field chrome of their own and offer no
+    /// `.textFieldStyle(.roundedBorder)` (gap MG-20), so a bare field reads as
+    /// loose text. Write it before `.frame`.
+    func fieldChrome() -> some Element {
+        padding(Insets.symmetric(horizontal: 6, vertical: 3))
+            .background(Chrome.surface)
+            .cornerRadius(Pixels(5))
+            .border(Chrome.chipBorder, width: Pixels(1))
     }
 }

@@ -1,399 +1,509 @@
-import SwiftCrossUI
+import MetalUI
 
-/// KEY rail mode's List column: three stacked grouped sections (Designs,
-/// Themes, Layers) so switching any of them doesn't require leaving KEY
-/// mode. `selectDesign`/`selectTheme` are supplied by `ContentView` so the
-/// DSN/THM inline draft workspaces stay in sync with whatever gets picked
-/// here too.
-struct KeyListColumnView: View {
-    @Environment(EditorState.self) var editor
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.presentAlert) var presentAlert
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-    var selectDesign: (KeyboardDesign) -> Void
-    var selectTheme: (KeyboardTheme) -> Void
+// KEY mode (port plan §1.5): the list column (designs, themes, layers), the
+// board over the palette drawer, and the Key / Matrix / Theme inspector. The
+// small list/inspector building blocks the DSN, THM and DEV panes share live
+// here too.
 
-    /// Which layer row the pointer is over, if any -- drives the delete
-    /// trash glyph. Lives here (not on a per-row view) because the trash
-    /// glyph has to sit outside `layerRow`'s own onTapGesture-wrapped
-    /// subtree: SwiftCrossUI's onTapGesture requires being the outermost
-    /// gesture on its subtree to reliably receive clicks, so a second,
-    /// independent tap target (delete) can't be nested inside a first
-    /// (select) at all -- they have to be siblings under a shared,
-    /// gesture-free parent, which is what the ForEach below builds.
-    @State private var hoveredLayerIndex: Int? = nil
+/// Erases a pane's element type behind `AnyElement` (in a `Box`, since
+/// `AnyElement` takes an `Element`). Every list, main and inspector pane wraps
+/// its content in this.
+///
+/// Why: a `Component`'s layout record stores its whole content value and that
+/// content's layout (`ComponentLayout`), so `ContentView`'s mode `switch`es
+/// carry the full static type of every pane of every mode at once. With the
+/// four real panes in place that record overflowed an 8 MB main-thread stack
+/// in a debug build, in every mode, even where the pane is not shown
+/// (gap MG-15). Erasing at the pane boundary keeps each pane's layout behind
+/// one box.
+@MainActor
+func pane<Content: ElementGroup>(@ElementBuilder _ content: () -> Content) -> AnyElement {
+    AnyElement(Box(content: content))
+}
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 4) {
+/// A selectable list row shared by the KEY, DSN and THM list columns: the
+/// whole row is one plain `Button`, filled with `accentWash` while selected.
+/// (The previous build stacked a filled shape under the label with a tap
+/// gesture -- a fake button, port plan §2.2 W1.)
+struct ListRowButton<Label: ElementGroup>: Component {
+    var isSelected: Bool
+    var action: @MainActor () -> Void
+    var label: Label
+
+    init(isSelected: Bool, action: @escaping @MainActor () -> Void, @ElementBuilder label: () -> Label) {
+        self.isSelected = isSelected
+        self.action = action
+        self.label = label()
+    }
+
+    var content: some ElementGroup {
+        Button(action: action) {
+            Row(gap: Pixels(8)) {
+                label
+            }
+            .padding(Insets.symmetric(horizontal: 8, vertical: 6))
+            .frame(maxWidth: Pixels(.infinity), alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .background(isSelected ? Chrome.accentWash : Color.clear)
+        .cornerRadius(Pixels(6))
+    }
+}
+
+/// A design row: the name (semibold and accent while active) and its
+/// trailing "R×C".
+struct DesignRow: Component {
+    let design: KeyboardDesign
+    let isSelected: Bool
+    let select: @MainActor () -> Void
+
+    var content: some ElementGroup {
+        ListRowButton(isSelected: isSelected, action: select) {
+            Text(design.name)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
+            Spacer()
+            Text("\(design.rowCount)×\(design.colCount)")
+                .font(.system(size: 11))
+                .foregroundColor(Chrome.textTertiary)
+        }
+    }
+}
+
+/// A theme row: a 10-point dot in the theme's own accent (user data, a
+/// literal colour), then the name.
+struct ThemeRow: Component {
+    let theme: KeyboardTheme
+    let isSelected: Bool
+    let select: @MainActor () -> Void
+
+    var content: some ElementGroup {
+        ListRowButton(isSelected: isSelected, action: select) {
+            StatusDot(color: theme.accent.color, diameter: 10)
+            Text(theme.name)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
+            Spacer()
+        }
+    }
+}
+
+/// An accent text link under a list ("+ New Design…", "+ New Theme…").
+struct LinkButton: Component {
+    var label: String
+    var action: @MainActor () -> Void
+
+    var content: some ElementGroup {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(Chrome.accent)
+                .padding(Insets.edges(top: 4, leading: 8))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A list column's frame: 260 wide, full height, scrolling, `Chrome.column`,
+/// sections 18 apart.
+struct ListColumn<Body: ElementGroup>: Component {
+    var body: Body
+
+    init(@ElementBuilder body: () -> Body) {
+        self.body = body()
+    }
+
+    var content: some ElementGroup {
+        ScrollView(.vertical) {
+            Column(gap: Pixels(18)) {
+                body
+            }
+            .alignItems(.stretch)
+            .padding(Insets.symmetric(horizontal: 10, vertical: 12))
+        }
+        .frame(minWidth: Pixels(260), maxWidth: Pixels(260), maxHeight: Pixels(.infinity))
+        .background(Chrome.column)
+    }
+}
+
+/// A list section: a header and its rows, `spacing` apart, full width.
+struct ListSection<Rows: ElementGroup>: Component {
+    var spacing: Float
+    var rows: Rows
+
+    init(spacing: Float = 4, @ElementBuilder rows: () -> Rows) {
+        self.spacing = spacing
+        self.rows = rows()
+    }
+
+    var content: some ElementGroup {
+        Column(gap: Pixels(spacing)) {
+            rows
+        }
+        .alignItems(.stretch)
+    }
+}
+
+/// An inspector column's frame: 300 wide, full height, padding 14, content
+/// from the top, `Chrome.column`.
+struct InspectorColumn<Body: ElementGroup>: Component {
+    var spacing: Float
+    var body: Body
+
+    init(spacing: Float = 10, @ElementBuilder body: () -> Body) {
+        self.spacing = spacing
+        self.body = body()
+    }
+
+    var content: some ElementGroup {
+        Column(gap: Pixels(spacing)) {
+            body
+        }
+        .alignItems(.stretch)
+        .padding(Pixels(14))
+        .frame(minWidth: Pixels(300), maxWidth: Pixels(300), maxHeight: Pixels(.infinity), alignment: .top)
+        .background(Chrome.column)
+    }
+}
+
+/// An inspector's 13-point semibold title and its 12-point secondary
+/// subtitle ("Design actions", "Theme actions", …).
+struct InspectorHeading: Component {
+    var title: String
+    var subtitle: String? = nil
+
+    var content: some ElementGroup {
+        Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(Chrome.textPrimary)
+        if let subtitle {
+            Text(subtitle)
+                .font(.system(size: 12))
+                .foregroundColor(Chrome.textSecondary)
+        }
+    }
+}
+
+/// A "label ……… value" line in an inspector.
+struct DetailLine: Component {
+    var label: String
+    var value: String
+    var size: Double = 11
+    var monospaced = false
+
+    var content: some ElementGroup {
+        Row(gap: Pixels(8)) {
+            Text(label)
+                .font(.system(size: size))
+                .foregroundColor(Chrome.textTertiary)
+            Spacer()
+            Text(value)
+                .font(.system(size: size, design: monospaced ? .monospaced : nil))
+                .foregroundColor(Chrome.textSecondary)
+        }
+    }
+}
+
+/// KEY rail mode's list column: three grouped sections (Designs, Themes,
+/// Layers), so switching any of them doesn't mean leaving KEY mode.
+/// `selectDesign`/`selectTheme` come from `ContentView`, so the DSN/THM draft
+/// workspaces follow whatever is picked here.
+struct KeyListColumnView: Component {
+    let editor: EditorState
+    let selectDesign: @MainActor (KeyboardDesign) -> Void
+    let selectTheme: @MainActor (KeyboardTheme) -> Void
+
+    /// The layer row under the pointer, which shows its delete glyph.
+    @State var hoveredLayer: Int? = nil
+    /// The layer the delete alert asks about, and whether it is up.
+    @State var layerToDelete: Int? = nil
+    @State var confirmingDelete = false
+
+    var content: some ElementGroup {
+        pane {
+            ListColumn {
+                ListSection {
                     SectionHeader(title: "Designs")
-                    ForEach(editor.availableDesigns) { design in
-                        designRow(design)
+                    for design in editor.availableDesigns {
+                        DesignRow(design: design, isSelected: editor.activeDesign.id == design.id) { [selectDesign] in
+                            selectDesign(design)
+                        }
                     }
                 }
-                VStack(alignment: .leading, spacing: 4) {
+                ListSection {
                     SectionHeader(title: "Themes")
-                    ForEach(editor.availableThemes) { theme in
-                        themeRow(theme)
+                    for theme in editor.availableThemes {
+                        ThemeRow(theme: theme, isSelected: editor.activeTheme.id == theme.id) { [selectTheme] in
+                            selectTheme(theme)
+                        }
                     }
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
+                ListSection {
+                    Row {
                         SectionHeader(title: "Layers")
                         Spacer()
                         addLayerChip
                     }
-                    ForEach(editor.document.layers.indices, id: \.self) { index in
-                        // No gesture modifiers on this outer ZStack itself --
-                        // just a plain layout container. layerRow(index)
-                        // carries its own onHover+onTapGesture (in that
-                        // order, matching designRow/themeRow), which is the
-                        // only ordering that reliably receives clicks; the
-                        // trash glyph is a true sibling with its own
-                        // independent onTapGesture.
-                        ZStack(alignment: .trailing) {
-                            layerRow(index)
-                            // Layer 0 ("Base") is never deletable -- the
-                            // firmware always treats it as the
-                            // present-by-default layer.
-                            if hoveredLayerIndex == index && index != 0 {
-                                Text("🗑")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(chrome.dangerText)
-                                    .padding(.trailing, 8)
-                                    .onTapGesture {
-                                        Task {
-                                            await presentAlert("Delete Layer \(index)?") {
-                                                Button("Delete") { editor.removeLayer(at: index) }
-                                                Button("Cancel") {}
-                                            }
-                                        }
-                                    }
-                            }
-                        }
+                    for index in editor.document.layers.indices {
+                        LayerRow(editor: editor, index: index, hoveredLayer: $hoveredLayer,
+                                 layerToDelete: $layerToDelete, confirmingDelete: $confirmingDelete)
                     }
                 }
             }
-            .padding(EdgeInsets(top: 12, bottom: 12, leading: 10, trailing: 10))
-        }
-        .frame(width: 260)
-        .frame(maxHeight: .infinity)
-        .background(chrome.column)
-    }
-
-    private func designRow(_ design: KeyboardDesign) -> some View {
-        let isSelected = editor.activeDesign.id == design.id
-        return ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? chrome.accentWash : Color.clear)
-            HStack(spacing: 6) {
-                Text(design.name)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
-                Spacer()
-                Text("\(design.rowCount)×\(design.colCount)")
-                    .font(.system(size: 11))
-                    .foregroundColor(chrome.textTertiary)
+            .alert("Delete Layer \(layerToDelete ?? 0)?", isPresented: $confirmingDelete,
+                   presenting: layerToDelete) { [editor] index in
+                Button("Delete", role: .destructive) { editor.removeLayer(at: index) }
+                Button("Cancel", role: .cancel) {}
             }
-            .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
         }
-        .onTapGesture { selectDesign(design) }
     }
 
-    private func themeRow(_ theme: KeyboardTheme) -> some View {
-        let isSelected = editor.activeTheme.id == theme.id
-        return ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? chrome.accentWash : Color.clear)
-            HStack(spacing: 8) {
-                Circle().fill(theme.accent.color).frame(width: 10, height: 10)
-                Text(theme.name)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
-                Spacer()
-            }
-            .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
-        }
-        .onTapGesture { selectTheme(theme) }
-    }
-
-    /// The "LAYERS" header's trailing "+" -- adds a new blank-transparent
-    /// layer (`EditorState.addLayer()`), dimmed and inert once
-    /// `EditorState.maxLayerCount` is reached.
-    private var addLayerChip: some View {
-        let isEnabled = editor.document.layers.count < EditorState.maxLayerCount
-        let fade = isEnabled ? 1.0 : 0.4
-        return TapTarget(
-            background: chrome.chipBackground.opacity(fade),
-            cornerRadius: 4,
-            action: { if isEnabled { editor.addLayer() } }
-        ) {
+    /// The LAYERS header's trailing "+": adds a blank transparent layer,
+    /// disabled at `EditorState.maxLayerCount` -- the one disabled gate and
+    /// `Button`'s own disabled look, not a hand-faded colour (§2.2 W3).
+    private var addLayerChip: some ElementGroup {
+        let editor = editor
+        return Button {
+            editor.addLayer()
+        } label: {
             Text("+")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(chrome.textPrimary.opacity(fade))
+                .foregroundColor(Chrome.textPrimary)
+                .frame(width: Pixels(20), height: Pixels(20))
         }
-        .frame(width: 20, height: 20)
+        .buttonStyle(.plain)
+        .background(Chrome.chipBackground)
+        .cornerRadius(Pixels(4))
+        .help("Add a layer")
+        .disabled(editor.document.layers.count >= EditorState.maxLayerCount)
     }
+}
 
-    /// The selectable content of one Layers-list row -- background, drag
-    /// dots, label. Deliberately doesn't include the delete trash glyph:
-    /// see `hoveredLayerIndex`'s doc comment for why that has to live as a
-    /// sibling at the call site instead of nested in here. `.onHover` is
-    /// chained directly onto this same view, in front of `.onTapGesture`
-    /// (matching `designRow`/`themeRow`) -- putting hover on a *different*,
-    /// outer-wrapping view broke click delivery to this row's tap gesture
-    /// entirely, not just the nested trash glyph's.
-    private func layerRow(_ index: Int) -> some View {
+/// One layer row: "⋮⋮ Layer n" (" — Base" for 0); a click makes it the
+/// current layer. While hovered (never layer 0, which the firmware always
+/// treats as present) a trailing delete glyph asks to delete it. The glyph is
+/// a button nested inside the row's button -- the topmost hit target wins --
+/// where the previous build had to make them siblings (§2.2 W9). The hover
+/// and the alert's state are the list column's, so one alert serves every row.
+struct LayerRow: Component {
+    let editor: EditorState
+    let index: Int
+    @Binding var hoveredLayer: Int?
+    @Binding var layerToDelete: Int?
+    @Binding var confirmingDelete: Bool
+
+    var content: some ElementGroup {
+        let editor = editor
+        let index = index
         let isSelected = editor.currentLayer == index
-        return ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? chrome.accentWash : Color.clear)
-            HStack(spacing: 8) {
+        let hovered = $hoveredLayer
+        Box {
+            ListRowButton(isSelected: isSelected, action: { editor.currentLayer = index }) {
                 Text("⋮⋮")
                     .font(.system(size: 11))
-                    .foregroundColor(chrome.textTertiary)
+                    .foregroundColor(Chrome.textTertiary)
                 Text("Layer \(index)" + (index == 0 ? " — Base" : ""))
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
+                    .foregroundColor(isSelected ? Chrome.accent : Chrome.textPrimary)
                 Spacer()
-            }
-            .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
-        }
-        .onHover { hovering in
-            hoveredLayerIndex = hovering ? index : (hoveredLayerIndex == index ? nil : hoveredLayerIndex)
-        }
-        .onTapGesture { editor.currentLayer = index }
-    }
-}
-
-/// KEY rail mode's Main content: the board, in a dark card colored by the
-/// active theme, with the dense action palette below it.
-struct KeyMainContentView: View {
-    @Environment(EditorState.self) var editor
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    /// Guaranteed minimum for the board's own scroll area -- without this,
-    /// the palette drawer below it can take everything and squeeze this
-    /// `ScrollView` down to near nothing at the window's minimum size.
-    /// `ContentView`'s `minHeight` is sized to guarantee this much room.
-    private static let boardMinHeight: Double = 240
-    /// `body`'s `.padding(20)`, top and bottom.
-    private static let verticalPadding: Double = 40
-    /// The two gaps in `body`'s `VStack(spacing: 16)` (three children).
-    private static let stackSpacing: Double = 32
-
-    /// What this column needs at the window floor: the board's guaranteed
-    /// minimum plus the drawer squeezed to its own floor.
-    static let minContentHeight: Double =
-        verticalPadding + stackSpacing + boardMinHeight + PaletteDrawerView.minHeight
-    /// What it needs for the drawer to show every palette section without
-    /// scrolling, with the board still at its minimum -- the height the
-    /// window opens at (see `App.swift`'s `defaultSize`).
-    static let idealContentHeight: Double =
-        verticalPadding + stackSpacing + boardMinHeight + PaletteDrawerView.maxHeight
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 0)
-            ScrollView {
-                KeyboardBoardView()
-                    .background(editor.activeTheme.background.color)
-                    .cornerRadius(10)
-            }
-            .frame(minHeight: Self.boardMinHeight)
-            // The drawer is served first out of this VStack's available
-            // height, so it reaches its full no-scroll `maxHeight` before
-            // the (infinitely flexible) board scroll area takes the rest.
-            // Without the priority the stack splits the slack evenly and the
-            // drawer would scroll even in a tall window -- see
-            // `PaletteDrawerView.maxHeight`'s doc comment.
-            PaletteDrawerView()
-                .layoutPriority(1)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(chrome.canvas)
-    }
-}
-
-/// KEY rail mode's Inspector: a Key/Matrix/Theme tab row, with the Key tab
-/// showing the currently-inspected keycap's label/canonical string (and,
-/// when Advanced Mode is on, its matrix row/col, GPIO pins, and driven
-/// axis), plus Reassign/Clear actions.
-struct KeyInspectorView: View {
-    @Environment(EditorState.self) var editor
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-    @State var tab: InspectorTab = .key
-
-    enum InspectorTab: String, CaseIterable {
-        case key = "Key", matrix = "Matrix", theme = "Theme"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            tabRow
-            switch tab {
-            case .key: keyDetail
-            case .matrix: matrixDetail
-            case .theme: themeDetail
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-        .frame(width: 300)
-        .frame(maxHeight: .infinity)
-        .background(chrome.column)
-    }
-
-    private var tabRow: some View {
-        HStack(spacing: 4) {
-            ForEach(InspectorTab.allCases, id: \.self) { candidate in
-                TapTarget(
-                    background: tab == candidate ? chrome.accent : chrome.pillBackground,
-                    cornerRadius: 6,
-                    action: { tab = candidate }
-                ) {
-                    Text(candidate.rawValue)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(tab == candidate ? .white : chrome.textPrimary)
+                if hoveredLayer == index && index != 0 {
+                    deleteGlyph
                 }
-                .frame(height: 26)
+            }
+        }
+        .onHover { inside in
+            if inside {
+                hovered.wrappedValue = index
+            } else if hovered.wrappedValue == index {
+                hovered.wrappedValue = nil
             }
         }
     }
 
-    // MARK: - Key tab
+    private var deleteGlyph: some Element {
+        let index = index
+        let layerToDelete = $layerToDelete
+        let confirming = $confirmingDelete
+        // A monochrome glyph: colour emoji ("🗑") are not drawn (gap MG-6).
+        return Button {
+            layerToDelete.wrappedValue = index
+            confirming.wrappedValue = true
+        } label: {
+            Text("✕")
+                .font(.system(size: 11))
+                .foregroundColor(Chrome.dangerText)
+                .padding(Insets.symmetric(horizontal: 4))
+        }
+        .buttonStyle(.plain)
+        .help("Delete Layer \(index)")
+    }
+}
 
-    private var hasValidKeySelection: Bool {
-        guard let position = editor.selectedKeyPosition else { return false }
+/// KEY rail mode's main content: the board in its theme-coloured card, with
+/// the palette drawer below it.
+struct KeyMainContentView: Component {
+    let editor: EditorState
+
+    var content: some ElementGroup {
+        pane {
+            let boardHeight = max(Float(WindowMetrics.boardMinHeight),
+                                  KeyboardBoardView.naturalHeight(of: editor.activeDesign))
+            Column(gap: Pixels(16)) {
+                // The board's scroll area grows to the board's own height and no
+                // further, so the drawer below gets the rest up to its maximum.
+                // The previous build served the drawer first with
+                // `.layoutPriority(1)`, which the legacy stacks do not offer
+                // (gap MG-14).
+                ScrollView(.vertical) {
+                    Column {
+                        KeyboardBoardView(editor: editor)
+                    }
+                    .alignItems(.center)
+                }
+                .frame(maxWidth: Pixels(.infinity),
+                       minHeight: Pixels(Float(WindowMetrics.boardMinHeight)),
+                       maxHeight: Pixels(boardHeight))
+                PaletteDrawerView(editor: editor)
+            }
+            .alignItems(.stretch)
+            .padding(Pixels(20))
+            .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity), alignment: .top)
+            .background(Chrome.canvas)
+        }
+    }
+}
+
+/// KEY rail mode's inspector: Key / Matrix / Theme tabs. The Key tab shows the
+/// inspected key's label and canonical string (with Advanced Mode, its matrix
+/// position, GPIO pins and driven axis) and Clear.
+struct KeyInspectorView: Component {
+    let editor: EditorState
+
+    enum Tab: Hashable {
+        case key, matrix, theme
+    }
+
+    @State var tab: Tab = .key
+
+    var content: some ElementGroup {
+        pane {
+            InspectorColumn(spacing: 14) {
+                // A segmented picker, where the previous build hand-built a row of
+                // fake tab buttons (§2.2 W7).
+                Picker("", selection: $tab) {
+                    Text("Key").tag(Tab.key)
+                    Text("Matrix").tag(Tab.matrix)
+                    Text("Theme").tag(Tab.theme)
+                }
+                switch tab {
+                case .key: keyDetail
+                case .matrix: matrixDetail
+                case .theme: themeDetail
+                }
+            }
+        }
+    }
+
+    // MARK: Key tab
+
+    private var inspectedPosition: KeyPosition? {
+        guard let position = editor.selectedKeyPosition else { return nil }
         let design = editor.activeDesign
-        return position.row < design.rowCount && position.col < design.colCount
+        guard position.row < design.rowCount, position.col < design.colCount else { return nil }
+        return position
     }
 
-    private var selectedToken: ActionToken {
-        guard let position = editor.selectedKeyPosition else { return .none }
-        return editor.action(row: position.row, col: position.col)
-    }
-
-    private var keyDetail: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if hasValidKeySelection, let position = editor.selectedKeyPosition {
-                Text(selectedToken.displayLabel.isEmpty ? "—" : selectedToken.displayLabel)
+    @ElementBuilder
+    private var keyDetail: some ElementGroup {
+        if let position = inspectedPosition {
+            let token = editor.action(row: position.row, col: position.col)
+            let design = editor.activeDesign
+            Column(gap: Pixels(10)) {
+                Text(token.displayLabel.isEmpty ? "—" : token.displayLabel)
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(chrome.textPrimary)
-                Text("\(selectedToken.canonicalString) · layer \(editor.currentLayer)")
+                    .foregroundColor(Chrome.textPrimary)
+                Text("\(token.canonicalString) · layer \(editor.currentLayer)")
                     .font(.system(size: 12))
-                    .foregroundColor(chrome.textSecondary)
-
+                    .foregroundColor(Chrome.textSecondary)
                 if editor.showAdvanced {
                     Divider()
-                    let design = editor.activeDesign
-                    VStack(alignment: .leading, spacing: 4) {
-                        detailLine("Row · Col", "\(position.row) · \(position.col)")
-                        detailLine("Row GPIO", "\(design.matrix.rows[position.row])")
-                        detailLine("Col GPIO", "\(design.matrix.cols[position.col])")
-                        detailLine("Driven axis", design.matrix.colsAreDriven != 0 ? "Cols" : "Rows")
-                        detailLine("Canonical", selectedToken.canonicalString, monospaced: true)
+                    Column(gap: Pixels(4)) {
+                        DetailLine(label: "Row · Col", value: "\(position.row) · \(position.col)")
+                        DetailLine(label: "Row GPIO", value: "\(design.matrix.rows[position.row])")
+                        DetailLine(label: "Col GPIO", value: "\(design.matrix.cols[position.col])")
+                        DetailLine(label: "Driven axis", value: design.matrix.colsAreDriven != 0 ? "Cols" : "Rows")
+                        DetailLine(label: "Canonical", value: token.canonicalString, monospaced: true)
                     }
+                    .alignItems(.stretch)
                 } else {
-                    detailLine("Row · Col", "\(position.row) · \(position.col)")
+                    DetailLine(label: "Row · Col", value: "\(position.row) · \(position.col)")
                 }
-
                 Divider()
-                HStack(spacing: 8) {
-                    InspectorButton(
-                        label: "Reassign",
-                        isPrimary: true,
-                        isEnabled: editor.selectedToken != nil
-                    ) {
-                        editor.reassignSelectedKey()
-                    }
-                    InspectorButton(label: "Clear") {
-                        editor.clearSelectedKey()
-                    }
+                // Reassign went with click-to-arm (§2.2 W5): a chip is dragged
+                // onto a key, or clicked to assign it to this one.
+                InspectorButton(label: "Clear") { [editor] in
+                    editor.clearSelectedKey()
                 }
-            } else {
-                Text("No key selected")
-                    .font(.system(size: 12))
-                    .foregroundColor(chrome.textTertiary)
             }
-        }
-    }
-
-    private func detailLine(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
-        HStack {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundColor(chrome.textTertiary)
-            Spacer()
-            Text(value)
-                .font(.system(size: 11, design: monospaced ? .monospaced : nil))
-                .foregroundColor(chrome.textSecondary)
-        }
-    }
-
-    // MARK: - Matrix tab
-
-    private var matrixDetail: some View {
-        let design = editor.activeDesign
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(design.name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(chrome.textPrimary)
-            Text("\(design.rowCount) rows · \(design.colCount) cols")
+            .alignItems(.stretch)
+        } else {
+            Text("No key selected")
                 .font(.system(size: 12))
-                .foregroundColor(chrome.textSecondary)
+                .foregroundColor(Chrome.textTertiary)
+        }
+    }
+
+    // MARK: Matrix tab
+
+    private var matrixDetail: some Element {
+        let design = editor.activeDesign
+        return Column(gap: Pixels(8)) {
+            InspectorHeading(title: design.name, subtitle: "\(design.rowCount) rows · \(design.colCount) cols")
             Divider()
             Text("Rows: " + design.matrix.rows.map(String.init).joined(separator: ", "))
                 .font(.system(size: 11))
-                .foregroundColor(chrome.textSecondary)
+                .foregroundColor(Chrome.textSecondary)
             Text("Cols: " + design.matrix.cols.map(String.init).joined(separator: ", "))
                 .font(.system(size: 11))
-                .foregroundColor(chrome.textSecondary)
+                .foregroundColor(Chrome.textSecondary)
             Text(design.matrix.colsAreDriven != 0 ? "Columns are driven" : "Rows are driven")
                 .font(.system(size: 11))
-                .foregroundColor(chrome.textTertiary)
+                .foregroundColor(Chrome.textTertiary)
         }
+        .alignItems(.stretch)
     }
 
-    // MARK: - Theme tab
+    // MARK: Theme tab
 
-    private var themeDetail: some View {
+    private var themeDetail: some Element {
         let theme = editor.activeTheme
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(theme.name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(chrome.textPrimary)
+        return Column(gap: Pixels(8)) {
+            InspectorHeading(title: theme.name)
             Divider()
-            themeSwatchRow("Background", theme.background)
-            themeSwatchRow("Key background", theme.keyBackground)
-            themeSwatchRow("Font color", theme.keyText)
-            themeSwatchRow("Modifier keys", theme.modifierBackground)
-            themeSwatchRow("Layer keys", theme.layerBackground)
-            themeSwatchRow("Special keys", theme.specialBackground)
-            themeSwatchRow("Empty keys", theme.emptyBackground)
-            themeSwatchRow("Accent / selection", theme.accent)
+            for role in ThemeRole.allCases {
+                ThemeSwatchRow(label: role.label, color: theme[keyPath: role.keyPath])
+            }
         }
+        .alignItems(.stretch)
     }
+}
 
-    private func themeSwatchRow(_ label: String, _ color: ThemeColor) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(color.color)
-                .frame(width: 14, height: 14)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 4).stroke(chrome.dividerLight, style: StrokeStyle(width: 1))
-                }
+/// A read-only theme role in the KEY inspector's Theme tab: a 14-point
+/// swatch, the role, its hex.
+struct ThemeSwatchRow: Component {
+    var label: String
+    var color: ThemeColor
+
+    var content: some ElementGroup {
+        Row(gap: Pixels(8)) {
+            Swatch(color: color.color, side: 14, ring: Chrome.dividerLight, ringWidth: 1)
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(chrome.textPrimary)
+                .foregroundColor(Chrome.textPrimary)
             Spacer()
             Text(color.hex)
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(chrome.textTertiary)
+                .foregroundColor(Chrome.textTertiary)
         }
     }
 }

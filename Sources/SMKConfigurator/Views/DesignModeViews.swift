@@ -1,109 +1,70 @@
-import SwiftCrossUI
+import MetalUI
 
-/// DSN rail mode's List column: the Designs list (same row styling as KEY
-/// mode) plus a "+ New Design…" link and a read-out of the draft's matrix
-/// GPIO wiring.
-struct DesignListColumnView: View {
-    @Environment(EditorState.self) var editor
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+// DSN mode's list column and inspector (port plan §1.6). The grid editor is
+// `DesignGridEditorView`.
+
+/// DSN rail mode's list column: the Designs list (KEY mode's rows), a
+/// "+ New Design…" link, and the draft's matrix GPIO wiring.
+struct DesignListColumnView: Component {
+    let editor: EditorState
     @Binding var draft: KeyboardDesign
-    var selectDesign: (KeyboardDesign) -> Void
-    var newDesign: () -> Void
+    let selectDesign: @MainActor (KeyboardDesign) -> Void
+    let newDesign: @MainActor () -> Void
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 4) {
+    var content: some ElementGroup {
+        pane {
+            ListColumn {
+                ListSection {
                     SectionHeader(title: "Designs")
-                    ForEach(editor.availableDesigns) { design in
-                        designRow(design)
+                    for design in editor.availableDesigns {
+                        DesignRow(design: design, isSelected: editor.activeDesign.id == design.id) { [selectDesign] in
+                            selectDesign(design)
+                        }
                     }
-                    Text("+ New Design…")
-                        .font(.system(size: 13))
-                        .foregroundColor(chrome.accent)
-                        .padding(EdgeInsets(top: 4, bottom: 0, leading: 8, trailing: 0))
-                        .onTapGesture { newDesign() }
+                    LinkButton(label: "+ New Design…", action: newDesign)
                 }
-                matrixSummary
+                ListSection(spacing: 6) {
+                    SectionHeader(title: "Matrix GPIO")
+                    Text("Rows: " + draft.matrix.rows.map(String.init).joined(separator: ", "))
+                        .font(.system(size: 11))
+                        .foregroundColor(Chrome.textSecondary)
+                    Text("Cols: " + draft.matrix.cols.map(String.init).joined(separator: ", "))
+                        .font(.system(size: 11))
+                        .foregroundColor(Chrome.textSecondary)
+                    Toggle("Columns are driven", isOn: colsAreDriven)
+                }
             }
-            .padding(EdgeInsets(top: 12, bottom: 12, leading: 10, trailing: 10))
-        }
-        .frame(width: 260)
-        .frame(maxHeight: .infinity)
-        .background(chrome.column)
-    }
-
-    private func designRow(_ design: KeyboardDesign) -> some View {
-        let isSelected = editor.activeDesign.id == design.id
-        return ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? chrome.accentWash : Color.clear)
-            HStack(spacing: 6) {
-                Text(design.name)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? chrome.accent : chrome.textPrimary)
-                Spacer()
-                Text("\(design.rowCount)×\(design.colCount)")
-                    .font(.system(size: 11))
-                    .foregroundColor(chrome.textTertiary)
-            }
-            .padding(EdgeInsets(top: 6, bottom: 6, leading: 8, trailing: 8))
-        }
-        .onTapGesture { selectDesign(design) }
-    }
-
-    private var matrixSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionHeader(title: "Matrix GPIO")
-            Text("Rows: " + draft.matrix.rows.map(String.init).joined(separator: ", "))
-                .font(.system(size: 11))
-                .foregroundColor(chrome.textSecondary)
-            Text("Cols: " + draft.matrix.cols.map(String.init).joined(separator: ", "))
-                .font(.system(size: 11))
-                .foregroundColor(chrome.textSecondary)
-            Toggle("Columns are driven", isOn: colsAreDrivenBinding)
-                .toggleStyle(.checkbox)
         }
     }
 
-    private var colsAreDrivenBinding: Binding<Bool> {
-        Binding(
-            get: { draft.matrix.colsAreDriven != 0 },
-            set: { draft.matrix.colsAreDriven = $0 ? 1 : 0 }
+    private var colsAreDriven: Binding<Bool> {
+        let draft = $draft
+        return Binding(
+            get: { draft.wrappedValue.matrix.colsAreDriven != 0 },
+            set: { draft.wrappedValue.matrix.colsAreDriven = $0 ? 1 : 0 }
         )
     }
 }
 
-/// DSN rail mode's Inspector: Save/Duplicate/Delete for the design
-/// currently open in the grid editor.
-struct DesignInspectorView: View {
-    var draft: KeyboardDesign
-    var isExistingDesign: Bool
-    var save: () -> Void
-    var duplicate: () -> Void
-    var delete: () -> Void
+/// DSN rail mode's inspector: Save, Duplicate and Delete for the design open
+/// in the grid editor. Delete is disabled for an unsaved "+ New Design…".
+struct DesignInspectorView: Component {
+    let draft: KeyboardDesign
+    let isExistingDesign: Bool
+    let save: @MainActor () -> Void
+    let duplicate: @MainActor () -> Void
+    let delete: @MainActor () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Design actions")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(chrome.textPrimary)
-            Text("\(draft.rowCount) rows · \(draft.colCount) cols · \(draft.name) matrix")
-                .font(.system(size: 12))
-                .foregroundColor(chrome.textSecondary)
-            Divider()
-            InspectorButton(label: "Save Design", isPrimary: true, action: save)
-            InspectorButton(label: "Duplicate…", action: duplicate)
-            InspectorButton(label: "Delete", isDestructive: true, isEnabled: isExistingDesign, action: delete)
-            Spacer(minLength: 0)
+    var content: some ElementGroup {
+        pane {
+            InspectorColumn {
+                InspectorHeading(title: "Design actions",
+                                 subtitle: "\(draft.rowCount) rows · \(draft.colCount) cols · \(draft.name) matrix")
+                Divider()
+                InspectorButton(label: "Save Design", isPrimary: true, action: save)
+                InspectorButton(label: "Duplicate…", action: duplicate)
+                InspectorButton(label: "Delete", isDestructive: true, isEnabled: isExistingDesign, action: delete)
+            }
         }
-        .padding(14)
-        .frame(width: 300)
-        .frame(maxHeight: .infinity)
-        .background(chrome.column)
     }
 }

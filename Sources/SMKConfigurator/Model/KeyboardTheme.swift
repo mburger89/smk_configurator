@@ -1,5 +1,4 @@
 import Foundation
-import SwiftCrossUI
 
 /// An RGB color stored as a hex string (`"#RRGGBB"`), so themes are easy to
 /// hand-author/import as JSON and match how palettes like Dracula/Monokai
@@ -11,16 +10,8 @@ struct ThemeColor: Codable, Equatable, Hashable {
         self.hex = hex
     }
 
-    var color: Color {
-        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
-        guard digits.count == 6, let value = UInt32(digits, radix: 16) else {
-            return Color(red: 1, green: 0, blue: 1)  // unmistakable "bad hex" magenta
-        }
-        let r = Double((value >> 16) & 0xFF) / 255
-        let g = Double((value >> 8) & 0xFF) / 255
-        let b = Double(value & 0xFF) / 255
-        return Color(red: r, green: g, blue: b)
-    }
+    // `color` (the UI colour this hex draws as) lives with the views, in
+    // `Views/ThemeColor+MetalUI.swift`, so the model names no UI type.
 
     /// Whether `hex` is a valid `#RRGGBB` (or bare `RRGGBB`) string.
     var isValid: Bool {
@@ -46,20 +37,24 @@ struct KeyboardTheme: Codable, Equatable, Identifiable {
 
     var id: String { name }
 
-    /// The fill color for a keycap/palette-tile showing `token`, shared by
-    /// `KeyCapView` and the drawer's `PaletteChip` so both always agree.
-    func background(for token: ActionToken) -> Color {
+    /// The fill colour role for a keycap/palette-tile showing `token`, shared
+    /// by `KeyCapView` and the drawer's `PaletteChip` so both always agree.
+    /// Views draw it as `theme.background(for: token).color`.
+    func background(for token: ActionToken) -> ThemeColor {
         switch token {
-        case .none: return emptyBackground.color
-        case .transparent: return keyBackground.color
-        case .modifier: return modifierBackground.color
-        case .momentaryLayer, .toggleLayer: return layerBackground.color
-        case .toggleConnection: return specialBackground.color
-        case .macro: return specialBackground.color
-        case .raw: return Color(red: 1, green: 0, blue: 0)
-        case .key: return keyBackground.color
+        case .none: return emptyBackground
+        case .transparent: return keyBackground
+        case .modifier: return modifierBackground
+        case .momentaryLayer, .toggleLayer: return layerBackground
+        case .toggleConnection: return specialBackground
+        case .macro: return specialBackground
+        case .raw: return Self.unknownTokenBackground
+        case .key: return keyBackground
         }
     }
+
+    /// The unknown-token marker: pure red, whatever the theme.
+    static let unknownTokenBackground = ThemeColor(hex: "#FF0000")
 
     static let allBuiltIns: [KeyboardTheme] = [.defaultTheme, .dracula, .monokai, .tokyoNight, .vaporwave]
 

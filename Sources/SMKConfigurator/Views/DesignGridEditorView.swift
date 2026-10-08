@@ -1,152 +1,188 @@
-import SwiftCrossUI
+import MetalUI
 
-/// A cell coordinate in the DSN grid editor, distinct from `KeyPosition`
-/// (which identifies a key on the *active* design for the Key inspector) --
-/// this identifies a cell within whatever design is currently being
-/// drafted, which may not be saved/active yet.
-struct DesignGridPosition: Equatable {
-    var row: Int
-    var col: Int
-}
-
-/// The DSN rail mode's Main content pane: name field + row/col controls,
-/// the grid canvas itself, and the selected-cell width/gap footer. Mutates
-/// `draft` directly; nothing here touches `EditorState` -- saving/
-/// duplicating/deleting the draft is the DSN inspector's job (see
-/// `DesignInspectorView`), mirroring the click-to-arm/click-to-place
-/// pattern already used for keymap editing.
-struct DesignGridEditorView: View {
+/// The DSN rail mode's main content: the name field and the row/column pills
+/// on top, the grid on the "physical board" black in a scroll area, and the
+/// selected cell's width presets and Gap toggle below. It edits `draft`
+/// directly and never touches `EditorState`: saving, duplicating and deleting
+/// the draft are the DSN inspector's (`DesignInspectorView`).
+struct DesignGridEditorView: Component {
     @Binding var draft: KeyboardDesign
     @Binding var selectedCell: DesignGridPosition?
 
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
-
     static let widthPresets: [Double] = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.75]
 
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                grid
-                    .padding(20)
+    var content: some ElementGroup {
+        pane {
+            Column {
+                header
+                Divider()
+                ScrollView(.vertical) {
+                    grid
+                }
+                .frame(maxWidth: Pixels(.infinity), minHeight: Pixels(0), maxHeight: Pixels(.infinity))
+                .background(Color.black)
+                Divider()
+                footer
             }
-            .background(Color.black)
-            Divider()
-            footer
+            .alignItems(.stretch)
+            .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity))
+            .background(Chrome.canvas)
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
+    private var header: some Element {
+        let draft = $draft
+        let selection = $selectedCell
+        return Row(gap: Pixels(10)) {
             Text("Name:")
                 .font(.system(size: 12))
-                .foregroundColor(chrome.textSecondary)
-            TextField("Design name", text: nameBinding)
+                .foregroundColor(Chrome.textSecondary)
+            TextField("Design name", text: $draft.name)
                 .font(.system(size: 13))
+                .fieldChrome()
+                .frame(width: Pixels(220))
             Spacer()
-            ToolbarPill(label: "+ Row", action: addRow)
-            ToolbarPill(label: "− Row", action: removeRow)
-            ToolbarPill(label: "+ Col", action: addCol)
-            ToolbarPill(label: "− Col", action: removeCol)
+            PillButton(label: "+ Row") { DesignGridEditing.addRow(to: &draft.wrappedValue) }
+            PillButton(label: "− Row") {
+                DesignGridEditing.removeRow(from: &draft.wrappedValue, selection: &selection.wrappedValue)
+            }
+            PillButton(label: "+ Col") { DesignGridEditing.addColumn(to: &draft.wrappedValue) }
+            PillButton(label: "− Col") {
+                DesignGridEditing.removeColumn(from: &draft.wrappedValue, selection: &selection.wrappedValue)
+            }
         }
-        .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
-        .background(chrome.surface)
+        .padding(Insets.symmetric(horizontal: 16, vertical: 10))
+        .background(Chrome.surface)
     }
 
-    private var grid: some View {
-        VStack(spacing: 4) {
-            ForEach(0..<draft.rowCount, id: \.self) { r in
-                HStack(spacing: 4) {
-                    ForEach(0..<draft.colCount, id: \.self) { c in
-                        DesignCellView(
-                            cell: draft.grid[r][c],
-                            isSelected: selectedCell == DesignGridPosition(row: r, col: c)
-                        ) {
-                            selectedCell = DesignGridPosition(row: r, col: c)
+    private var grid: some Element {
+        let selection = $selectedCell
+        return Column(gap: Pixels(DesignCellView.spacing)) {
+            for r in 0..<draft.rowCount {
+                Row(gap: Pixels(DesignCellView.spacing)) {
+                    for c in 0..<draft.colCount {
+                        DesignCellView(cell: draft.grid[r][c],
+                                       isSelected: selectedCell == DesignGridPosition(row: r, col: c)) {
+                            selection.wrappedValue = DesignGridPosition(row: r, col: c)
                         }
                     }
                 }
             }
         }
+        .alignItems(.flexStart)
+        .padding(Pixels(20))
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            if let selectedCell {
-                Text("Selected (\(selectedCell.row), \(selectedCell.col)):")
-                    .font(.system(size: 12))
-                    .foregroundColor(chrome.textSecondary)
-                ForEach(Self.widthPresets, id: \.self) { preset in
-                    ToolbarPill(label: presetLabel(preset)) {
-                        draft.grid[selectedCell.row][selectedCell.col].width = preset
-                        draft.grid[selectedCell.row][selectedCell.col].isGap = false
-                    }
-                }
-                Spacer()
-                Toggle("Gap", isOn: gapBinding(for: selectedCell))
-            } else {
+    @ElementBuilder
+    private var footer: some ElementGroup {
+        if let selectedCell {
+            DesignCellFooter(draft: $draft, position: selectedCell)
+        } else {
+            Row {
                 Text("Select a cell to edit its width")
                     .font(.system(size: 12))
-                    .foregroundColor(chrome.textTertiary)
+                    .foregroundColor(Chrome.textTertiary)
                 Spacer()
             }
-        }
-        .padding(EdgeInsets(top: 10, bottom: 10, leading: 16, trailing: 16))
-        .background(chrome.surface)
-    }
-
-    // MARK: - Row/col mutation
-
-    private func addRow() {
-        let nextGPIO = (draft.matrix.rows.max() ?? -1) + 1
-        draft.matrix.rows.append(nextGPIO)
-        draft.grid.append(Array(repeating: KeyboardDesign.Cell(), count: draft.colCount))
-    }
-
-    private func removeRow() {
-        guard draft.rowCount > 1 else { return }
-        draft.matrix.rows.removeLast()
-        draft.grid.removeLast()
-        if let selectedCell, selectedCell.row >= draft.rowCount {
-            self.selectedCell = nil
+            .padding(Insets.symmetric(horizontal: 16, vertical: 10))
+            .frame(minHeight: Pixels(49))
+            .background(Chrome.surface)
         }
     }
+}
 
-    private func addCol() {
-        let nextGPIO = (draft.matrix.cols.max() ?? -1) + 1
-        draft.matrix.cols.append(nextGPIO)
-        for r in draft.grid.indices {
-            draft.grid[r].append(KeyboardDesign.Cell())
+/// The DSN footer for a selected cell: "Selected (r, c):", the width
+/// presets, and the Gap toggle.
+struct DesignCellFooter: Component {
+    @Binding var draft: KeyboardDesign
+    let position: DesignGridPosition
+
+    var content: some ElementGroup {
+        let draft = $draft
+        let position = position
+        Row(gap: Pixels(8)) {
+            Text("Selected (\(position.row), \(position.col)):")
+                .font(.system(size: 12))
+                .foregroundColor(Chrome.textSecondary)
+            for preset in DesignGridEditorView.widthPresets {
+                PillButton(label: DesignCellView.label(forWidth: preset)) {
+                    DesignGridEditing.setWidth(preset, at: position, in: &draft.wrappedValue)
+                }
+            }
+            Spacer()
+            Toggle("Gap", isOn: Binding(
+                get: { DesignGridEditing.isGap(at: position, in: draft.wrappedValue) },
+                set: { DesignGridEditing.setGap($0, at: position, in: &draft.wrappedValue) }
+            ))
+        }
+        .padding(Insets.symmetric(horizontal: 16, vertical: 10))
+        .frame(minHeight: Pixels(49))
+        .background(Chrome.surface)
+    }
+}
+
+/// The DSN grid editor's edits, as plain functions over a draft design and
+/// the selected cell, so they are testable without a window
+/// (`DesignGridEditingTests`). Behaviour is the previous build's, unchanged.
+enum DesignGridEditing {
+    /// Appends a row of 1U keys wired to the next unused row GPIO.
+    static func addRow(to design: inout KeyboardDesign) {
+        let nextGPIO = (design.matrix.rows.max() ?? -1) + 1
+        design.matrix.rows.append(nextGPIO)
+        design.grid.append(Array(repeating: KeyboardDesign.Cell(), count: design.colCount))
+    }
+
+    /// Drops the last row (never the only one), clearing a selection that
+    /// falls outside the grid.
+    static func removeRow(from design: inout KeyboardDesign, selection: inout DesignGridPosition?) {
+        guard design.rowCount > 1 else { return }
+        design.matrix.rows.removeLast()
+        design.grid.removeLast()
+        if let cell = selection, cell.row >= design.rowCount {
+            selection = nil
         }
     }
 
-    private func removeCol() {
-        guard draft.colCount > 1 else { return }
-        draft.matrix.cols.removeLast()
-        for r in draft.grid.indices {
-            draft.grid[r].removeLast()
-        }
-        if let selectedCell, selectedCell.col >= draft.colCount {
-            self.selectedCell = nil
+    /// Appends a column of 1U keys wired to the next unused column GPIO.
+    static func addColumn(to design: inout KeyboardDesign) {
+        let nextGPIO = (design.matrix.cols.max() ?? -1) + 1
+        design.matrix.cols.append(nextGPIO)
+        for r in design.grid.indices {
+            design.grid[r].append(KeyboardDesign.Cell())
         }
     }
 
-    private func presetLabel(_ w: Double) -> String {
-        w.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", w) : String(format: "%.2f", w)
+    /// Drops the last column (never the only one), clearing a selection that
+    /// falls outside the grid.
+    static func removeColumn(from design: inout KeyboardDesign, selection: inout DesignGridPosition?) {
+        guard design.colCount > 1 else { return }
+        design.matrix.cols.removeLast()
+        for r in design.grid.indices {
+            design.grid[r].removeLast()
+        }
+        if let cell = selection, cell.col >= design.colCount {
+            selection = nil
+        }
     }
 
-    // MARK: - Bindings
-
-    private var nameBinding: Binding<String> {
-        Binding(get: { draft.name }, set: { draft.name = $0 })
+    /// A width preset makes the cell a key of that width (no longer a gap).
+    static func setWidth(_ width: Double, at position: DesignGridPosition, in design: inout KeyboardDesign) {
+        guard contains(position, design) else { return }
+        design.grid[position.row][position.col].width = width
+        design.grid[position.row][position.col].isGap = false
     }
 
-    private func gapBinding(for position: DesignGridPosition) -> Binding<Bool> {
-        Binding(
-            get: { draft.grid[position.row][position.col].isGap },
-            set: { draft.grid[position.row][position.col].isGap = $0 }
-        )
+    static func isGap(at position: DesignGridPosition, in design: KeyboardDesign) -> Bool {
+        contains(position, design) && design.grid[position.row][position.col].isGap
+    }
+
+    static func setGap(_ isGap: Bool, at position: DesignGridPosition, in design: inout KeyboardDesign) {
+        guard contains(position, design) else { return }
+        design.grid[position.row][position.col].isGap = isGap
+    }
+
+    private static func contains(_ position: DesignGridPosition, _ design: KeyboardDesign) -> Bool {
+        position.row >= 0 && position.row < design.grid.count
+            && position.col >= 0 && position.col < design.grid[position.row].count
     }
 }

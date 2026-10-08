@@ -1,24 +1,31 @@
 import Foundation
-import SwiftCrossUI
+import MetalUI
 
-/// The app's root view: titlebar -> 4-pane body (icon rail / list / main /
-/// inspector, driven by `editor.railMode`) -> status bar. See
-/// `design_handoff_1c_power_grouped_list/README.md` for the full layout
-/// spec this recreates.
+/// The window's root element. A lifecycle scope cannot be a window's root
+/// (MetalUI divergence 120), so `ContentView` -- which carries `onAppear`,
+/// `onChange` and the load-error alert -- sits inside a plain `Column`.
+@MainActor
+func rootView(editor: EditorState) -> some Element {
+    Column {
+        ContentView(editor: editor)
+    }
+    .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity))
+}
+
+/// The app's shell: the 4-pane body (icon rail / list / main / inspector,
+/// driven by `editor.railMode`) over the status bar. See
+/// `design_handoff_1c_power_grouped_list/README.md` for the layout spec this
+/// recreates. The previous build's titlebar strip is gone (port plan §2.2 W8):
+/// its file actions are the File menu and Advanced Mode is a View menu item
+/// (`AppCommands.swift`).
 ///
-/// Design/theme editing used to happen in modal sheets (`DesignBuilderView`/
-/// `ThemeBuilderView`); this redesign moves that editing inline into the
-/// DSN/THM panes instead, so `ContentView` now owns a small "draft"
-/// workspace for each -- a scratch copy that mirrors whatever design/theme
-/// is selected until explicitly saved, mirroring the old sheets'
-/// edit-then-Save/Cancel flow without the modal.
-struct ContentView: View {
-    @Environment(EditorState.self) var editor
-    @Environment(\.chooseFile) var chooseFile
-    @Environment(\.chooseFileSaveDestination) var chooseFileSaveDestination
-    @Environment(\.presentAlert) var presentAlert
-    @Environment(\.colorScheme) private var colorScheme
-    private var chrome: Chrome { Chrome(scheme: colorScheme) }
+/// Design/theme editing happens inline in the DSN/THM panes, so `ContentView`
+/// owns a small "draft" workspace for each -- a scratch copy that mirrors
+/// whatever design/theme is selected until explicitly saved.
+struct ContentView: Component {
+    let editor: EditorState
+
+    @Environment(\.fileDialogs) var dialogs
 
     @State var designDraft: KeyboardDesign = .blank()
     /// `nil` while the draft is an unsaved "+ New Design…"; the design
@@ -30,43 +37,24 @@ struct ContentView: View {
     @State var themeDraft: KeyboardTheme = .blank()
     @State var editingThemeOriginal: KeyboardTheme? = nil
 
-    /// Everything `body` stacks above and below the four-pane row: titlebar
-    /// (50) + the top divider and the one above the status bar (~3) +
-    /// status bar (26).
-    private static let chromeHeight: Double = 79
+    /// Whether the load-error alert is up, and the message it shows (kept
+    /// apart from `editor.loadError`, which clears when the alert goes).
+    @State var showingLoadError = false
+    @State var loadErrorMessage = ""
 
-    /// The window floor. KEY mode's Main content column is the tallest of
-    /// the four, so it sets the bound: chrome plus what that column needs
-    /// with the board at `boardMinHeight` and the palette drawer squeezed to
-    /// its own floor. Kept deliberately under the ~730pt of usable height a
-    /// 1366x768 laptop has -- a floor taller than the screen leaves the
-    /// status bar unreachable with no way to shrink the window. See
-    /// `PaletteDrawerView.maxHeight` for why the drawer can shrink again.
-    static let minWindowHeight: Double = chromeHeight + KeyMainContentView.minContentHeight
+    /// Whether an ADD STEP row is being dragged over the "Add a step" card,
+    /// written by its drop destination's `isTargeted` callback (input).
+    @State var addStepCardTargeted = false
 
-    /// Launch height: enough for the palette to show every section without
-    /// scrolling. Larger than `minWindowHeight` on purpose -- the OS clamps
-    /// it down to whatever the display can fit, and the window stays
-    /// resizable from there.
-    static let idealWindowHeight: Double = chromeHeight + KeyMainContentView.idealContentHeight
-
-    var body: some View {
-        VStack(spacing: 0) {
-            TitlebarView()
-            chrome.divider.frame(height: 2)
-            HStack(spacing: 0) {
-                IconRailView(mode: railModeBinding)
-                Divider()
-                listColumn
-                Divider()
-                mainContent
-                Divider()
-                inspectorColumn
-            }
+    var content: some ElementGroup {
+        Column {
+            paneRow
             Divider()
-            StatusBarView()
+            StatusBarView(editor: editor)
         }
-        .frame(minWidth: 1440, minHeight: Self.minWindowHeight)
+        .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity))
+        .background(Chrome.canvas)
+        .preferredColorScheme(editor.appearanceMode.colorScheme)
         .onAppear {
             designDraft = editor.activeDesign
             editingDesignOriginal = editor.activeDesign
@@ -75,56 +63,81 @@ struct ContentView: View {
         }
         .onChange(of: editor.loadError) {
             guard let message = editor.loadError else { return }
-            Task {
-                await presentAlert(message)
-                editor.loadError = nil
-            }
+            loadErrorMessage = message
+            showingLoadError = true
+        }
+        .alert(loadErrorMessage, isPresented: loadErrorBinding) {
+            Button("OK") {}
         }
     }
 
-    private var railModeBinding: Binding<RailMode> {
-        Binding(get: { editor.railMode }, set: { editor.railMode = $0 })
+    /// Any dismissal clears the model's error, so the same error raised again
+    /// is a change `onChange` sees.
+    private var loadErrorBinding: Binding<Bool> {
+        let presented = $showingLoadError
+        let editor = editor
+        return Binding(get: { presented.wrappedValue },
+                       set: { isPresented in
+                           presented.wrappedValue = isPresented
+                           if !isPresented { editor.loadError = nil }
+                       })
     }
 
-    @ViewBuilder
-    private var listColumn: some View {
+    /// The macro library takes the whole body: no list or inspector column.
+    private var hasSideColumns: Bool {
+        !(editor.railMode == .macros && editor.macroWorkspace == .library)
+    }
+
+    private var paneRow: some Element {
+        Row {
+            IconRailView(editor: editor)
+            Divider()
+            if hasSideColumns {
+                listColumn
+                Divider()
+            }
+            mainContent
+            if hasSideColumns {
+                Divider()
+                inspectorColumn
+            }
+        }
+        .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity))
+    }
+
+    @ElementBuilder
+    private var listColumn: some ElementGroup {
         switch editor.railMode {
         case .key:
-            KeyListColumnView(selectDesign: loadDesignDraft, selectTheme: loadThemeDraft)
+            KeyListColumnView(editor: editor, selectDesign: loadDesignDraft, selectTheme: loadThemeDraft)
         case .designs:
-            DesignListColumnView(draft: $designDraft, selectDesign: loadDesignDraft, newDesign: newDesignDraft)
+            DesignListColumnView(editor: editor, draft: $designDraft, selectDesign: loadDesignDraft,
+                                 newDesign: newDesignDraft)
         case .themes:
-            ThemeListColumnView(draft: $themeDraft, selectTheme: loadThemeDraft, newTheme: newThemeDraft)
+            ThemeListColumnView(editor: editor, draft: $themeDraft, selectTheme: loadThemeDraft,
+                                newTheme: newThemeDraft)
         case .device:
-            DeviceListColumnView()
+            DeviceListColumnView(editor: editor)
         case .macros:
-            switch editor.macroWorkspace {
-            case .library:
-                // The library table (`mainContent`, below) takes the whole
-                // body in this sub-state; there is no list column.
-                EmptyView()
-            case .editor:
-                MacroStepPaletteView()
-            }
+            MacroStepPaletteView(editor: editor)
         }
     }
 
-    @ViewBuilder
-    private var mainContent: some View {
+    @ElementBuilder
+    private var mainContent: some ElementGroup {
         switch editor.railMode {
         case .key:
-            KeyMainContentView()
+            KeyMainContentView(editor: editor)
         case .designs:
             DesignGridEditorView(draft: $designDraft, selectedCell: $selectedDesignCell)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .themes:
-            ThemeMainContentView(draft: themeDraft)
+            ThemeMainContentView(editor: editor, draft: themeDraft)
         case .device:
-            DeviceMainContentView()
+            DeviceMainContentView(editor: editor)
         case .macros:
             switch editor.macroWorkspace {
             case .library:
-                MacroLibraryView()
+                MacroLibraryView(editor: editor)
             case .editor:
                 macroEditorContent
             }
@@ -132,69 +145,98 @@ struct ContentView: View {
     }
 
     /// MACROS mode's step editor Main content: the canvas header, a
-    /// reorder/delete hint above the step list, the sequence itself, and
-    /// the add-step card. `EmptyView()` when `editor.currentMacro` is nil,
-    /// which shouldn't happen while `macroWorkspace` is `.editor` but is
-    /// safer than force-unwrapping (see `MacroCanvasHeaderView`'s doc
-    /// comment for the same defensive choice).
-    @ViewBuilder
-    private var macroEditorContent: some View {
+    /// reorder/delete hint above the step list, the sequence itself, and the
+    /// add-step card. An empty canvas when `editor.currentMacro` is nil, which
+    /// shouldn't happen while `macroWorkspace` is `.editor` but is safer than
+    /// force-unwrapping.
+    @ElementBuilder
+    private var macroEditorContent: some ElementGroup {
         if let macro = editor.currentMacro {
-            VStack(alignment: .leading, spacing: 0) {
-                MacroCanvasHeaderView()
+            Column {
+                MacroCanvasHeaderView(editor: editor)
                 Text("Select a step to reorder or delete")
                     .font(.system(size: 11))
-                    .foregroundColor(chrome.textTertiary)
-                    .padding(EdgeInsets(top: 0, bottom: 8, leading: 16, trailing: 16))
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(macro.steps.indices, id: \.self) { index in
-                            MacroStepRowView(
-                                step: macro.steps[index],
-                                index: index,
-                                isSelected: editor.selectedStepIndex == index,
-                                onSelect: { editor.selectedStepIndex = index },
-                                onMoveUp: { editor.moveStep(from: index, to: index - 1) },
-                                onMoveDown: { editor.moveStep(from: index, to: index + 1) },
-                                onDelete: { editor.deleteStep(at: index) }
-                            )
+                    .foregroundColor(Chrome.textTertiary)
+                    .padding(Insets.edges(leading: 16, bottom: 8, trailing: 16))
+                ScrollView(.vertical) {
+                    Column(gap: Pixels(6)) {
+                        for index in macro.steps.indices {
+                            stepRow(macro.steps[index], at: index)
                         }
                     }
-                    .padding(EdgeInsets(top: 0, bottom: 12, leading: 16, trailing: 16))
+                    .alignItems(.stretch)
+                    .padding(Insets.edges(leading: 16, bottom: 12, trailing: 16))
                 }
+                .frame(maxWidth: Pixels(.infinity), minHeight: Pixels(0), maxHeight: Pixels(.infinity))
                 addStepCard
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(chrome.canvas)
+            .alignItems(.flexStart)
+            .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity), alignment: .topLeading)
+            .background(Chrome.canvas)
         } else {
-            EmptyView()
+            Box()
+                .frame(maxWidth: Pixels(.infinity), maxHeight: Pixels(.infinity))
+                .background(Chrome.canvas)
         }
     }
 
-    /// The dashed-card substitute for the handoff's drag-to-append drop
-    /// zone (see the design spec's interaction substitution table) --
-    /// always appends a fresh keystroke step at the very end, independent
-    /// of the current selection, complementing the palette's
-    /// insert-after-selection placement.
-    private var addStepCard: some View {
-        TapTarget(
-            background: chrome.pillBackground.opacity(0.6),
-            cornerRadius: 8,
-            action: { editor.appendStep(MacroStepType.keystroke.makeStep()) }
-        ) {
+    private func stepRow(_ step: MacroStep, at index: Int) -> MacroStepRowView {
+        let editor = editor
+        return MacroStepRowView(
+            step: step,
+            index: index,
+            isSelected: editor.selectedStepIndex == index,
+            onSelect: { editor.selectedStepIndex = index },
+            onMoveUp: { editor.moveStep(from: index, to: index - 1) },
+            onMoveDown: { editor.moveStep(from: index, to: index + 1) },
+            onDelete: { editor.deleteStep(at: index) }
+        )
+    }
+
+    /// Appends a fresh keystroke step at the very end, independent of the
+    /// current selection, complementing the palette's insert-after-selection
+    /// placement. It is also the drop zone for an ADD STEP row dragged from the
+    /// palette column (`MacroStepTypeRow`, `MacroStepDrop`): the dropped type is
+    /// appended, and the card wears an accent ring while one is over it. The
+    /// previous build offered the click as a substitute for this drop (port
+    /// plan §2.2 W6).
+    private var addStepCard: some Element {
+        let editor = editor
+        let targeted = $addStepCardTargeted
+        // The card sits in a `Box` so the outer padding is a margin: padding
+        // on the button itself would sit inside its fill and hit area.
+        return Box {
+            card(editor: editor, targeted: targeted)
+        }
+        .padding(Insets.edges(leading: 16, bottom: 12, trailing: 16))
+    }
+
+    private func card(editor: EditorState, targeted: Binding<Bool>) -> some Element {
+        Button {
+            editor.appendStep(MacroStepType.keystroke.makeStep())
+        } label: {
             Text("Add a step")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(chrome.textPrimary)
+                .foregroundColor(Chrome.textPrimary)
+                .frame(maxWidth: Pixels(.infinity), minHeight: Pixels(44), maxHeight: Pixels(44))
         }
-        .frame(height: 44)
-        .padding(EdgeInsets(top: 0, bottom: 12, leading: 16, trailing: 16))
+        .buttonStyle(.plain)
+        .background(Chrome.pillBackground.opacity(0.6))
+        .cornerRadius(Pixels(8))
+        .border(addStepCardTargeted ? Chrome.accent : Color.clear, width: Pixels(2))
+        .help("Click to append a keystroke, or drop a step type here to append it")
+        .dropDestination(for: String.self, action: { items, _ in
+            guard let type = MacroStepDrop.type(from: items) else { return false }
+            editor.appendStep(type.makeStep())
+            return true
+        }, isTargeted: { targeted.wrappedValue = $0 })
     }
 
-    @ViewBuilder
-    private var inspectorColumn: some View {
+    @ElementBuilder
+    private var inspectorColumn: some ElementGroup {
         switch editor.railMode {
         case .key:
-            KeyInspectorView()
+            KeyInspectorView(editor: editor)
         case .designs:
             DesignInspectorView(
                 draft: designDraft,
@@ -212,14 +254,9 @@ struct ContentView: View {
                 exportTheme: exportThemeDraft
             )
         case .device:
-            DeviceInspectorView()
+            DeviceInspectorView(editor: editor)
         case .macros:
-            switch editor.macroWorkspace {
-            case .library:
-                EmptyView()
-            case .editor:
-                MacroInspectorView()
-            }
+            MacroInspectorView(editor: editor)
         }
     }
 
@@ -282,26 +319,31 @@ struct ContentView: View {
         editingThemeOriginal = editor.activeTheme
     }
 
+    /// The open panel ("Import theme JSON" in the previous build -- MetalUI's
+    /// dialogs take no title, gap MG-5), then the imported theme becomes the
+    /// draft.
     private func importThemeDraft() {
-        Task {
-            guard
-                let url = await chooseFile(title: "Import theme JSON", allowSelectingFiles: true)
-            else { return }
+        let dialogs = dialogs
+        let editor = editor
+        let themeDraft = $themeDraft
+        let editingThemeOriginal = $editingThemeOriginal
+        Task { @MainActor in
+            guard let url = await KeymapFileActions.chooseFile(editor: editor, dialogs: dialogs) else { return }
             editor.importTheme(from: url)
-            themeDraft = editor.activeTheme
-            editingThemeOriginal = editor.activeTheme
+            themeDraft.wrappedValue = editor.activeTheme
+            editingThemeOriginal.wrappedValue = editor.activeTheme
         }
     }
 
     private func exportThemeDraft() {
-        Task {
-            guard
-                let url = await chooseFileSaveDestination(
-                    title: "Export theme",
-                    defaultFileName: "\(themeDraft.name).json"
-                )
-            else { return }
-            editor.exportTheme(themeDraft, to: url)
+        let dialogs = dialogs
+        let editor = editor
+        let theme = themeDraft
+        Task { @MainActor in
+            guard let url = await KeymapFileActions.chooseDestination(
+                editor: editor, dialogs: dialogs, defaultFilename: "\(theme.name).json"
+            ) else { return }
+            editor.exportTheme(theme, to: url)
         }
     }
 }

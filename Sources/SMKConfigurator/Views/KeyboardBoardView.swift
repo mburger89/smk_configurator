@@ -1,37 +1,44 @@
-import SwiftCrossUI
+import MetalUI
 
-/// Renders `editor.activeDesign`'s physical grid: one row per
-/// `design.grid` row, gaps (`Cell.isGap`) skipped entirely so `HStack`
-/// spacing stays uniform (a placeholder child there would get spacing on
+/// Draws `editor.activeDesign`'s physical grid on a card in the theme's
+/// background colour: one row per design row, gaps (`Cell.isGap`) skipped so
+/// the row spacing stays uniform (a placeholder child would get spacing on
 /// both sides and double the gap).
 ///
 /// Used both as the KEY mode board (editable, `editor.activeTheme`) and the
-/// THM mode live preview (read-only, whichever theme is being edited) --
-/// `theme`/`interactive` forward straight through to `KeyCapView`.
-struct KeyboardBoardView: View {
-    @Environment(EditorState.self) var editor
-
+/// THM mode live preview (read-only, the theme being edited) -- `theme` and
+/// `interactive` go straight through to `KeyCapView`.
+struct KeyboardBoardView: Component {
+    let editor: EditorState
     var theme: KeyboardTheme? = nil
     var interactive: Bool = true
 
-    var body: some View {
+    static let rowSpacing: Float = 6
+    static let padding: Float = 16
+
+    /// The board card's natural height for `design`: its rows, the gaps
+    /// between them and the card's padding. `KeyMainContentView` caps the
+    /// board's scroll area at it (gap MG-14).
+    static func naturalHeight(of design: KeyboardDesign) -> Float {
+        let rows = Float(design.rowCount)
+        return rows * KeyCapView.unit + max(0, rows - 1) * rowSpacing + 2 * padding
+    }
+
+    var content: some ElementGroup {
         let design = editor.activeDesign
-        VStack(spacing: 6) {
-            ForEach(0..<design.rowCount, id: \.self) { r in
-                HStack(spacing: KeyCapView.spacing) {
-                    ForEach(design.visibleSlots(row: r)) { slot in
-                        KeyCapView(
-                            row: slot.row,
-                            col: slot.col,
-                            widthUnits: slot.widthUnits,
-                            theme: theme,
-                            interactive: interactive,
-                            macroName: editor.macroName(for:)
-                        )
+        Column(gap: Pixels(Self.rowSpacing)) {
+            for r in 0..<design.rowCount {
+                Row(gap: Pixels(KeyCapView.spacing)) {
+                    for slot in design.visibleSlots(row: r) {
+                        KeyCapView(editor: editor, row: slot.row, col: slot.col,
+                                   widthUnits: slot.widthUnits, theme: theme, interactive: interactive)
                     }
                 }
             }
         }
-        .padding(16)
+        .alignItems(.flexStart)
+        .padding(Pixels(Self.padding))
+        .background((theme ?? editor.activeTheme).background.color)
+        .cornerRadius(Pixels(10))
     }
 }

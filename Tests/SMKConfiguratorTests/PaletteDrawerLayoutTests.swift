@@ -2,7 +2,13 @@ import Testing
 @testable import SMKConfigurator
 
 /// Guards the premise behind removing the palette's per-section
-/// `ScrollView(.horizontal)`.
+/// `ScrollView(.horizontal)`, and that the drawer keeps needing none.
+///
+/// Today the drawer is MetalUI's legacy vertical `ScrollView`, which scrolls
+/// one axis only: a chip row wider than the drawer could not be scrolled to,
+/// so the widest row must fit the narrowest drawer. The history below is why
+/// the horizontal scrollers were removed (historical: it describes the
+/// SwiftCrossUI build this app was ported from).
 ///
 /// Those inner scroll views were nested inside the drawer's vertical one, and
 /// swift-cross-ui's AppKit backend maps every `ScrollView` onto a plain
@@ -20,13 +26,12 @@ import Testing
 /// while the numbers below hold, so this pins them. If someone raises
 /// `chipsPerRow`, widens `PaletteChip`, or narrows the window floor, this
 /// fails here rather than silently reintroducing unreachable chips.
-// `@MainActor` because `PaletteDrawerView` is a `View`: its static members
-// inherit the protocol's main-actor isolation, and `#expect`'s autoclosure is
-// nonisolated, so reading `chipsPerRow` inside one needs the suite isolated.
+// `@MainActor` from the days the layout constants lived on a main-actor view;
+// `PaletteLayout` is a plain enum now, and the isolation is harmless.
 @MainActor
 @Suite("The palette's widest chip row fits without horizontal scrolling")
 struct PaletteDrawerLayoutTests {
-    /// `PaletteChip`'s fixed frame (`PaletteDrawerView.swift`).
+    /// `PaletteChip`'s fixed frame (`Views/PaletteDrawerView.swift`).
     private static let chipWidth: Double = 44
     /// `HStack(spacing: 8)` between chips in a row.
     private static let chipSpacing: Double = 8
@@ -41,7 +46,7 @@ struct PaletteDrawerLayoutTests {
 
     @Test("a full row of chips is narrower than the drawer ever gets")
     func fullRowFitsMinimumWidth() {
-        let perRow = Double(PaletteDrawerView.chipsPerRow)
+        let perRow = Double(PaletteLayout.chipsPerRow)
         let rowWidth = perRow * Self.chipWidth + (perRow - 1) * Self.chipSpacing
         #expect(
             rowWidth < Self.minimumDrawerContentWidth,
@@ -60,13 +65,13 @@ struct PaletteDrawerLayoutTests {
         // `keySections` computes `rows` from `chipsPerRow`, so a section whose
         // widest row exceeded the cap would mean that arithmetic is wrong,
         // not just that a group is large.
-        for section in PaletteDrawerView.keySections {
+        for section in PaletteLayout.keySections {
             let widestRow = Int(
                 (Double(section.tokens.count) / Double(section.rows)).rounded(.up)
             )
             #expect(
-                widestRow <= PaletteDrawerView.chipsPerRow,
-                "\(section.title) puts \(widestRow) chips in a row, over the \(PaletteDrawerView.chipsPerRow) cap"
+                widestRow <= PaletteLayout.chipsPerRow,
+                "\(section.title) puts \(widestRow) chips in a row, over the \(PaletteLayout.chipsPerRow) cap"
             )
         }
     }
