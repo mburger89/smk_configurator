@@ -423,6 +423,10 @@ file-command table), and the new `Tests/SMKConfiguratorTests/PlatformChromeTests
 - The Linux image: build, `swift test`, the SDL window test, and the launch
   smoke. The strip appears in the window test's walk without a layout trap.
 - Gap entries for anything new.
+- The UI-free shape (§2.1): `SMK_UI_FREE=1 swift build --build-tests` and
+  `SMK_UI_FREE=1 swift test`, on macOS and in the Linux image, each on its own
+  scratch path. A new test file that imports MetalUI joins the UI-free
+  target's `exclude:` list in the same commit.
 
 ### Lane 3 — CI, packaging, Windows, README, parity
 
@@ -452,6 +456,10 @@ and `Scripts/package-windows.ps1`, `README.md`, and §5/§7 of this plan.
   the VM, as far as the VM allows, with exactly what ran recorded.
 - README is updated.
 - Parity is filled in.
+- The UI-free shape (§2.1) builds with its tests and passes, on macOS, in the
+  Linux image and on the Windows VM (as for lane 2). The Windows record names
+  `PlatformChromeTests` among the suites that ran, or says why the test
+  target could not run there.
 
 ### Outside every lane (flagged, not done)
 
@@ -628,6 +636,23 @@ no output). Not looked at; nothing visible was meant to change.
   test in 1 suite passed`, `14 draws requested, 0 frames drawn,
   SDL_VIDEO_DRIVER=offscreen` (unchanged; the strip is not drawn there).
 - `timeout 5 /build/app/debug/SMKConfigurator`: exit **124**.
+
+**Review fix: the UI-free shape.** As first committed, lane 2 broke §2.1's
+check: `PlatformChromeTests.swift` imports MetalUI but was not in the UI-free
+test target's `exclude:` list, so `SMK_UI_FREE=1 swift build --build-tests`
+failed on every platform (`PlatformChromeTests.swift:2:8: error: no such
+module 'MetalUI'` in the Linux image). The lane's own runs had not included
+the step. The file now joins the list, and lanes 2 and 3 now list the UI-free
+build among their closing conditions. After the fix:
+- macOS, scratch path `.build-uf`: `SMK_UI_FREE=1 swift build --build-tests`
+  `Build complete! (17.06 sec)`; `SMK_UI_FREE=1 swift test` `Test run with
+  222 tests in 23 suites passed` (XCTest `Executed 0 tests`). That is more
+  than Linux's count because the two `#if canImport(CoreBluetooth)` suites
+  compile here.
+- Linux image, scratch path `/build/uf-l2fix`: `Build complete! (15.12
+  secs)`; `Test run with 217 tests in 21 suites passed`, the same as lane 1.
+- Default macOS shape, unchanged: `swift build` `Build complete!`; `swift
+  test` `Test run with 263 tests in 33 suites passed`.
 
 **Not verified.** How the strip looks (icon size against the 24-point
 control row, the dark-scheme icons); a real Ctrl+S on a Linux or Windows

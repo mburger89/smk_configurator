@@ -96,12 +96,14 @@ if uiFree {
                 // types under `Views/`, which this target excludes.
                 // IconLoaderTests also needs the bundled PNGs; ShellRenderTests,
                 // SDLWindowTests and PaneRenderTests draw; PaneLogicTests tests
-                // view-level helpers; MacroPaneTests does both for MACROS mode.
+                // view-level helpers; MacroPaneTests does both for MACROS mode;
+                // PlatformChromeTests drives a window through a fake platform.
                 // Any later test file importing MetalUI or naming a view type
                 // joins this list.
                 exclude: ["IconLoaderTests.swift", "ShellRenderTests.swift",
                           "SDLWindowTests.swift", "PaneRenderTests.swift",
-                          "PaneLogicTests.swift", "MacroPaneTests.swift"]
+                          "PaneLogicTests.swift", "MacroPaneTests.swift",
+                          "PlatformChromeTests.swift"]
             ),
         ]
     )
