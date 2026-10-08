@@ -42,7 +42,13 @@ jobs:
           cache-to: type=gha,mode=max,scope=metalui-portable-${{ steps.metalui.outputs.rev }}
 
       - name: The configurator's layer (hidapi, fonts)
-        run: docker build -t smk-linux -f Scripts/ci/Dockerfile.linux Scripts/ci
+        # `--builder default` (the docker driver, which reads the local image
+        # store): setup-buildx-action made a docker-container builder current,
+        # and that builder cannot see the `metalui-portable` loaded above --
+        # `FROM metalui-portable` would pull docker.io/library/metalui-portable
+        # and fail ("pull access denied", reproduced locally with a
+        # docker-container builder).
+        run: docker buildx build --builder default --load -t smk-linux -f Scripts/ci/Dockerfile.linux Scripts/ci
 
       - name: Build, test, UI-free build, launch
         # - `swift build` / `swift test`: the app and every suite (the SDL

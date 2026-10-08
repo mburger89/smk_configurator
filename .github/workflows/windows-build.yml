@@ -100,8 +100,9 @@ jobs:
 
       - name: Build
         # Three attempts: the Windows compiler has crashed mid-build with an
-        # illegal instruction, and a retry after evicting the module cache
-        # has always passed.
+        # illegal instruction. Whether a retry after evicting the module
+        # cache helps is unmeasured -- the old loop read $LASTEXITCODE after
+        # Start-Process, which never sets it, so it never saw a failure.
         run: |
           $flags = @("-Xcc", "-I$env:SDL3_INCLUDE", "-Xswiftc", "-L$env:SDL3_LIB",
                      "-Xcc", "-I$env:HIDAPI_INCLUDE", "-Xswiftc", "-L$env:HIDAPI_LIB") +

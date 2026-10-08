@@ -16,12 +16,15 @@ Linux and Windows.
 | Platform | UI | Tests | Bluetooth | USB |
 |---|---|---|---|---|
 | macOS | AppKit + Metal | `swift test`, every suite | yes (CoreBluetooth) | hidapi |
-| Linux | SDL3 + Vulkan: built, tested, and a packaged copy started (offscreen) in CI's image | `swift test` in CI | **no** | hidapi (hidraw) |
-| Windows | SDL3 + Direct3D 12: built, tested and packaged on an ARM64 VM; release builds hit a compiler assertion there, so the package is a debug build (gap MG-27) | `swift test` in CI | **no** | hidapi |
+| Linux | SDL3 + Vulkan: built, tested, and the app and a packaged copy started under SDL's offscreen driver, in MetalUI's CI image on aarch64 | `swift test` (and the UI-free tests) in the image; the CI workflow (x86_64) has not run yet | **no** | hidapi (hidraw) |
+| Windows | SDL3 + Direct3D 12: built, tested and packaged on an ARM64 VM; release builds hit a compiler assertion there, so the package is a debug build (gap MG-27) | `swift test` (and the UI-free tests) on the ARM64 VM; the CI workflow (x64) has not run yet | **no** | hidapi |
 
-Nobody has looked at the Linux or Windows window yet: an agent can only start
-it under SDL's offscreen driver. What that leaves for a person to check is
-listed in `docs/superpowers/2026-10-08-metalui-cross-platform-plan.md` §5.
+Nobody has looked at the Linux or Windows window yet: on Linux an agent can
+only start it under SDL's offscreen driver, which presents no frame, and on
+the Windows VM a window needs a logged-in console session, which there was
+not. The GitHub workflows have not run: they first run when the branch is
+pushed. What is left for a person to check, per platform, is listed in
+`docs/superpowers/2026-10-08-metalui-cross-platform-plan.md` §5.
 
 The app was ported from SwiftCrossUI to MetalUI on macOS first
 (`docs/superpowers/2026-10-06-metalui-port-plan.md`), then brought to Linux
@@ -158,6 +161,11 @@ docker build -t metalui-portable -f Backends/SDL/linux/Dockerfile Backends/SDL
 docker build -t smk-linux -f Scripts/ci/Dockerfile.linux Scripts/ci
 docker run --rm -v "$PWD":/work -w /work smk-linux swift test
 ```
+
+Inside that image `swift run SMKConfigurator` starts and keeps running but
+shows nothing: the image's SDL uses the offscreen video driver. (The
+container shares the mounted `.build` with the host, so on a Mac give it its
+own `--scratch-path`.)
 
 ### Windows
 

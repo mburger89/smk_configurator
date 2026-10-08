@@ -1,7 +1,9 @@
 # MetalUI gaps found by the SMK configurator port
 
 What MetalUI (pinned at `e54c3f65086b446d42b09bf6f2fdbf802f7ed52a`, its
-`master` on 2026-10-06) could not express while porting this app, and what the
+`master` on 2026-10-06, for MG-1…MG-22; at
+`70ed000c69f57c2cd04f175ba4a795200210ef1c` from MG-23 on, which is the pin
+since the Linux/Windows item) could not express while porting this app, and what the
 app does instead. Each entry: **what** is missing, **where** in the app it
 bites, the **smallest app-side workaround** used, and a **severity**
 (high = shapes the whole port, medium = a visible compromise, low = cosmetic
@@ -19,14 +21,14 @@ written. Later lanes appended MG-11…MG-22. MG-23 onward come from the Linux/Wi
 
 **Ordered by severity** (high, medium, low; within a band, the entry an app
 meets first comes first), not by id, so the last heading is not the newest
-entry. **Next unused id: MG-28.** A new entry takes it, goes into its band and
+entry. **Next unused id: MG-29.** A new entry takes it, goes into its band and
 the table below, and moves this line.
 
 | severity | entries |
 |---|---|
 | high | MG-1, MG-15 |
-| medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24, MG-27 |
-| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25, MG-26 |
+| medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24, MG-27 (MG-20, MG-14, MG-2 and MG-3 are fixed upstream at `70ed000`; the app adopted MG-20's field chrome and, off macOS, MG-3's toolbar; each status line says how far) |
+| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25, MG-28, MG-26 |
 
 ---
 
@@ -292,10 +294,12 @@ assertions on).*
   passes (and runs all 258 tests); the release build passes on macOS and in
   the Linux image (non-assertion toolchains). Adding
   `-Xswiftc -Xfrontend -Xswiftc -enable-lexical-lifetimes=false` does not
-  avoid it. Not yet known for x64 (CI's architecture). This is very likely
-  the "illegal instruction" crash the old Windows workflow retried around
-  (`0xC000001D` is `STATUS_ILLEGAL_INSTRUCTION`, an assertion's trap), which
-  a retry cannot fix when it is deterministic.
+  avoid it. Not yet known for x64 (CI's architecture). `0xC000001D` is
+  `STATUS_ILLEGAL_INSTRUCTION` (an assertion's trap), the same code as the
+  "illegal instruction" the old Windows workflow retried around, but that
+  was a **debug** build of the SwiftCrossUI tree and this one is
+  deterministic and release-only, so the two are not shown to be the same
+  defect (branch check: an unmeasured "very likely" withdrawn).
   Reproduction: this repository at the C4b lane 3 commit on Windows with
   Swift 6.4.0, the flags of `.github/workflows/windows-build.yml`, then
   `swift build -c release`. Not reduced further.
@@ -570,6 +574,27 @@ now renders every rail mode that way.*
 - **Severity.** Low. A one-line workaround, but the app must know a family
   name per platform.
 
+## MG-28 — the drawn toolbar strip's height is not public: the app hard-codes 39
+
+*Found by the cross-platform branch check (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** Where `setToolbar` answers `false` (SDL), the window draws the
+  toolbar as a strip and lays the root out below it, taking its height from
+  the root without growing the window (divergence 136, `MD-K`). The height
+  is `ToolbarStrip.height: Float = 39` (`Sources/MetalUI/ToolbarStrip.swift:36`),
+  which is `internal`; nothing public reports it or the root's resulting
+  height. An app that sizes its window from its content's needs must copy
+  the number.
+  Minimal reproduction: try to read the strip's height from an app module;
+  there is no spelling.
+- **Where.** `Views/WindowMetrics.swift`: `toolbarStripHeight = 39` off macOS
+  feeds `chromeHeight` and so the window's minimum height (KEY mode's
+  floor). `PlatformChromeTests` clicks at (20, 19), inside the strip.
+- **Workaround.** The literal 39, with a comment naming divergence 136. If
+  MetalUI changes the strip, the minimum height is silently off by the
+  difference (the click test would catch a strip under 19 points only).
+- **Severity.** Low.
+
 ## MG-26 — a MetalUI product filtered out of the app target on macOS breaks the test target's compile there (toolchain, not MetalUI)
 
 *Found by cross-platform lane 1 (2026-10-08, MetalUI `70ed000`, Swift 6.4
@@ -612,3 +637,9 @@ MG-20 (fields with no chrome), MG-17 (no input injection for app tests),
 MG-14 (no `layoutPriority` on legacy stacks). Launch-only findings (MG-20,
 MG-21, MG-4's check mark) came from the first launch of the port, in lane 3;
 lanes 1 and 2 ran with the screen locked.
+
+**Cross-platform (C4b branch check, 2026-10-08).** MG-23…MG-28 come from the
+Linux/Windows item. Two are toolchain defects, not MetalUI's (MG-26, MG-27).
+None was fixed in MetalUI by this branch. The ones a portable app meets
+first: MG-23 (menu-only actions unreachable on SDL), MG-24 (`.command` is
+the Super key on SDL), MG-27 (no Windows ARM64 release build).

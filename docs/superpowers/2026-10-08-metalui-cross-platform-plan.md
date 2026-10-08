@@ -253,7 +253,11 @@ consumer then needs no flags (`PX-I` item 5). Steps:
 3. Build `Scripts/ci/Dockerfile.linux`: `FROM metalui-portable`, then
    `apt-get install libhidapi-dev fonts-dejavu-core`, tag `smk-linux`. The
    same two files are used locally (§4.3), so CI and the local check cannot
-   differ.
+   differ. **In CI this build names `--builder default`** (branch check):
+   step 2's `setup-buildx-action` leaves a docker-container builder current,
+   which cannot see the loaded `metalui-portable`, so `FROM metalui-portable`
+   would try to pull it from Docker Hub and fail. Locally the docker driver
+   is current, which is why lane 3's local run could not see this.
 4. `docker run -v $PWD:/work -w /work smk-linux bash -ec '…'`:
    - `swift build` (the app with SDL and AccessKit)
    - `swift test` (the summary line is printed)
@@ -367,6 +371,34 @@ P13. The Windows VM lost its logged-in console session when it was restarted
 the VM console can run `C:\src\smk-interactive.ps1` through
 `C:\src\smk-runtask.ps1`, which launches the packaged app and saves a
 screenshot to `C:\src\smk-shot.png`.
+
+### 5.1 Per platform: present, deliberately different, or missing (branch check, 2026-10-08)
+
+The branch checker's tick of P1–P13 per platform, against the macOS app at
+`d67f1cd`. "Present" means the same feature is there; "different" means a
+deliberate difference whose reason is given; "missing" means the user loses
+it. Evidence is §5's last column plus the branch check's own runs (§7).
+Nothing below was seen in a window on a screen; on Linux some of it was seen
+in pixels SDL GPU drew offscreen (§7, branch check).
+
+| # | Area | Linux | Windows |
+|---|---|---|---|
+| P1 | File actions | **different**: the toolbar strip's six buttons and Ctrl shortcuts replace the File menu and ⌘ (SDL draws no menu bar, MG-23; `.command` is Super there, MG-24). Test-verified | **different**, same reason. Test-verified on the ARM64 VM |
+| P2 | View options | **different**: "Advanced" toggle and "Appearance" menu picker in the strip. **Missing**: Quit/Close/Hide/Minimize items and ⌘Q/⌘W equivalents (close the window; A8, not added on purpose) and the standard Edit menu (field editing keys still work with Ctrl, `TI-D`) | **different** / **missing**, the same |
+| P3 | Open / Save | **present** (SDL's portal or zenity dialog, `*.json`), not seen; **missing** when neither portal nor zenity is installed (an error alert instead) | **present** (common dialog), not seen |
+| P4 | Text | **different**: DejaVu Sans / DejaVu Sans Mono (MG-25 workaround), wider than SF. Seen in an SDL GPU offscreen render of all five modes, light (§7, branch check): monospaced hex fields correct, no clipping found. On a real desktop: not seen | **different**: Segoe UI / Consolas; renders without a trap; clipping not seen |
+| P5 | Menus and pickers | **different**: drawn in the window (`presentMenu` answers `false`); the KEY chooser is the scrolling drawn menu. Not seen | **different**, the same |
+| P6 | Dark mode | **present** for the content (both schemes render headlessly); **different**: the title bar follows the system theme (`CR-M`) | **present** / **different**, the same |
+| P7 | Bluetooth | **missing** (CoreBluetooth; compiled out, plan D1) | **missing**, the same |
+| P8 | USB | **present** (hidapi 0.14 hidraw, links); needs the README's udev rule; no board tried | **present** (hidapi 0.15.0 built for ARM64 on the VM; vcpkg x64 in CI, not yet run); no board tried |
+| P9 | Screen reader | **present** (AccessKit linked), unverified | **present** (AccessKit linked), unverified |
+| P10 | Persistence | **present**, different path: `~/.local/share/SMKConfigurator`, `UserDefaults` in `~/.config/SMKConfigurator.plist` | **present**, different path: `%LOCALAPPDATA%\SMKConfigurator`, `UserDefaults` in `%LOCALAPPDATA%\SMKConfigurator.exe.plist` |
+| P11 | Window | **different**: 39 points taller for the strip (floor 636); the 1440-point minimum width may exceed a small logical screen (Q1, open) | **different**, the same; plus the 8 MB main-thread stack (`/STACK`, read back on the VM) |
+| P12 | Icons | **different**: Adwaita set (SF Symbols licence keeps the macOS set off Linux); bundle found beside the moved executable; the rail icons seen in the offscreen render (light) | **different**: Fluent set, the same reason; bundle found beside the moved executable |
+| P13 | Tooltips, alerts, drags | tooltips and in-window drags **present**; alerts **different** (drawn in the window, `SV-AK`). Not seen | **present** / **different**, the same |
+| — | App icon | none, as on macOS (A10): parity | none, as on macOS: parity |
+| — | Release build | **present** (`package-linux.sh` builds `-c release`) | **missing** on ARM64: the toolchain asserts (MG-27); debug package instead. x64 unknown until CI runs |
+| — | Seeing the window | startup proven under the offscreen driver only (no frame presented) | startup reached the swapchain over SSH and stopped there (session 0); a console-session launch needs a logged-in user, and none was logged in at either check |
 
 ---
 
@@ -794,3 +826,101 @@ once). Not run anywhere: x64 Windows (the emulated route was not taken).
 
 **Gaps.** MG-27 (new, medium, toolchain). No MetalUI change.
 
+
+### Branch check (2026-10-08, `d67f1cd..c0fcc98`)
+
+Independent re-runs, each on a fresh scratch path, of the code at `c0fcc98`
+(the check's own commit changes only docs and the Linux workflow).
+
+**macOS** (this worktree, `--scratch-path .build-checker`, created empty):
+`swift build` `Build complete! (20.33 sec)`, exit 0; `swift test` `Test run
+with 263 tests in 33 suites passed` (XCTest `Executed 0 tests`).
+`BinaryFormatAgreementTests` ran (`~/esp/SMK` present). UI-free
+(`.build-checker-uf`): `SMK_UI_FREE=1 swift build --build-tests` `Build
+complete! (10.55 sec)`; `SMK_UI_FREE=1 swift test` `Test run with 222 tests
+in 23 suites passed`. The app was not launched by the check.
+
+**Linux image** (OrbStack, aarch64, `swift-6.4-RELEASE`; `metalui-portable`
+rebuilt from `/Users/maxburger/Developer/MetalUI`, whose
+`Backends/SDL/linux/` and `scripts/` are identical at `70ed000` and at that
+checkout's `cd84b0c`; `smk-linux` rebuilt from `Scripts/ci/Dockerfile.linux`;
+scratch paths `/build/c4b-chk-*` on `smk-xp-build`):
+- `swift build`: `Build complete! (15.50 secs)`.
+- `swift test`: `Test run with 258 tests in 32 suites passed` (the SDL suite
+  `skipped`).
+- `SMK_RUN_SDL_WINDOW_TEST=1 swift test --filter SDLWindow`: `Test run with
+  1 test in 1 suite passed`, `14 draws requested, 0 frames drawn,
+  SDL_VIDEO_DRIVER=offscreen`.
+- UI-free: `Build complete! (8.35 secs)`; `Test run with 217 tests in 21
+  suites passed`.
+- `timeout 5 …/debug/SMKConfigurator`: `launch exit 124`.
+- `package-linux.sh` (release): `Build complete! (50.00 secs)`, `dist` =
+  `MetalUISDLShaders`, `SMKConfigurator`, `SMKConfigurator_SMKConfigurator.bundle`;
+  launched from `/tmp`: exit 124; launched in a fresh container that mounts
+  **only** that `dist` (`/build` absent): `moved launch exit 124`.
+- **A first look at the Linux rendering.** The offscreen *video* driver
+  presents no window frame, but MetalUI's public
+  `SDLWindowRenderer(offscreenWidth:height:)` draws a `Scene` through SDL
+  GPU into a texture and `readPixels()` returns it (how MetalUI's
+  `DemoCapture` checks the demo). A throwaway test (not committed) built
+  `rootView` with the public `renderFrame` over `SystemFonts` + DejaVu Sans
+  Mono and the app's light theme overrides, at `WindowMetrics.idealSize`
+  (1440 × 908, scale 1), and drew every rail mode with SDL's `vulkan` driver
+  (Mesa lavapipe): 5 frames. Seen: the Adwaita rail icons, DejaVu text,
+  the THM hex fields in DejaVu Sans Mono (the MG-25 workaround works), the
+  macro library's search field in MetalUI's bordered chrome, nothing clipped
+  in the KEY palette or the inspectors. Not seen this way: the toolbar strip
+  (the window draws it; `renderFrame` does not), the dark scheme (MG-12),
+  menus, alerts. This is the route `SDLWindowTests` could take in a later
+  item to draw real pixels in CI.
+
+**Windows VM** (UTM, ARM64, Swift 6.4.0; the VM was already running and was
+left running; no user logged in on the console; the clone `C:\src\smk` was
+already at `c0fcc98`; fresh scratch paths `C:\src\smk-chk-build` and
+`C:\src\smk-chk-uf`; SDL 3.4.16 `lib\arm64`, the hand-built ARM64 hidapi
+0.15.0 and AccessKit's ARM64 prebuilt, as lane 3):
+- `swift build`: `Build complete! (1,293.19 secs)`, exit 0 (from empty).
+- `swift build --build-tests`: `Build complete! (471.36 secs)`; `swift
+  test`: **`Test run with 258 tests in 32 suites passed`**, the SDL suite
+  `skipped`, `PlatformChromeTests` ("Menu, toolbar and shortcuts come from
+  one table") passed — after 100 s, against well under a second on macOS
+  and Linux: worth watching in CI time, not a failure.
+- UI-free: `Build complete! (545.80 secs)`; `Test run with 217 tests in 21
+  suites passed`.
+- `llvm-readobj --file-headers`: `IMAGE_FILE_MACHINE_ARM64 (0xAA64)`,
+  `SizeOfStackReserve: 8388608`.
+- Not run by the check: the release package (MG-27, lane 3's finding
+  stands), and any launch. The interactive scheduled-task route needs a
+  logged-in console user and there was none, so **no screenshot of the
+  Windows window exists**.
+
+**CI YAML against MetalUI's own workflows.** Linux follows
+`sdl-gpu-linux.yml` (same image, same `build-push-action` with GHA cache and
+`load: true`, `docker run` with the repository at `/work`, `safe.directory`).
+**Defect found and fixed:** the extra `smk-linux` layer was built with a
+plain `docker build` after `setup-buildx-action`, whose docker-container
+builder cannot see the loaded `metalui-portable`; reproduced locally with a
+docker-container builder (`failed to resolve source metadata for
+docker.io/library/metalui-portable:latest: pull access denied`), and the same
+Dockerfile builds on the docker driver. The step now runs `docker buildx
+build --builder default --load`. MetalUI never builds `FROM` its image, so it
+has no such step. Windows follows MetalUI's Windows job (the same
+`gha-setup-swift` pin, the same SDL VC package and `GITHUB_PATH`, the same
+`fetch-accesskit.py --print-flags` route) and adds vcpkg hidapi,
+`core.symlinks`, the UI-free build, the `/STACK` read-back, packaging and a
+non-blocking launch; no defect found by reading. One comment claimed a
+retry "has always passed", which nothing measured (the old loop could not
+see a failure); reworded. Neither workflow has run on GitHub.
+
+**Docs fixed by the check.** README's status table said tests and a launch
+had run "in CI" (they ran in the local image and on the VM; CI has not run);
+the gaps list's header named only the old pin; MG-27 called the old
+Windows retry crash "very likely" the same defect without a measurement;
+§4.1 now records the builder rule; §5.1 added; MG-28 added (the strip
+height is internal).
+
+**Verdict.** Mergeable after a first green CI run on GitHub: no code defect
+found; macOS, the Linux image and the Windows VM all build and pass every
+suite, and the UI-free shape holds on all three. Risks a person should
+weigh: the first x64 Windows run is unproven (release build, the launch
+step), and no human has seen the window on Linux or Windows.
