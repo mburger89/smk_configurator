@@ -208,7 +208,7 @@ let portable = TargetDependencyCondition.when(platforms: [.linux, .windows])
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | App icons (rail, toolbar) | `Resources/macOS/Icons` (SF Symbols renders) | `Resources/Linux/Icons` (Adwaita, LGPL/CC-BY-SA) | `Resources/Windows/Icons` (Fluent, MIT) |
-| In the build | `SMKConfigurator_SMKConfigurator.bundle` (SwiftPM) | `SMKConfigurator_SMKConfigurator.resources/Icons/{light,dark}/*.png` beside the executable | the same, beside `SMKConfigurator.exe` |
+| In the build | `SMKConfigurator_SMKConfigurator.bundle` (SwiftPM) | `SMKConfigurator_SMKConfigurator.bundle/Icons/{light,dark}/*.png` beside the executable under Swift 6.4's default build system (swiftbuild; measured in lane 3); `.resources` under `--build-system native` | the same, beside `SMKConfigurator.exe` |
 | MetalUI's renderer | `MetalUI_MetalUIRender.bundle` (Metal shaders; `AI-N`) | SDL GPU shaders: `MetalUISDLShaders/` **beside the executable** first, then the build machine's `.build/checkouts/MetalUI/Backends/SDL/Shaders/compiled` via `#filePath` (`PX-P`). `swift run` on the build machine therefore needs nothing; a moved app needs the copy. | the same |
 | Native libraries | Homebrew `hidapi` (dynamic) | `libSDL3.so` (3.4 or later; see below), `libhidapi-hidraw.so`. AccessKit is static. | `SDL3.dll`, `hidapi.dll` beside the executable. AccessKit is static (`docs/packaging.md` §Windows 3). |
 | Install integration | `Scripts/run.sh` (swift-bundler, `Bundler.toml`) | a `.desktop` entry plus the hicolor theme (`docs/packaging.md` §Linux). There is no app icon (A10), so the entry names none. | an `.ico` embedded through `rc` (`docs/packaging.md` §Windows 2). No app icon (A10). |
@@ -225,7 +225,8 @@ defaults. README says so (lane 3). This plan produces no release artifact.
 
 **Packaging scripts (lane 3):** `Scripts/package-linux.sh` and
 `Scripts/package-windows.ps1`. Each builds `-c release`, then lays out
-`dist/`: the executable, the `.resources` bundle, `MetalUISDLShaders` copied
+`dist/`: the executable, the resource bundle (`.bundle`, or `.resources` under
+`--build-system native`; the scripts copy whichever exists), `MetalUISDLShaders` copied
 from `.build/checkouts/MetalUI/Backends/SDL/Shaders/compiled`, and on
 Windows `SDL3.dll` and `hidapi.dll`. Verified means: the moved `dist/` app
 starts. On Linux that is a 5-second launch in the image, from a directory
@@ -285,7 +286,9 @@ MetalUI's `sdl-gpu-linux.yml` Windows job shows the way:
   was the compiler's, not SwiftCrossUI's.
 - **Tests:** `swift build --build-tests @flags`, then `swift test @flags`
   (run, not only compiled). Lane 3 decides whether CI runs them, based on
-  what the VM shows. **Known risk:** testing an **executable** target on
+  what the VM shows. **Ruled (lane 3): CI runs them.** On the VM the
+  executable target's tests linked and ran: `Test run with 258 tests in 32
+  suites passed` (§7), so the fallback below was not needed. **Known risk:** testing an **executable** target on
   Windows (`@testable import` of a target with `main.swift`). If the VM
   shows it cannot link, CI runs the UI-free shape's tests on Windows
   (`SMK_UI_FREE=1 swift test`) and compiles the app's tests, and the plan
@@ -341,21 +344,29 @@ The tests open no SDL window, so a GPU-less runner is fine.
 Each line says what the user sees. "Verified" needs the run that showed it.
 A look nobody could take is written as **not checked**, never as passing.
 
-| # | Area | macOS | Linux / Windows (expected) | How it is checked |
-|---|---|---|---|---|
-| P1 | File actions | File menu, ⌘N/⌘O/⌘S/⇧⌘S | the toolbar strip's six buttons; Ctrl+N/O/S, Ctrl+Shift+S | a unit test on the shared command table and the modifier; the SDL window test draws the strip; pressing keys is a human check |
-| P2 | View options | View menu: Advanced Mode, Appearance | the strip's "Advanced" toggle and "Appearance" menu picker; no menu bar; no Quit/Close shortcut (close the window) | SDL window test (builds); human |
-| P3 | Open / Save dialogs | `NSOpenPanel`/`NSSavePanel` | SDL's native dialog (GTK portal or zenity on Linux, the common dialog on Windows), `*.json` filter, no title; on Linux with neither portal nor zenity, an error alert | human (VM interactive session for Windows) |
-| P4 | Text | SF Pro / SF Mono | Segoe UI / Consolas (Windows); DejaVu Sans / DejaVu Sans Mono (Linux); clipping in fixed-width columns possible | headless render tests run on Linux and Windows (no trap); the look is human or the VM screenshot |
-| P5 | Menus and pickers | `NSMenu` | drawn menus; the key chooser scrolls | human |
-| P6 | Dark mode | content and title bar follow View ▸ Appearance | content follows; the title bar follows the system | SDL window test (both schemes build); human |
-| P7 | Bluetooth | BLE card, Test Connection, BLE details | **absent**: USB only; "Send to Device" without USB reports no device | compiled out; read in the source |
-| P8 | USB | hidapi | hidapi; Linux needs the udev rule (README) | build and link only; a real board is a human check |
-| P9 | Screen reader | VoiceOver | AccessKit (Orca, Narrator) | not checked (an agent cannot) |
-| P10 | Persistence | `~/Library/Application Support`, `UserDefaults` | XDG data dir / `%LOCALAPPDATA%`; corelibs `UserDefaults` | suite tests on Linux and Windows; the real path recorded by lane 3 |
-| P11 | Window | 1440 × computed height, OS-clamped | the same floor plus 39 for the strip; may exceed a small logical screen (Q1) | `WindowMetrics` test per platform |
-| P12 | Icons | SF Symbols renders | Adwaita (Linux), Fluent (Windows), light/dark by scheme | `IconLoaderTests` on every platform |
-| P13 | Tooltips, alerts, drag and drop | MetalUI-drawn tooltips, `NSAlert`, in-window drags | tooltips and drags the same; alerts drawn in-window | portable code; human |
+| # | Area | macOS | Linux / Windows (expected) | How it is checked | Result (lane 3, 2026-10-08) |
+|---|---|---|---|---|---|
+| P1 | File actions | File menu, ⌘N/⌘O/⌘S/⇧⌘S | the toolbar strip's six buttons; Ctrl+N/O/S, Ctrl+Shift+S | a unit test on the shared command table and the modifier; the SDL window test draws the strip; pressing keys is a human check | **Verified by test** on all three: `PlatformChromeTests` (7) passed on macOS, in the Linux image and on the Windows VM (strip click at (20, 19) runs New; primary+N runs New; Super+N does not off macOS). A real keyboard: **human check**. |
+| P2 | View options | View menu: Advanced Mode, Appearance | the strip's "Advanced" toggle and "Appearance" menu picker; no menu bar; no Quit/Close shortcut (close the window) | SDL window test (builds); human | **Verified by test** (the toolbar actions write Advanced and Appearance, all three platforms). The strip's look: **not checked** (no SDL frame was presented anywhere, below). |
+| P3 | Open / Save dialogs | `NSOpenPanel`/`NSSavePanel` | SDL's native dialog (GTK portal or zenity on Linux, the common dialog on Windows), `*.json` filter, no title; on Linux with neither portal nor zenity, an error alert | human (VM interactive session for Windows) | **Not checked**: needs a desktop session. Human check. |
+| P4 | Text | SF Pro / SF Mono | Segoe UI / Consolas (Windows); DejaVu Sans / DejaVu Sans Mono (Linux); clipping in fixed-width columns possible | headless render tests run on Linux and Windows (no trap); the look is human or the VM screenshot | **Verified: no trap.** `ShellRenderTests.everyModeRendersHeadlessly`, `PaneRenderTests`, `MacroPaneTests` passed in the Linux image (DejaVu) and on the VM (Segoe UI/Consolas through `SystemFonts`). Clipping/look: **not checked** (no screenshot could be taken). Human check. |
+| P5 | Menus and pickers | `NSMenu` | drawn menus; the key chooser scrolls | human | **Not checked.** Human check. |
+| P6 | Dark mode | content and title bar follow View ▸ Appearance | content follows; the title bar follows the system | SDL window test (both schemes build); human | Partly: both schemes render headlessly on Linux and Windows (the render tests walk both). Title bar: **human check**. |
+| P7 | Bluetooth | BLE card, Test Connection, BLE details | **absent**: USB only; "Send to Device" without USB reports no device | compiled out; read in the source | **Verified by build**: the two `#if canImport(CoreBluetooth)` suites are absent from the Linux and Windows counts (258 in 32 against macOS's 263 in 33, see §7). |
+| P8 | USB | hidapi | hidapi; Linux needs the udev rule (README) | build and link only; a real board is a human check | **Verified: builds and links** against hidapi 0.14 (Ubuntu, hidraw) in the image and hidapi 0.15.0 built for ARM64 on the VM; `hidapi.dll` packaged. README carries the udev rule. A real board: **human check**. |
+| P9 | Screen reader | VoiceOver | AccessKit (Orca, Narrator) | not checked (an agent cannot) | **Not checked** (an agent cannot run a screen reader). AccessKit links on both. |
+| P10 | Persistence | `~/Library/Application Support`, `UserDefaults` | XDG data dir / `%LOCALAPPDATA%`; corelibs `UserDefaults` | suite tests on Linux and Windows; the real path recorded by lane 3 | **Verified.** `JSONFileStoreTests` and `MacroCapacityTests` ran and passed on Linux and, for the first time, on Windows. Measured with a probe program (same corelibs calls): Linux `applicationSupportDirectory` = `~/.local/share` (so `~/.local/share/SMKConfigurator/{Designs,Themes}`), `UserDefaults` file `~/.config/<executable>.plist`; Windows = `C:/Users/<user>/AppData/Local` (so `%LOCALAPPDATA%\SMKConfigurator\…`), `UserDefaults` file `%LOCALAPPDATA%\<executable>.exe.plist`; a value set by one run was read back by the next on both. |
+| P11 | Window | 1440 × computed height, OS-clamped | the same floor plus 39 for the strip; may exceed a small logical screen (Q1) | `WindowMetrics` test per platform | **Verified by test** on all three (the `windowMetrics` test reads `toolbarStripHeight`). Q1 stays open for the user. |
+| P12 | Icons | SF Symbols renders | Adwaita (Linux), Fluent (Windows), light/dark by scheme | `IconLoaderTests` on every platform | **Verified**: `IconLoaderTests` passed in the Linux image and on the VM, each against its own icon tree; the packaged app found its resource bundle beside the executable (a copy without it stops at `unable to find bundle`). The look: **human check**. |
+| P13 | Tooltips, alerts, drag and drop | MetalUI-drawn tooltips, `NSAlert`, in-window drags | tooltips and drags the same; alerts drawn in-window | portable code; human | **Not checked** on screen. Human check. |
+
+**Human checks left** (nobody has seen the Linux or Windows window): P1 keys,
+P2 strip look, P3, P4 look, P5, P6 title bar, P8 with a board, P9, P12 look,
+P13. The Windows VM lost its logged-in console session when it was restarted
+(§7), so the interactive-task route could not run; a person who logs in on
+the VM console can run `C:\src\smk-interactive.ps1` through
+`C:\src\smk-runtask.ps1`, which launches the packaged app and saves a
+screenshot to `C:\src\smk-shot.png`.
 
 ---
 
@@ -659,3 +670,127 @@ control row, the dark-scheme icons); a real Ctrl+S on a Linux or Windows
 keyboard; the strip on Windows (lane 3). Gaps: no new entry. MG-23 and MG-24
 record their workarounds as in place, and MG-17 gains a status line (a fake
 `Platform` drives app input).
+
+### Lane 3 (2026-10-08)
+
+**What landed.** `.github/workflows/linux-build.yml` (§4.1: MetalUI cloned at
+the revision `jq` reads from `Package.resolved`, its image built with the GHA
+cache scoped by revision, `Scripts/ci/Dockerfile.linux` on top; `swift
+build`, `swift test`, the UI-free build and tests on `/tmp/ui-free`, the
+`timeout 5` launch expecting 124; then `Scripts/package-linux.sh` and a
+launch of `dist/` in a fresh container that mounts **only** `dist/`).
+`.github/workflows/windows-build.yml` (§4.2: `compnerd/gha-setup-swift@v0.5.0`
+at `swift-6.4.0-release`, SDL 3.4.16's VC package (`lib\x64` on `PATH`), vcpkg
+hidapi (its `bin` on `PATH`), `core.symlinks`, AccessKit flags from MetalUI's
+script after `swift package resolve`, the three-attempt build, `swift build
+--build-tests` + `swift test`, the UI-free build and tests on
+`.build-ui-free`, the `SizeOfStackReserve` read-back with the toolchain's
+`llvm-readobj`, the package, and a launch of the moved package). The 6.2
+steps are gone from both. `Scripts/ci/Dockerfile.linux`,
+`Scripts/package-linux.sh`, `Scripts/package-windows.ps1`, README, §5 above,
+`dist/` in `.gitignore`. Nothing under `Sources/` or `Tests/` changed.
+
+Two corrections to the plan, both measured: (1) under Swift 6.4's default
+build system (swiftbuild) the resource bundle is
+`SMKConfigurator_SMKConfigurator.bundle` on Linux and Windows too, not
+`.resources` (§3 corrected; the scripts copy whichever exists). (2) The old
+Windows retry loop read `$LASTEXITCODE` after `Start-Process`, which does not
+set it, so it could never see a failure; the new loop calls `swift build`
+directly, and evicts every `ModuleCache` under `.build` (swiftbuild keeps it
+under `.build\out`).
+
+**macOS** (this worktree, after the lane): `swift build` `Build complete!`,
+0 `error:`; `swift test` `Test run with 263 tests in 33 suites passed`
+(XCTest `Executed 0 tests`), unchanged from lane 2. UI-free shape,
+scratch path `.build-uf`: `SMK_UI_FREE=1 swift build --build-tests`
+`Build complete! (10.33 sec)`; `SMK_UI_FREE=1 swift test` `Test run with 222
+tests in 23 suites passed`. `BinaryFormatAgreementTests` ran (`~/esp/SMK` present). Launch: the
+`.build/debug/SMKConfigurator` ran 6 seconds with the screen unlocked and was
+killed (exit 143, SIGTERM, no output).
+
+**Linux image** (OrbStack, **aarch64**; CI is x86_64. `metalui-portable` as
+lane 1 built it from MetalUI `70ed000`; `smk-linux` rebuilt from the
+committed `Scripts/ci/Dockerfile.linux`; the worktree at `/work`. The
+workflow's commands, with one local difference: scratch paths on the
+`smk-xp-build` volume (`--scratch-path /build/l3-app`, `/build/l3-uf`,
+`SCRATCH=/build/l3-pkg`) instead of `/work/.build`, so the macOS `.build` is
+never touched. A worktree's `.git` file points at a host path, so `git
+config` fails inside the mount; the workflow runs it from `/`):
+- `swift build`: `Build complete! (25.33 secs)`, 0 `error:` (the existing
+  hidapi pkg-config hint only).
+- `swift test`: `Test run with 258 tests in 32 suites passed` (the SDL suite
+  `skipped`; XCTest `Executed 0 tests`).
+- `SMK_UI_FREE=1 swift build --build-tests`: `Build complete! (9.27 secs)`;
+  `SMK_UI_FREE=1 swift test`: `Test run with 217 tests in 21 suites passed`.
+- `timeout 5 …/debug/SMKConfigurator`: `launch exit 124`.
+- `bash Scripts/package-linux.sh dist` (release): `dist/` = `MetalUISDLShaders`,
+  `SMKConfigurator`, `SMKConfigurator_SMKConfigurator.bundle`. In a fresh
+  container mounting only `dist/` at `/app` (`/build` absent): `moved launch
+  exit 124`. **Separating arms**, same container shape: without
+  `MetalUISDLShaders` the app stops at once (exit 133, `no compiled SDL
+  shaders … in any of: /app/MetalUISDLShaders, /build/l3-pkg/checkouts/…`);
+  without the resource bundle it stops at once (exit 133,
+  `resource_bundle_accessor.swift:44: Fatal error: unable to find bundle named
+  SMKConfigurator_SMKConfigurator`). So the 124 is the packaged copies at
+  work, not the build tree.
+
+**Windows VM** (UTM, Windows 11 **ARM64**, Swift 6.4.0
+aarch64-unknown-windows-msvc; CI is x64. The VM was listed `stopped`; this
+lane ran `utmctl start`. SSH did not answer for ~25 minutes and the guest
+ignored an ACPI shutdown request (`utmctl stop --request`), so the lane
+powered it off (`utmctl stop --force`) and started it again; SSH answered
+3½ minutes later. `git config --global core.symlinks true` and
+`core.longpaths true` set on the VM. The branch was cloned from a `git
+bundle` copied to `C:\src\smk` (no push). SDL 3.4.16 `lib\arm64`
+(`C:\src\SDL3-3.4.16`); AccessKit's ARM64 prebuilt fetched by MetalUI's
+script into `C:\src\accesskit`; **hidapi**: no vcpkg on the VM and hidapi's
+release zip has no ARM64 build, so hidapi 0.15.0's `windows/hid.c` was
+compiled with the VS 2022 ARM64 `cl` into `C:\src\hidapi-arm64`
+(`hidapi.dll` + import library). The workflow's commands with `arm64` paths,
+in PowerShell 5.1 over SSH (`C:\src\smk-win.ps1`):
+- `swift build`: `Build complete! (187.82 secs)`, exit 0 (warnings: no
+  pkg-config, no `hidapi.pc`, as expected on Windows).
+- `swift build --build-tests`: `Build complete! (79.49 secs)`; `swift test`:
+  **`Test run with 258 tests in 32 suites passed`** (XCTest `Executed 0
+  tests`; the SDL suite `skipped`). The executable target's tests link and
+  run on Windows; the suites include `PlatformChromeTests` ("Menu, toolbar and
+  shortcuts come from one table", passed), `IconLoaderTests`,
+  `JSONFileStoreTests`, the two `MacroCapacity` suites, and
+  `BinaryFormatAgreementTests` (skips: no `~/esp/SMK`).
+- `SMK_UI_FREE=1 swift build --build-tests --scratch-path .build-ui-free`:
+  `Build complete! (138.07 secs)`; `SMK_UI_FREE=1 swift test`: `Test run
+  with 217 tests in 21 suites passed`.
+- `llvm-readobj --file-headers` on the debug `SMKConfigurator.exe`:
+  `Machine: IMAGE_FILE_MACHINE_ARM64 (0xAA64)`, **`SizeOfStackReserve:
+  8388608`**.
+- `Scripts\package-windows.ps1` (release): **the compiler asserted** in
+  SILGen on `MacroStepEditor` (gap **MG-27**, a toolchain defect; also with
+  lexical lifetimes off). With `-Configuration debug`: `Build complete!`,
+  `dist` = `MetalUISDLShaders`, `SMKConfigurator_SMKConfigurator.bundle`,
+  `hidapi.dll`, `SDL3.dll`, `SMKConfigurator.exe`.
+- **Launch.** No user was logged in on the VM console after the restart
+  (`query user`: none), so the interactive scheduled task could not run (it
+  was registered, timed out and was unregistered) and **no screenshot was
+  taken**. Over SSH (session 0), the packaged app moved to `C:\src\smk-dist`
+  and with the build tree's `Shaders\compiled` renamed away got as far as
+  claiming the window and stopped there: `Could not create swapchain! …
+  (0x887A0022)`, the session-0 limit MetalUI's CLAUDE.md records. Separating
+  arm: the same copy without `MetalUISDLShaders` stopped earlier, at `no
+  compiled SDL shaders … in any of: C:/src/smk-dist-noshaders/MetalUISDLShaders,
+  C:/src/smk/.build/…`. So on Windows the DLLs, fonts, resource bundle and
+  packaged shaders all load; the window itself is unverified.
+  `SDL_VIDEO_DRIVER=offscreen` does not help there (SDL's D3D12 device
+  cannot claim an offscreen window). The build tree was restored after.
+- This lane started the VM, so it shut Windows down from inside afterwards
+  (`shutdown /s /t 0` over SSH); `utmctl status` read `stopped`.
+
+**What ran where, against the workflows.** Linux: every command of
+`linux-build.yml` ran in the image (scratch paths aside). Windows: every
+command of `windows-build.yml` ran on the VM with ARM64 paths and a
+hand-built hidapi instead of vcpkg x64, except two: the release package
+(fails, MG-27; CI falls back to debug with a warning) and the final launch
+step (session 0; the CI step is `continue-on-error` until it has passed
+once). Not run anywhere: x64 Windows (the emulated route was not taken).
+
+**Gaps.** MG-27 (new, medium, toolchain). No MetalUI change.
+

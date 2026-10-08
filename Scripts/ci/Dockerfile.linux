@@ -1,0 +1,19 @@
+# The configurator's Linux build image (cross-platform plan §4.1, §4.3).
+#
+# FROM MetalUI's own CI image, built from the MetalUI checkout at the revision
+# Package.resolved pins:
+#   docker build -t metalui-portable -f Backends/SDL/linux/Dockerfile Backends/SDL
+# That image carries Swift 6.4, SDL 3.4.16 and AccessKit on /usr (so the build
+# needs no flags, MetalUI ruling PX-I item 5), Mesa lavapipe, and
+# SDL_VIDEO_DRIVER=offscreen (startup only: no frame is presented).
+# This layer adds what the configurator needs on top: hidapi (USB raw HID,
+# the hidraw backend the manifest links) and one font family, without which
+# MetalUI's SystemFonts.resolver() finds no face and throws.
+#
+# Used unchanged by .github/workflows/linux-build.yml and the local check:
+#   docker build -t smk-linux -f Scripts/ci/Dockerfile.linux Scripts/ci
+FROM metalui-portable
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libhidapi-dev fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work

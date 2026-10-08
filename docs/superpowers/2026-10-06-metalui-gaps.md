@@ -19,13 +19,13 @@ written. Later lanes appended MG-11…MG-22. MG-23 onward come from the Linux/Wi
 
 **Ordered by severity** (high, medium, low; within a band, the entry an app
 meets first comes first), not by id, so the last heading is not the newest
-entry. **Next unused id: MG-27.** A new entry takes it, goes into its band and
+entry. **Next unused id: MG-28.** A new entry takes it, goes into its band and
 the table below, and moves this line.
 
 | severity | entries |
 |---|---|
 | high | MG-1, MG-15 |
-| medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24 |
+| medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24, MG-27 |
 | low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25, MG-26 |
 
 ---
@@ -272,6 +272,44 @@ the table below, and moves this line.
   of `FileCommand.all` (Save As is `[primary, .shift]`). Pinned by
   `PlatformChromeTests`: primary+N runs New through the window's command
   stage, and off macOS Super+N does not.
+
+## MG-27 — Swift 6.4.0's Windows toolchain asserts on `-c release` in a `Component` whose `content` is a `switch` (toolchain, not MetalUI)
+
+*Found by cross-platform lane 3 (2026-10-08, MetalUI `70ed000`, Swift 6.4.0
+`swift-6.4-RELEASE` aarch64-unknown-windows-msvc on the UTM VM; the
+toolchain installs as `Toolchains\6.4.0+Asserts`, i.e. with compiler
+assertions on).*
+
+- **What.** `swift build -c release` of the app on Windows ARM64 stops in
+  SILGen with `Assertion failed: hasNoNontrivialLexicalLeaf && "Found
+  non-trivial lexical leaf in non-trivial non-lexical type?!"`
+  (`lib/SIL/IR/TypeLowering.cpp:3389`), exception `0xC000001D`, "While silgen
+  visitDecl 'MacroStepEditor' (at Views/MacroInspectorView.swift:213:1)",
+  "While generating protocol witness thunk … for 'prepaintGroup(layout:pass:)'
+  (in module 'MetalUI')" -- the `ElementGroup` conformance of a `Component`
+  whose `content` is a builder `switch` over six cases (one of them a
+  `pane { }` type-erased recursive editor). The debug build of the same tree
+  passes (and runs all 258 tests); the release build passes on macOS and in
+  the Linux image (non-assertion toolchains). Adding
+  `-Xswiftc -Xfrontend -Xswiftc -enable-lexical-lifetimes=false` does not
+  avoid it. Not yet known for x64 (CI's architecture). This is very likely
+  the "illegal instruction" crash the old Windows workflow retried around
+  (`0xC000001D` is `STATUS_ILLEGAL_INSTRUCTION`, an assertion's trap), which
+  a retry cannot fix when it is deterministic.
+  Reproduction: this repository at the C4b lane 3 commit on Windows with
+  Swift 6.4.0, the flags of `.github/workflows/windows-build.yml`, then
+  `swift build -c release`. Not reduced further.
+- **Where.** Only the Windows packaging (`Scripts/package-windows.ps1`) and
+  the CI's Package step build release.
+- **Workaround.** `package-windows.ps1 -Configuration debug` packages the
+  debug build (8 MB main-thread stack from `/STACK`, which the debug build
+  needs, gap MG-15). CI tries release first and falls back to debug with a
+  warning, so the first x64 run says whether x64 shares it.
+- **Severity.** Medium: a Windows release build is not possible on ARM64
+  today, so a shipped Windows build would be a debug one. A Swift toolchain
+  defect, not MetalUI's, but MetalUI's builder shape (a `switch` in an
+  `ElementGroup` builder reaching `prepaintGroup`'s witness) is what meets it;
+  worth reducing and filing upstream.
 
 # Low
 
