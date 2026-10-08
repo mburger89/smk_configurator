@@ -115,7 +115,7 @@ if uiFree {
             // Pinned to one commit, as `metalui new` pins it (MetalUI ruling SC-I).
             // Move the pin deliberately: a newer `revision:`, then `swift package update`.
             .package(url: "https://github.com/mburger89/MetalUI",
-                     revision: "70ed000c69f57c2cd04f175ba4a795200210ef1c",
+                     revision: "5d6893a700cd68eecd817d8eaeb3d53b96ab801b",
                      traits: metalUITraits),
         ],
         targets: [

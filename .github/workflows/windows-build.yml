@@ -181,10 +181,9 @@ jobs:
         # so MetalUISDLShaders and the DLLs can come only from dist\. Still
         # running after 8 s passes. Not run locally: over SSH the VM's
         # session 0 cannot create a D3D12 swapchain (it got that far, plan
-        # §7), and its console session needs a logged-in user. MetalUI's own
-        # Windows job opens SDL windows on this runner image (its replay), so
-        # this is expected to pass; until it has, it does not fail the job.
-        continue-on-error: true
+        # §7), and its console session needs a logged-in user. Its first CI
+        # run (MetalUI pin 70ed000) caught AccessKit's launch panic, fixed in
+        # MetalUI by ruling WS-B (record §86, PR #54); it fails the job now.
         run: |
           Move-Item dist "$env:RUNNER_TEMP\smk-dist"
           Rename-Item .build\checkouts\MetalUI\Backends\SDL\Shaders\compiled compiled.off
