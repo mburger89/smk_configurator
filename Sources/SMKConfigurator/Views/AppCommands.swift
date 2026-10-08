@@ -1,29 +1,28 @@
 import Foundation
 import MetalUI
 
-/// The menu bar (`App.commands`): the File menu's keymap actions -- once the
-/// previous build's fake titlebar icons (MetalUI has no window toolbar, gap
-/// MG-3) -- and the View menu's Advanced Mode and Appearance. Every MetalUI app
-/// also gets the standard AppKit menu (About, Hide, Quit, Close, Edit, Window).
+/// The menu bar (`App.commands`): the File menu's keymap actions -- read from
+/// `FileCommand.all`, the table the Linux/Windows toolbar reads too
+/// (`PlatformToolbar.swift`) -- and the View menu's Advanced Mode and
+/// Appearance. On macOS every MetalUI app also gets the standard AppKit menu
+/// (About, Hide, Quit, Close, Edit, Window). On SDL the bar is recorded and
+/// drawn nowhere (gap MG-23): its shortcuts still fire through the window's
+/// command stage, and the toolbar strip carries every item.
 ///
 /// The commands are re-evaluated whenever the bar is needed, so the checked
 /// items read the model fresh.
 @MainActor
 func installAppCommands(app: App, window: Window, editor: EditorState) {
+    let dialogs = window.fileDialogs
     app.commands {
         CommandGroup(replacing: .newItem) {
-            Button("New") { editor.newDocument() }
-                .keyboardShortcut("n")
-            Button("Open…") { KeymapFileActions.open(editor: editor, dialogs: window.fileDialogs) }
-                .keyboardShortcut("o")
-            Divider()
-            Button("Save") { KeymapFileActions.save(editor: editor, dialogs: window.fileDialogs) }
-                .keyboardShortcut("s")
-            Button("Save As…") { KeymapFileActions.saveAs(editor: editor, dialogs: window.fileDialogs) }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-            Divider()
-            Button("Import…") { KeymapFileActions.importKeymap(editor: editor, dialogs: window.fileDialogs) }
-            Button("Export…") { KeymapFileActions.exportKeymap(editor: editor, dialogs: window.fileDialogs) }
+            for command in FileCommand.all {
+                if command.startsGroup {
+                    Divider()
+                }
+                Button(command.title) { command.action(editor, dialogs) }
+                    .keyboardShortcut(command.shortcut)
+            }
         }
         CommandMenu("View") {
             Toggle("Advanced Mode", isOn: Binding(get: { editor.showAdvanced },

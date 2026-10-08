@@ -129,6 +129,17 @@ the table below, and moves this line.
   unverified until someone drags a chip in the running app.
 - **Severity.** Medium — every interaction an app adds is untestable below a
   human check.
+- **Status at `70ed000` (cross-platform lane 2, 2026-10-08).** Still no
+  injection API on `Window`, but an app can reach `onInput` through its own
+  `Platform`: `App(platform:textSystem:)` takes any conformer, and
+  `PlatformWindow.onInput` is the hook a platform calls. `PlatformChromeTests`
+  writes a headless fake (`ChromeFakePlatform`/`ChromeFakeWindow`, all 28
+  `PlatformWindow` members, a renderer that presents every frame and draws
+  nothing) and drives a real click, a key press and toolbar actions through
+  it, on all three platforms with no GPU. The cost is that fake (about 80
+  lines) per test target, and it tracks `PlatformWindow`'s defaultless
+  requirements, so a MetalUI bump that adds one breaks the app's test build.
+  The macro panes' drags are still not driven this way.
 
 ## MG-14 — no `layoutPriority` on the legacy stacks
 
@@ -224,6 +235,16 @@ the table below, and moves this line.
   plan §1.2 M1).
 - **Severity.** Medium. Any app that puts actions only in its menu bar loses
   them on Linux and Windows without a word.
+- **Workaround in place (cross-platform lane 2, 2026-10-08).**
+  `Views/PlatformToolbar.swift`: `FileCommand.all` (title, `AppIcon`,
+  shortcut, divider, action) feeds both the File menu (`installAppCommands`)
+  and `fileToolbar`, which `ContentView` applies through `platformToolbar`
+  (`#if os(macOS)` returns `self`). Pinned by `PlatformChromeTests`: the menu
+  bar and toolbar a platform receives carry the table in order, and in a
+  window whose platform answers `false` to `setToolbar` the drawn strip lays
+  out the real shell and its New button runs New (Linux image and macOS).
+  Quit and Close have no in-window item on SDL; the window's close button is
+  the way out.
 
 ## MG-24 — a keyboard shortcut's default `.command` is the Super/Windows key on SDL; there is no "primary" modifier
 
@@ -246,6 +267,11 @@ the table below, and moves this line.
   `.keyboardShortcut`.
 - **Severity.** Medium. Every portable app writes this, and the default
   silently binds a key that Windows reserves.
+- **Workaround in place (cross-platform lane 2, 2026-10-08).**
+  `primaryShortcutModifier` in `Views/PlatformToolbar.swift`, on every entry
+  of `FileCommand.all` (Save As is `[primary, .shift]`). Pinned by
+  `PlatformChromeTests`: primary+N runs New through the window's command
+  stage, and off macOS Super+N does not.
 
 # Low
 

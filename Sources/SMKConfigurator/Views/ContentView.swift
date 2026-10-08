@@ -17,7 +17,9 @@ func rootView(editor: EditorState) -> some Element {
 /// `design_handoff_1c_power_grouped_list/README.md` for the layout spec this
 /// recreates. The previous build's titlebar strip is gone (port plan §2.2 W8):
 /// its file actions are the File menu and Advanced Mode is a View menu item
-/// (`AppCommands.swift`).
+/// (`AppCommands.swift`). On Linux and Windows, where SDL draws no menu bar,
+/// the same items are a toolbar MetalUI draws as a strip across the top
+/// (`platformToolbar`, `PlatformToolbar.swift`; compiled out on macOS).
 ///
 /// Design/theme editing happens inline in the DSN/THM panes, so `ContentView`
 /// owns a small "draft" workspace for each -- a scratch copy that mirrors
@@ -26,6 +28,8 @@ struct ContentView: Component {
     let editor: EditorState
 
     @Environment(\.fileDialogs) var dialogs
+    /// Picks the toolbar's icon files (Linux/Windows only, `platformToolbar`).
+    @Environment(\.colorScheme) var colorScheme
 
     @State var designDraft: KeyboardDesign = .blank()
     /// `nil` while the draft is an unsaved "+ New Design…"; the design
@@ -69,6 +73,7 @@ struct ContentView: Component {
         .alert(loadErrorMessage, isPresented: loadErrorBinding) {
             Button("OK") {}
         }
+        .platformToolbar(editor: editor, dialogs: dialogs, colorScheme: colorScheme)
     }
 
     /// Any dismissal clears the model's error, so the same error raised again

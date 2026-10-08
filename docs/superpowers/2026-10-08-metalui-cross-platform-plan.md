@@ -566,3 +566,71 @@ clean on `Model/`), then `SMK_UI_FREE=1 swift build --build-tests`:
 in 21 suites passed`.
 
 Windows was not touched (lane 3).
+
+### Lane 2 (2026-10-08)
+
+**What landed.** `Views/PlatformToolbar.swift` (new): `primaryShortcutModifier`
+(`.command` on macOS, `.control` elsewhere, A7, gap MG-24); `FileCommand.all`,
+the one table of file commands (title, `AppIcon`, shortcut, whether a divider
+precedes it, action), with each entry's toolbar id (`file.<icon>`), plain title
+(the accessibility label) and tooltip ("Save As (Ctrl+Shift+S)"); and the
+toolbar (M1): six `navigation` icon buttons (`Image(bitmap, scale: 3, label:)`
+from the bundled 48-pixel toolbar PNGs, i.e. 16 points, picked by the
+environment's colour scheme; `fallbackLabel` text if a PNG is missing), each
+with `.help`, then a `Toggle("Advanced")` and a `Picker("Appearance")` in
+`.menu` style, both `automatic` (trailing). `installAppCommands` builds the
+File menu by looping over the table. Titles, order and dividers are as
+before; Save As is `[primary, .shift]`. `ContentView` ends its chain with
+`.platformToolbar(editor:dialogs:colorScheme:)` inside `rootView`'s `Column`
+(`MD-S`), reading `@Environment(\.colorScheme)`.
+**One departure from step 3's wording:** the toolbar *builder*
+(`fileToolbar`) compiles on every platform. Only its use is compiled out:
+`platformToolbar` is `self` under `#if os(macOS)`. That lets the macOS suite
+check the toolbar half of the table too. The macOS app draws no toolbar, its
+⌘ shortcuts are the same keys, and its menu has the same items. Nothing was
+deleted.
+
+**Tests** (`PlatformChromeTests`, 7, on all three platforms): the modifier
+per platform; the table (six entries, titles, icons, dividers, primary
+shortcuts, tooltip text); the File menu that `setMenuBar` receives is the
+table in order, with its shortcuts and dividers; the toolbar that
+`setToolbar` receives is the six buttons (each with an image and its plain
+title), then the toggle and the `.menu` picker, matching the model; in a
+window whose platform answers `false` to `setToolbar` (SDL's answer), a click
+at (20, 19), the strip's first button, runs New; toolbar actions write
+Advanced and Appearance; primary+N runs New through the command stage, and
+off macOS Super+N does not. They run over a headless fake `Platform` in the
+test file (no GPU, no SDL, no AppKit window; MG-17 status line). On macOS
+the window's root is `ContentView` with `fileToolbar` applied by hand. Off
+macOS it is the real `rootView`, so in the Linux image this suite is where
+the strip lays out over the real shell: the offscreen SDL driver presents no
+frame, so `SDLWindowTests` cannot see it (lane 1).
+**Mutations** (macOS, this branch): (M1) the fake's `setToolbar` answering
+`true`, so no strip is drawn, reddened `theStripsNewButtonRunsTheCommand`
+(`fileURL == nil` failed). (M2) the `.keyboardShortcut(command.shortcut)`
+line removed from `installAppCommands` reddened `menuBarReadsTheTable`
+(shortcuts) and `primaryShortcutRunsNew`. Both were reverted.
+
+**macOS** (`swift build` then `swift test`, this worktree): `Build complete!`,
+0 `error:`, 0 `warning:`; `Test run with 263 tests in 33 suites passed`
+(XCTest `Executed 0 tests`) = 256 + the 7 new tests.
+`BinaryFormatAgreementTests` ran and passed (`~/esp/SMK` present). Launch: the
+app ran 6 seconds with the screen unlocked and was killed (exit 143, SIGTERM,
+no output). Not looked at; nothing visible was meant to change.
+
+**Linux image** (`smk-linux`, aarch64, worktree at `/work`, scratch path
+`/build/app` on `smk-xp-build`):
+- `swift build`: `Build complete! (12.19 secs)`, 0 `error:` (only the
+  existing hidapi pkg-config hint).
+- `swift test`: `Test run with 258 tests in 32 suites passed` (251 + 7; the
+  SDL suite skipped; XCTest `Executed 0 tests`).
+- `SMK_RUN_SDL_WINDOW_TEST=1 swift test --filter SDLWindow`: `Test run with 1
+  test in 1 suite passed`, `14 draws requested, 0 frames drawn,
+  SDL_VIDEO_DRIVER=offscreen` (unchanged; the strip is not drawn there).
+- `timeout 5 /build/app/debug/SMKConfigurator`: exit **124**.
+
+**Not verified.** How the strip looks (icon size against the 24-point
+control row, the dark-scheme icons); a real Ctrl+S on a Linux or Windows
+keyboard; the strip on Windows (lane 3). Gaps: no new entry. MG-23 and MG-24
+record their workarounds as in place, and MG-17 gains a status line (a fake
+`Platform` drives app input).
