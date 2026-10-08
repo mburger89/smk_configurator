@@ -14,18 +14,19 @@ silently. Ids are `MG-<n>`, never reused.
 
 Entries MG-1…MG-10 come from the planning survey (reading MetalUI's source and
 docs against the app's 3,400 lines of views), before any port code was
-written. Later lanes appended MG-11…MG-22.
+written. Later lanes appended MG-11…MG-22. MG-23 onward come from the Linux/Windows item
+(`2026-10-08-metalui-cross-platform-plan.md`), against MetalUI `70ed000`.
 
 **Ordered by severity** (high, medium, low; within a band, the entry an app
 meets first comes first), not by id, so the last heading is not the newest
-entry. **Next unused id: MG-23.** A new entry takes it, goes into its band and
+entry. **Next unused id: MG-26.** A new entry takes it, goes into its band and
 the table below, and moves this line.
 
 | severity | entries |
 |---|---|
 | high | MG-1, MG-15 |
-| medium | MG-20, MG-17, MG-14, MG-2, MG-3 |
-| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22 |
+| medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24 |
+| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25 |
 
 ---
 
@@ -177,6 +178,53 @@ the table below, and moves this line.
   item. The six toolbar icon PNGs stay bundled (`AppIcon` keeps its cases, so
   `IconLoaderTests` keeps its contract) but nothing draws them.
 - **Severity.** Medium — the file actions lose their one-click icons.
+
+## MG-23 — `App.commands` draws nothing on SDL: menu-only actions are unreachable on Linux and Windows
+
+*Found by the cross-platform planning survey (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** `SDLPlatform.setMenuBar(_:)` records the menu bar and draws
+  nothing (`Backends/SDL/Sources/MetalUISDL/SDLPlatform.swift:146-155`,
+  MetalUI ruling `MN-I` item 3: "SDL3 has no menu-bar API … An in-window menu
+  bar is deferred, owner none"). A command's keyboard shortcut still fires
+  (the window's command stage, `MN-J`). A command **without** a shortcut has
+  no way in, and neither do the standard AppKit items (Quit, Close, Edit).
+  Minimal reproduction: `app.commands { CommandMenu("View") { Toggle("X",
+  isOn: …) } }` under `App(platform: try SDLPlatform(), …)`. No menu appears
+  and nothing toggles X.
+- **Where.** `Views/AppCommands.swift`: File ▸ Import… and Export… have no
+  shortcut, and neither do View ▸ Advanced Mode and View ▸ Appearance. New,
+  Open, Save and Save As are reachable only by their shortcuts.
+- **Workaround.** On Linux and Windows only, a `.toolbar` (MetalUI draws it
+  as a 39-point strip where `setToolbar` answers `false`; divergence 136,
+  `MD-K`) mirrors the File and View menus. The six file actions are icon
+  buttons, Advanced Mode is a `Toggle` and Appearance a `.menu` `Picker`.
+  One command table feeds both the menu and the toolbar (cross-platform
+  plan §1.2 M1).
+- **Severity.** Medium. Any app that puts actions only in its menu bar loses
+  them on Linux and Windows without a word.
+
+## MG-24 — a keyboard shortcut's default `.command` is the Super/Windows key on SDL; there is no "primary" modifier
+
+*Found by the cross-platform planning survey (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** `KeyboardShortcut(_:modifiers:)` defaults to `.command`
+  (`Sources/MetalUI/KeyboardShortcut.swift:79`), and modifiers match exactly
+  (`IX-F` item 2). The SDL bridge maps `SDL_KMOD_GUI` to `.command` and
+  `SDL_KMOD_CTRL` to `.control` (`Backends/SDL/Sources/SDLBridge/SDLBridge.c:798-800`).
+  So `.keyboardShortcut("s")` on Linux and Windows fires on Super+S or Win+S,
+  never Ctrl+S, and Windows itself takes Win+S (search), Win+N and Win+O. No
+  modifier spelling means "⌘ on Apple, Ctrl elsewhere". MetalUI's own text
+  editing does make that switch internally (`TextEditing.platform`, `TI-D`),
+  so a field's Ctrl+C/V works while the app's Ctrl+S does not.
+  Minimal reproduction: `Button("Save") { … }.keyboardShortcut("s")` in an
+  SDL window. Ctrl+S does nothing.
+- **Where.** Every shortcut in `Views/AppCommands.swift`: ⌘N, ⌘O, ⌘S, ⇧⌘S.
+- **Workaround.** An app constant, `primaryShortcutModifier: EventModifiers`
+  (`.command` under `#if os(macOS)`, `.control` otherwise), passed on every
+  `.keyboardShortcut`.
+- **Severity.** Medium. Every portable app writes this, and the default
+  silently binds a key that Windows reserves.
 
 # Low
 
@@ -412,6 +460,30 @@ now renders every rail mode that way.*
   `Views/KeyModeViews.swift`, introduced for MG-15) around the repeat-block
   editor.
 - **Severity.** Low.
+
+## MG-25 — the portable system fonts register no family for `.monospaced` (or serif, rounded)
+
+*Found by the cross-platform planning survey (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** `SystemFonts.resolver()` (`Sources/MetalUISystemFonts/SystemFonts.swift`)
+  registers default and fallback families only. It never calls
+  `PortableFontResolver.register(design:family:)`, so on Linux and Windows a
+  `.font(.system(size:weight:design: .monospaced))` resolves to the default
+  sans face (an unregistered design "is the default face",
+  `PortableFontResolver.swift:187-193`). CoreText gives SF Mono on macOS.
+  Minimal reproduction: `Text("0x1F").font(.system(size: 12, design: .monospaced))`
+  under `PortableTextSystem(resolver: try SystemFonts.resolver())`. It draws
+  proportional DejaVu Sans or Segoe UI.
+- **Where.** The eight `design: .monospaced` sites: the THM hex fields
+  (`ThemeSwatchField`), the step rows and inspector byte counts
+  (`MacroStepRowView`, `MacroInspectorView`, `MacroEditorViews`), and the KEY
+  inspector's raw token (`KeyModeViews`).
+- **Workaround.** `makeApp()` registers one family per platform after
+  building the resolver: `"DejaVu Sans Mono"` on Linux, `"Consolas"` on
+  Windows. A family that is not installed falls back to the default face, so
+  nothing traps.
+- **Severity.** Low. A one-line workaround, but the app must know a family
+  name per platform.
 
 ---
 
