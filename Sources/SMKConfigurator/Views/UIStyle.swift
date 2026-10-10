@@ -155,11 +155,16 @@ struct StatusDot: Component {
 }
 
 extension StyledElement {
-    /// A text field's rounded-border look: MetalUI's `TextField` and
-    /// `TextEditor` draw no field chrome of their own and offer no
-    /// `.textFieldStyle(.roundedBorder)` (gap MG-20), so a bare field reads as
-    /// loose text. Write it before `.frame`.
-    func fieldChrome() -> some Element {
+    /// The macro step's `TextEditor` look: padding, the `Chrome.surface` fill
+    /// and a 1-point `Chrome.chipBorder` border. Write it after
+    /// `.textEditorStyle(.plain)` and before `.frame`.
+    ///
+    /// `TextField`s no longer take this: since MetalUI `70ed000` they draw
+    /// SwiftUI's bordered field by default (`MD-B`, gap MG-20), and the old
+    /// `fieldChrome()` on top of it drew two borders. `TextEditor`'s default
+    /// (`MD-F`) is a fill with no border and does not inset its text
+    /// (divergence 133), so the editor keeps the app's chrome over `.plain`.
+    func editorChrome() -> some Element {
         padding(Insets.symmetric(horizontal: 6, vertical: 3))
             .background(Chrome.surface)
             .cornerRadius(Pixels(5))

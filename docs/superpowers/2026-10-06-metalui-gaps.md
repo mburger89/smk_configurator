@@ -1,7 +1,9 @@
 # MetalUI gaps found by the SMK configurator port
 
 What MetalUI (pinned at `e54c3f65086b446d42b09bf6f2fdbf802f7ed52a`, its
-`master` on 2026-10-06) could not express while porting this app, and what the
+`master` on 2026-10-06, for MG-1…MG-22; at
+`70ed000c69f57c2cd04f175ba4a795200210ef1c` from MG-23 on, which is the pin
+since the Linux/Windows item) could not express while porting this app, and what the
 app does instead. Each entry: **what** is missing, **where** in the app it
 bites, the **smallest app-side workaround** used, and a **severity**
 (high = shapes the whole port, medium = a visible compromise, low = cosmetic
@@ -14,18 +16,19 @@ silently. Ids are `MG-<n>`, never reused.
 
 Entries MG-1…MG-10 come from the planning survey (reading MetalUI's source and
 docs against the app's 3,400 lines of views), before any port code was
-written. Later lanes appended MG-11…MG-22.
+written. Later lanes appended MG-11…MG-22. MG-23 onward come from the Linux/Windows item
+(`2026-10-08-metalui-cross-platform-plan.md`), against MetalUI `70ed000`.
 
 **Ordered by severity** (high, medium, low; within a band, the entry an app
 meets first comes first), not by id, so the last heading is not the newest
-entry. **Next unused id: MG-23.** A new entry takes it, goes into its band and
+entry. **Next unused id: MG-29.** A new entry takes it, goes into its band and
 the table below, and moves this line.
 
 | severity | entries |
 |---|---|
 | high | MG-1, MG-15 |
-| medium | MG-20, MG-17, MG-14, MG-2, MG-3 |
-| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22 |
+| medium | MG-20, MG-17, MG-14, MG-2, MG-3, MG-23, MG-24, MG-27 (MG-20, MG-14, MG-2 and MG-3 are fixed upstream at `70ed000`; the app adopted MG-20's field chrome and, off macOS, MG-3's toolbar; each status line says how far) |
+| low | MG-4, MG-5, MG-6, MG-7, MG-8, MG-9, MG-10, MG-11, MG-12, MG-13, MG-16, MG-18, MG-19, MG-21, MG-22, MG-25, MG-28, MG-26 |
 
 ---
 
@@ -103,6 +106,15 @@ the table below, and moves this line.
   (lane 3's parity pass also applied it to lane 2's DSN and THM fields).
 - **Severity.** Medium — every app with a form writes this, and without it a
   field is not recognisable as one.
+- **Status at `70ed000`.** Fixed upstream: `TextField` draws SwiftUI's
+  bordered field by default and `.textFieldStyle(_:)`/`.textEditorStyle(_:)`
+  exist (MetalUI `MD-B`, `MD-C`, `MD-F`). Adopted by cross-platform lane 1,
+  because the old helper on top of the new default drew two borders: the five
+  `TextField`s drop the helper and keep MetalUI's chrome (`.surface` fill,
+  `.separator` border, radius 6, the control focus ring); the one `TextEditor`
+  keeps the app's chrome, renamed `editorChrome()`, over
+  `.textEditorStyle(.plain)`, since MetalUI's editor default is a fill with no
+  border and no text inset (its divergence 133).
 
 ## MG-17 — no public input injection for an app's tests
 
@@ -119,6 +131,17 @@ the table below, and moves this line.
   unverified until someone drags a chip in the running app.
 - **Severity.** Medium — every interaction an app adds is untestable below a
   human check.
+- **Status at `70ed000` (cross-platform lane 2, 2026-10-08).** Still no
+  injection API on `Window`, but an app can reach `onInput` through its own
+  `Platform`: `App(platform:textSystem:)` takes any conformer, and
+  `PlatformWindow.onInput` is the hook a platform calls. `PlatformChromeTests`
+  writes a headless fake (`ChromeFakePlatform`/`ChromeFakeWindow`, all 28
+  `PlatformWindow` members, a renderer that presents every frame and draws
+  nothing) and drives a real click, a key press and toolbar actions through
+  it, on all three platforms with no GPU. The cost is that fake (about 80
+  lines) per test target, and it tracks `PlatformWindow`'s defaultless
+  requirements, so a MetalUI bump that adds one breaks the app's test build.
+  The macro panes' drags are still not driven this way.
 
 ## MG-14 — no `layoutPriority` on the legacy stacks
 
@@ -146,6 +169,9 @@ the table below, and moves this line.
   growing the board.
 - **Severity.** Medium — the drawer's height now depends on the design's row
   count, and an exact "serve this first" is not expressible.
+- **Status at `70ed000`.** Fixed upstream: a legacy container sees through a
+  `layoutPriority` layer (MetalUI `MD-G`). Not adopted; the workaround stays
+  (follow-up work, cross-platform plan §6).
 
 ## MG-2 — no `@Environment(Type.self)` / `.environment(object)`
 
@@ -163,6 +189,10 @@ the table below, and moves this line.
   unwrap.
 - **Severity.** Medium — mechanical, but it threads a parameter through every
   pane and leaf (`KeyCapView`, `PaletteChip`, …).
+- **Status at `70ed000`.** Fixed upstream: `@Environment(Type.self)` reads an
+  `@Observable` object provided by `.environment(_ object:)`, and a missing
+  one traps (MetalUI `MD-H`, its divergence 134). Not adopted; `let editor`
+  stays (follow-up work, cross-platform plan §6).
 
 ## MG-3 — no window toolbar API
 
@@ -177,6 +207,113 @@ the table below, and moves this line.
   item. The six toolbar icon PNGs stay bundled (`AppIcon` keeps its cases, so
   `IconLoaderTests` keeps its contract) but nothing draws them.
 - **Severity.** Medium — the file actions lose their one-click icons.
+- **Status at `70ed000`.** Fixed upstream: `.toolbar`/`.searchable` over a
+  closed item set, a native `NSToolbar` on AppKit, a drawn 39-point strip on
+  SDL (MetalUI `MD-I`, `MD-J`, `MD-K`). Used on Linux and Windows only, for
+  MG-23's workaround (cross-platform lane 2); macOS keeps the menu bar and no
+  toolbar, the user's decision above.
+
+## MG-23 — `App.commands` draws nothing on SDL: menu-only actions are unreachable on Linux and Windows
+
+*Found by the cross-platform planning survey (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** `SDLPlatform.setMenuBar(_:)` records the menu bar and draws
+  nothing (`Backends/SDL/Sources/MetalUISDL/SDLPlatform.swift:146-155`,
+  MetalUI ruling `MN-I` item 3: "SDL3 has no menu-bar API … An in-window menu
+  bar is deferred, owner none"). A command's keyboard shortcut still fires
+  (the window's command stage, `MN-J`). A command **without** a shortcut has
+  no way in, and neither do the standard AppKit items (Quit, Close, Edit).
+  Minimal reproduction: `app.commands { CommandMenu("View") { Toggle("X",
+  isOn: …) } }` under `App(platform: try SDLPlatform(), …)`. No menu appears
+  and nothing toggles X.
+- **Where.** `Views/AppCommands.swift`: File ▸ Import… and Export… have no
+  shortcut, and neither do View ▸ Advanced Mode and View ▸ Appearance. New,
+  Open, Save and Save As are reachable only by their shortcuts.
+- **Workaround.** On Linux and Windows only, a `.toolbar` (MetalUI draws it
+  as a 39-point strip where `setToolbar` answers `false`; divergence 136,
+  `MD-K`) mirrors the File and View menus. The six file actions are icon
+  buttons, Advanced Mode is a `Toggle` and Appearance a `.menu` `Picker`.
+  One command table feeds both the menu and the toolbar (cross-platform
+  plan §1.2 M1).
+- **Severity.** Medium. Any app that puts actions only in its menu bar loses
+  them on Linux and Windows without a word.
+- **Workaround in place (cross-platform lane 2, 2026-10-08).**
+  `Views/PlatformToolbar.swift`: `FileCommand.all` (title, `AppIcon`,
+  shortcut, divider, action) feeds both the File menu (`installAppCommands`)
+  and `fileToolbar`, which `ContentView` applies through `platformToolbar`
+  (`#if os(macOS)` returns `self`). Pinned by `PlatformChromeTests`: the menu
+  bar and toolbar a platform receives carry the table in order, and in a
+  window whose platform answers `false` to `setToolbar` the drawn strip lays
+  out the real shell and its New button runs New (Linux image and macOS).
+  Quit and Close have no in-window item on SDL; the window's close button is
+  the way out.
+
+## MG-24 — a keyboard shortcut's default `.command` is the Super/Windows key on SDL; there is no "primary" modifier
+
+*Found by the cross-platform planning survey (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** `KeyboardShortcut(_:modifiers:)` defaults to `.command`
+  (`Sources/MetalUI/KeyboardShortcut.swift:79`), and modifiers match exactly
+  (`IX-F` item 2). The SDL bridge maps `SDL_KMOD_GUI` to `.command` and
+  `SDL_KMOD_CTRL` to `.control` (`Backends/SDL/Sources/SDLBridge/SDLBridge.c:798-800`).
+  So `.keyboardShortcut("s")` on Linux and Windows fires on Super+S or Win+S,
+  never Ctrl+S, and Windows itself takes Win+S (search), Win+N and Win+O. No
+  modifier spelling means "⌘ on Apple, Ctrl elsewhere". MetalUI's own text
+  editing does make that switch internally (`TextEditing.platform`, `TI-D`),
+  so a field's Ctrl+C/V works while the app's Ctrl+S does not.
+  Minimal reproduction: `Button("Save") { … }.keyboardShortcut("s")` in an
+  SDL window. Ctrl+S does nothing.
+- **Where.** Every shortcut in `Views/AppCommands.swift`: ⌘N, ⌘O, ⌘S, ⇧⌘S.
+- **Workaround.** An app constant, `primaryShortcutModifier: EventModifiers`
+  (`.command` under `#if os(macOS)`, `.control` otherwise), passed on every
+  `.keyboardShortcut`.
+- **Severity.** Medium. Every portable app writes this, and the default
+  silently binds a key that Windows reserves.
+- **Workaround in place (cross-platform lane 2, 2026-10-08).**
+  `primaryShortcutModifier` in `Views/PlatformToolbar.swift`, on every entry
+  of `FileCommand.all` (Save As is `[primary, .shift]`). Pinned by
+  `PlatformChromeTests`: primary+N runs New through the window's command
+  stage, and off macOS Super+N does not.
+
+## MG-27 — Swift 6.4.0's Windows toolchain asserts on `-c release` in a `Component` whose `content` is a `switch` (toolchain, not MetalUI)
+
+*Found by cross-platform lane 3 (2026-10-08, MetalUI `70ed000`, Swift 6.4.0
+`swift-6.4-RELEASE` aarch64-unknown-windows-msvc on the UTM VM; the
+toolchain installs as `Toolchains\6.4.0+Asserts`, i.e. with compiler
+assertions on).*
+
+- **What.** `swift build -c release` of the app on Windows ARM64 stops in
+  SILGen with `Assertion failed: hasNoNontrivialLexicalLeaf && "Found
+  non-trivial lexical leaf in non-trivial non-lexical type?!"`
+  (`lib/SIL/IR/TypeLowering.cpp:3389`), exception `0xC000001D`, "While silgen
+  visitDecl 'MacroStepEditor' (at Views/MacroInspectorView.swift:213:1)",
+  "While generating protocol witness thunk … for 'prepaintGroup(layout:pass:)'
+  (in module 'MetalUI')" -- the `ElementGroup` conformance of a `Component`
+  whose `content` is a builder `switch` over six cases (one of them a
+  `pane { }` type-erased recursive editor). The debug build of the same tree
+  passes (and runs all 258 tests); the release build passes on macOS and in
+  the Linux image (non-assertion toolchains). Adding
+  `-Xswiftc -Xfrontend -Xswiftc -enable-lexical-lifetimes=false` does not
+  avoid it. Not yet known for x64 (CI's architecture). `0xC000001D` is
+  `STATUS_ILLEGAL_INSTRUCTION` (an assertion's trap), the same code as the
+  "illegal instruction" the old Windows workflow retried around, but that
+  was a **debug** build of the SwiftCrossUI tree and this one is
+  deterministic and release-only, so the two are not shown to be the same
+  defect (branch check: an unmeasured "very likely" withdrawn).
+  Reproduction: this repository at the C4b lane 3 commit on Windows with
+  Swift 6.4.0, the flags of `.github/workflows/windows-build.yml`, then
+  `swift build -c release`. Not reduced further.
+- **Where.** Only the Windows packaging (`Scripts/package-windows.ps1`) and
+  the CI's Package step build release.
+- **Workaround.** `package-windows.ps1 -Configuration debug` packages the
+  debug build (8 MB main-thread stack from `/STACK`, which the debug build
+  needs, gap MG-15). CI tries release first and falls back to debug with a
+  warning, so the first x64 run says whether x64 shares it.
+- **Severity.** Medium: a Windows release build is not possible on ARM64
+  today, so a shipped Windows build would be a debug one. A Swift toolchain
+  defect, not MetalUI's, but MetalUI's builder shape (a `switch` in an
+  `ElementGroup` builder reaching `prepaintGroup`'s witness) is what meets it;
+  worth reducing and filing upstream.
 
 # Low
 
@@ -413,6 +550,84 @@ now renders every rail mode that way.*
   editor.
 - **Severity.** Low.
 
+## MG-25 — the portable system fonts register no family for `.monospaced` (or serif, rounded)
+
+*Found by the cross-platform planning survey (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** `SystemFonts.resolver()` (`Sources/MetalUISystemFonts/SystemFonts.swift`)
+  registers default and fallback families only. It never calls
+  `PortableFontResolver.register(design:family:)`, so on Linux and Windows a
+  `.font(.system(size:weight:design: .monospaced))` resolves to the default
+  sans face (an unregistered design "is the default face",
+  `PortableFontResolver.swift:187-193`). CoreText gives SF Mono on macOS.
+  Minimal reproduction: `Text("0x1F").font(.system(size: 12, design: .monospaced))`
+  under `PortableTextSystem(resolver: try SystemFonts.resolver())`. It draws
+  proportional DejaVu Sans or Segoe UI.
+- **Where.** The eight `design: .monospaced` sites: the THM hex fields
+  (`ThemeSwatchField`), the step rows and inspector byte counts
+  (`MacroStepRowView`, `MacroInspectorView`, `MacroEditorViews`), and the KEY
+  inspector's raw token (`KeyModeViews`).
+- **Workaround.** `makeApp()` registers one family per platform after
+  building the resolver: `"DejaVu Sans Mono"` on Linux, `"Consolas"` on
+  Windows. A family that is not installed falls back to the default face, so
+  nothing traps.
+- **Severity.** Low. A one-line workaround, but the app must know a family
+  name per platform.
+
+## MG-28 — the drawn toolbar strip's height is not public: the app hard-codes 39
+
+*Found by the cross-platform branch check (2026-10-08, MetalUI `70ed000`).*
+
+- **What.** Where `setToolbar` answers `false` (SDL), the window draws the
+  toolbar as a strip and lays the root out below it, taking its height from
+  the root without growing the window (divergence 136, `MD-K`). The height
+  is `ToolbarStrip.height: Float = 39` (`Sources/MetalUI/ToolbarStrip.swift:36`),
+  which is `internal`; nothing public reports it or the root's resulting
+  height. An app that sizes its window from its content's needs must copy
+  the number.
+  Minimal reproduction: try to read the strip's height from an app module;
+  there is no spelling.
+- **Where.** `Views/WindowMetrics.swift`: `toolbarStripHeight = 39` off macOS
+  feeds `chromeHeight` and so the window's minimum height (KEY mode's
+  floor). `PlatformChromeTests` clicks at (20, 19), inside the strip.
+- **Workaround.** The literal 39, with a comment naming divergence 136. If
+  MetalUI changes the strip, the minimum height is silently off by the
+  difference (the click test would catch a strip under 19 points only).
+- **Severity.** Low.
+
+## MG-26 — a MetalUI product filtered out of the app target on macOS breaks the test target's compile there (toolchain, not MetalUI)
+
+*Found by cross-platform lane 1 (2026-10-08, MetalUI `70ed000`, Swift 6.4
+`swiftlang-6.4.0.33.1`, the default build system).*
+
+- **What.** With `.product(name: "MetalUIPortableText", package: "MetalUI",
+  condition: .when(platforms: [.linux, .windows]))` (and the same for
+  `MetalUISystemFonts`) on the executable target -- the shape
+  `metalui new --cross-platform` generates -- while the test target names
+  both products **unconditionally**, `swift build --build-tests` on macOS
+  fails in the test target's dependency scan: `error: unable to resolve
+  module dependency: 'CFreeType'` (and `'CHarfBuzz'`, `'CSheenBidi'`,
+  `'CUnibreak'`). The test target's compile line carries
+  `-fmodule-map-file` for `CStbImage` and `MetalUIShaderTypes` only. The plain
+  `swift build` passes. Measured both ways: the two products conditional →
+  fails; the same two unconditional (only `MetalUISDL` kept conditional) →
+  passes. `--build-system native` not tried. The scaffold's own package has no
+  test target, so MetalUI's scaffold build test cannot see this.
+  Minimal reproduction: the scaffold's cross-platform manifest plus
+  `.testTarget(name: "T", dependencies: ["App", .product(name:
+  "MetalUIPortableText", package: "MetalUI")])` with one file
+  `import MetalUIPortableText`, then `swift build --build-tests` on macOS.
+- **Where.** `Package.swift`: the app's test target constructs
+  `PortableTextSystem` on macOS for `renderFrame` (`ShellRenderTests`,
+  `PaneRenderTests`, `MacroPaneTests`).
+- **Workaround.** `MetalUIPortableText` and `MetalUISystemFonts` are
+  unconditional dependencies of the executable target on every platform;
+  macOS links them unused. Only `MetalUISDL` stays `condition: portable`.
+- **Severity.** Low. A SwiftPM / swift-build defect rather than MetalUI's, but
+  every consumer that follows getting-started's manifest and tests with the
+  portable text system meets it; worth a line in MetalUI's getting-started or
+  a test target in its scaffold build test.
+
 ---
 
 **Final (lane 3, 2026-10-06).** MG-1…MG-22. None was fixed in MetalUI by this
@@ -422,3 +637,9 @@ MG-20 (fields with no chrome), MG-17 (no input injection for app tests),
 MG-14 (no `layoutPriority` on legacy stacks). Launch-only findings (MG-20,
 MG-21, MG-4's check mark) came from the first launch of the port, in lane 3;
 lanes 1 and 2 ran with the screen locked.
+
+**Cross-platform (C4b branch check, 2026-10-08).** MG-23…MG-28 come from the
+Linux/Windows item. Two are toolchain defects, not MetalUI's (MG-26, MG-27).
+None was fixed in MetalUI by this branch. The ones a portable app meets
+first: MG-23 (menu-only actions unreachable on SDL), MG-24 (`.command` is
+the Super key on SDL), MG-27 (no Windows ARM64 release build).

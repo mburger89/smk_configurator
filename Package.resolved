@@ -1,12 +1,12 @@
 {
-  "originHash" : "da2592ea0942c0ca2c02f55298b32f23cc5c97404104e9a02a51e0705d39f418",
+  "originHash" : "3575e1e3526e16bfe5b3d1ea4bd6cf3b9d262d9b6bc202750bd175a543d42126",
   "pins" : [
     {
       "identity" : "metalui",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mburger89/MetalUI",
       "state" : {
-        "revision" : "e54c3f65086b446d42b09bf6f2fdbf802f7ed52a"
+        "revision" : "5d6893a700cd68eecd817d8eaeb3d53b96ab801b"
       }
     }
   ],

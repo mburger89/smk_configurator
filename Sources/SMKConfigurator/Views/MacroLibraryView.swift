@@ -108,7 +108,6 @@ struct MacroLibraryView: Component {
             Spacer()
             TextField("Search macros", text: $filter.query)
                 .font(.system(size: 12))
-                .fieldChrome()
                 .frame(width: Pixels(180))
             collectionPicker
             // Recording macros from the board needs a device-to-host event

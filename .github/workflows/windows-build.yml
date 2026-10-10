@@ -1,5 +1,10 @@
 name: Windows Build
 
+# The app on Windows through MetalUI's SDL backend (cross-platform plan §4.2),
+# set up as MetalUI's own Windows job (sdl-gpu-linux.yml): Swift 6.4, SDL3's
+# prebuilt VC package, AccessKit fetched by MetalUI's script, plus hidapi from
+# vcpkg. No pkg-config on Windows: every include and library path is a flag.
+
 on:
   push:
     branches: [main]
@@ -9,41 +14,54 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      SDL_VERSION: 3.4.16
     defaults:
       run:
         shell: pwsh
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup VS Dev Environment
-        uses: seanmiddleditch/gha-setup-vsdevenv@v5
-
-      # FIX 1: Enable Windows Long Paths to prevent deep swift-frontend temp crashes
-      - name: Enable Windows Long Paths
+      - name: Enable Windows long paths
+        # Deep swift-frontend temporary paths crashed the compiler without it.
         run: |
           git config --global core.longpaths true
           New-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\FileSystem" `
             -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
 
-      - name: Setup Swift
-        uses: compnerd/gha-setup-swift@v0.3.0
+      - name: Symlinks in SwiftPM's checkouts
+        # MetalUI's shader header is a git symlink; SwiftPM's clone follows the
+        # global git config, and a checkout without symlinks fails to compile.
+        run: git config --global core.symlinks true
+
+      - uses: compnerd/gha-setup-swift@v0.5.0
         with:
-          branch: swift-6.2-release
-          tag: 6.2-RELEASE
+          swift-version: swift-6.4.0-release
+          swift-build: 6.4.0-RELEASE
 
       - name: Swift version
         run: swift --version
 
-      - name: Compute vcpkg Triplet
+      - name: Install SDL3 (prebuilt VC package)
+        run: |
+          $zip = "$env:RUNNER_TEMP\sdl3.zip"
+          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL_VERSION/SDL3-devel-$env:SDL_VERSION-VC.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          $root = "$env:RUNNER_TEMP\SDL3-$env:SDL_VERSION"
+          "SDL3_INCLUDE=$root\include" >> $env:GITHUB_ENV
+          "SDL3_LIB=$root\lib\x64" >> $env:GITHUB_ENV
+          "$root\lib\x64" >> $env:GITHUB_PATH   # SDL3.dll at run time
+
+      - name: Compute vcpkg triplet
         id: triplet
-        uses: ASzc/change-string-case-action@v5
+        uses: ASzc/change-string-case-action@v6
         with:
           string: ${{ runner.arch }}-${{ runner.os }}
 
-      - name: Restore Dependency Cache
+      - name: Restore hidapi cache
         id: cache
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: vcpkg_installed
           key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
@@ -54,53 +72,127 @@ jobs:
           VCPKG_DEFAULT_TRIPLET: ${{ steps.triplet.outputs.lowercase }}
         run: vcpkg install
 
-      - name: Save Dependency Cache
+      - name: Save hidapi cache
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: vcpkg_installed
           key: vcpkg-${{ steps.triplet.outputs.lowercase }}-${{ hashFiles('vcpkg.json') }}
 
+      - name: hidapi paths
+        run: |
+          $hid = "${{ github.workspace }}\vcpkg_installed\${{ steps.triplet.outputs.lowercase }}"
+          "HIDAPI_INCLUDE=$hid\include" >> $env:GITHUB_ENV
+          "HIDAPI_LIB=$hid\lib" >> $env:GITHUB_ENV
+          "$hid\bin" >> $env:GITHUB_PATH   # hidapi.dll at run time
+
+      - name: Resolve, and fetch AccessKit (MetalUI ruling AX-A)
+        # The script ships in MetalUI's checkout; it prints one SwiftPM flag per
+        # line (-Xcc -I<include>, -Xswiftc -L<lib>; MetalUI PX-I item 2).
+        # ACCESSKIT_DIR keeps the download out of SwiftPM's checkout.
+        run: |
+          swift package resolve
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:ACCESSKIT_DIR = "$env:RUNNER_TEMP\accesskit"
+          python .build\checkouts\MetalUI\Backends\SDL\scripts\fetch-accesskit.py --print-flags > "$env:RUNNER_TEMP\accesskit-flags.txt"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-Content "$env:RUNNER_TEMP\accesskit-flags.txt"
+
       - name: Build
+        # Three attempts: the Windows compiler has crashed mid-build with an
+        # illegal instruction. Whether a retry after evicting the module
+        # cache helps is unmeasured -- the old loop read $LASTEXITCODE after
+        # Start-Process, which never sets it, so it never saw a failure.
         run: |
-          $ErrorActionPreference = 'Continue'
-          $triplet = "${{ steps.triplet.outputs.lowercase }}"
-          $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
-          $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
-
-          $code = 0
+          $flags = @("-Xcc", "-I$env:SDL3_INCLUDE", "-Xswiftc", "-L$env:SDL3_LIB",
+                     "-Xcc", "-I$env:HIDAPI_INCLUDE", "-Xswiftc", "-L$env:HIDAPI_LIB") +
+                   @(Get-Content "$env:RUNNER_TEMP\accesskit-flags.txt")
+          $code = 1
           for ($attempt = 1; $attempt -le 3; $attempt++) {
-            Write-Host "--- Compilation Attempt $attempt ---"
-
-            # FIX 3: Avoid piping '2>&1 | Tee-Object'.
-            # Redirecting streams into a pipe changes $LASTEXITCODE behavior on crash faults.
-            # Instead, run the command cleanly, capture the native code, and dump logs if it fails.
-            Start-Process -FilePath "swift" -ArgumentList "build --target SMKConfigurator" -NoNewWindow -Wait -Passthru | Out-Null
+            Write-Host "--- swift build, attempt $attempt ---"
+            & swift build @flags
             $code = $LASTEXITCODE
-
             if ($code -eq 0) { break }
-
-            # Clear out the temporary ModuleCache to force a fresh parse if an illegal instruction hit
-            Write-Host "Attempt $attempt failed with code $code. Evicting corrupted build caches..."
-            if (Test-Path .build\x86_64-unknown-windows-msvc\debug\ModuleCache) {
-              Remove-Item -Recurse -Force .build\x86_64-unknown-windows-msvc\debug\ModuleCache
-            }
-
-            Write-Host "::warning::swift build died with exit $code on attempt $attempt of 3. Retrying."
+            Write-Host "::warning::swift build exited $code on attempt $attempt of 3; evicting the module cache."
+            # Wherever the build system keeps it (swiftbuild: under .build\out).
+            Get-ChildItem .build -Recurse -Directory -Filter ModuleCache -Depth 5 -ErrorAction SilentlyContinue |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
+          exit $code
 
-          if ($code -ne 0) {
-            Write-Host "===== Build failed permanently after 3 attempts with exit code $code ====="
-            exit $code
-          }
-
-      - name: Build tests
-        # Compile the model and device tests (the UI-free library's suites).
-        # Running them on Windows is part of the later Linux/Windows item:
-        # paths such as homeDirectoryForCurrentUser and UserDefaults suites
-        # have never been exercised there.
+      - name: Test
+        # Every suite, run (not only compiled). The SDL window test is
+        # env-gated and reports skipped; BinaryFormatAgreement skips without
+        # the firmware checkout.
         run: |
-          $triplet = "${{ steps.triplet.outputs.lowercase }}"
-          $env:INCLUDE = "${{ github.workspace }}\vcpkg_installed\$triplet\include;" + $env:INCLUDE
-          $env:LIB = "${{ github.workspace }}\vcpkg_installed\$triplet\lib;" + $env:LIB
-          swift build --build-tests
+          $flags = @("-Xcc", "-I$env:SDL3_INCLUDE", "-Xswiftc", "-L$env:SDL3_LIB",
+                     "-Xcc", "-I$env:HIDAPI_INCLUDE", "-Xswiftc", "-L$env:HIDAPI_LIB") +
+                   @(Get-Content "$env:RUNNER_TEMP\accesskit-flags.txt")
+          swift build --build-tests @flags
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          swift test @flags
+          exit $LASTEXITCODE
+
+      - name: UI-free build and tests
+        # Model/ and Device/ alone, MetalUI not declared (plan §2.1), on its
+        # own scratch path.
+        run: |
+          $env:SMK_UI_FREE = "1"
+          $flags = @("-Xcc", "-I$env:HIDAPI_INCLUDE", "-Xswiftc", "-L$env:HIDAPI_LIB")
+          swift build --build-tests --scratch-path .build-ui-free @flags
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          swift test --scratch-path .build-ui-free @flags
+          exit $LASTEXITCODE
+
+      - name: Main-thread stack is 8 MB
+        # Package.swift links /STACK:8388608 (plan §2.1): Windows' default
+        # 1 MB main thread is too small for the window's build and layout.
+        # llvm-readobj ships with the Swift toolchain.
+        run: |
+          $flags = @("-Xcc", "-I$env:SDL3_INCLUDE", "-Xswiftc", "-L$env:SDL3_LIB",
+                     "-Xcc", "-I$env:HIDAPI_INCLUDE", "-Xswiftc", "-L$env:HIDAPI_LIB") +
+                   @(Get-Content "$env:RUNNER_TEMP\accesskit-flags.txt")
+          $bin = (swift build @flags --show-bin-path | Select-Object -Last 1).Trim()
+          $exe = "$bin\SMKConfigurator.exe"
+          $headers = & llvm-readobj --file-headers $exe
+          $line = $headers | Select-String "SizeOfStackReserve"
+          Write-Host $line
+          if ("$line" -notmatch "SizeOfStackReserve:\s*8388608\b") { exit 1 }
+
+      - name: Package
+        # Release first. Swift 6.4.0's Windows toolchain is an assertions
+        # build, and on the ARM64 VM `-c release` trips a SILGen assertion
+        # in MacroStepEditor's witness thunk (gap MG-27); debug builds. Not
+        # yet known for x64, so fall back to a debug package with a warning.
+        run: |
+          $flags = @("-Xcc", "-I$env:SDL3_INCLUDE", "-Xswiftc", "-L$env:SDL3_LIB",
+                     "-Xcc", "-I$env:HIDAPI_INCLUDE", "-Xswiftc", "-L$env:HIDAPI_LIB") +
+                   @(Get-Content "$env:RUNNER_TEMP\accesskit-flags.txt")
+          $dlls = @($env:SDL3_LIB, "${{ github.workspace }}\vcpkg_installed\${{ steps.triplet.outputs.lowercase }}\bin")
+          & .\Scripts\package-windows.ps1 -SwiftFlags $flags -DllDirs $dlls -Configuration release
+          if ($LASTEXITCODE) {
+            Write-Host "::warning::the release build failed (gap MG-27); packaging debug instead"
+            & .\Scripts\package-windows.ps1 -SwiftFlags $flags -DllDirs $dlls -Configuration debug
+          }
+          exit $LASTEXITCODE
+
+      - name: Launch the packaged app
+        # Moved out of the build tree, with the build tree's shaders hidden,
+        # so MetalUISDLShaders and the DLLs can come only from dist\. Still
+        # running after 8 s passes. Not run locally: over SSH the VM's
+        # session 0 cannot create a D3D12 swapchain (it got that far, plan
+        # §7), and its console session needs a logged-in user. Its first CI
+        # run (MetalUI pin 70ed000) caught AccessKit's launch panic, fixed in
+        # MetalUI by ruling WS-B (record §86, PR #54); it fails the job now.
+        run: |
+          Move-Item dist "$env:RUNNER_TEMP\smk-dist"
+          Rename-Item .build\checkouts\MetalUI\Backends\SDL\Shaders\compiled compiled.off
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\smk-dist\SMKConfigurator.exe" -WorkingDirectory $env:RUNNER_TEMP -PassThru -RedirectStandardError "$env:RUNNER_TEMP\smk-stderr.txt"
+          Start-Sleep -Seconds 8
+          Rename-Item .build\checkouts\MetalUI\Backends\SDL\Shaders\compiled.off compiled
+          if ($p.HasExited) {
+            Get-Content "$env:RUNNER_TEMP\smk-stderr.txt"
+            Write-Host "exited early with $($p.ExitCode)"; exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "still running after 8 s"

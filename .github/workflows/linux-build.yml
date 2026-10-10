@@ -1,40 +1,84 @@
 name: Linux Build
 
+# The app on Linux through MetalUI's SDL backend (cross-platform plan §4.1).
+# Everything runs inside MetalUI's own CI image (Swift 6.4, SDL 3.4.16 and
+# AccessKit on /usr, SDL_VIDEO_DRIVER=offscreen) plus one layer,
+# Scripts/ci/Dockerfile.linux (hidapi, a font family). The same two files are
+# the local check (plan §4.3), so CI and a local run cannot differ.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Install Swift
-        uses: SwiftyLab/setup-swift@latest
-        with:
-          # Must be >= Package.swift's `// swift-tools-version: 6.2` —
-          # an older toolchain can't parse the manifest and the job dies
-          # before it compiles anything.
-          swift-version: "6.2.0"
-
-      - name: Swift version
-        run: swift --version
-
-      - name: Install dependencies
+      - name: MetalUI at the pinned revision
+        # The image is MetalUI's, built from the commit Package.resolved pins,
+        # so the SDL and AccessKit the app links match the backend it builds.
+        id: metalui
         run: |
-          sudo apt update
-          sudo apt install -y clang libhidapi-dev
+          rev=$(jq -r '.pins[] | select(.identity == "metalui") | .state.revision' Package.resolved)
+          test -n "$rev" && test "$rev" != null
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          git clone --filter=blob:none https://github.com/mburger89/MetalUI "$RUNNER_TEMP/MetalUI"
+          git -C "$RUNNER_TEMP/MetalUI" checkout "$rev"
 
-      - name: Build
-        # On Linux `SMKConfigurator` is the UI-free library over Model/ and
-        # Device/ (Package.swift's `#else` branch): the app's UI is MetalUI on
-        # macOS only for now, so this job is what proves the model and device
-        # code build with no UI dependency.
-        run: swift build --target SMKConfigurator
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Test
-        # The model and device tests. The suites that import MetalUI or test
-        # view types are excluded off macOS in Package.swift.
-        run: swift test
+      - name: MetalUI's image (Swift 6.4, SDL3 from source, Mesa, AccessKit)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ runner.temp }}/MetalUI/Backends/SDL
+          file: ${{ runner.temp }}/MetalUI/Backends/SDL/linux/Dockerfile
+          tags: metalui-portable
+          load: true
+          cache-from: type=gha,scope=metalui-portable-${{ steps.metalui.outputs.rev }}
+          cache-to: type=gha,mode=max,scope=metalui-portable-${{ steps.metalui.outputs.rev }}
+
+      - name: The configurator's layer (hidapi, fonts)
+        # `--builder default` (the docker driver, which reads the local image
+        # store): setup-buildx-action made a docker-container builder current,
+        # and that builder cannot see the `metalui-portable` loaded above --
+        # `FROM metalui-portable` would pull docker.io/library/metalui-portable
+        # and fail ("pull access denied", reproduced locally with a
+        # docker-container builder).
+        run: docker buildx build --builder default --load -t smk-linux -f Scripts/ci/Dockerfile.linux Scripts/ci
+
+      - name: Build, test, UI-free build, launch
+        # - `swift build` / `swift test`: the app and every suite (the SDL
+        #   window test is env-gated and reports skipped; BinaryFormatAgreement
+        #   skips without the firmware checkout).
+        # - SMK_UI_FREE=1: Model/ and Device/ alone with MetalUI not declared
+        #   (plan §2.1), on its own scratch path.
+        # - The launch: still running after 5 s means exit 124. Startup only:
+        #   the offscreen video driver presents no frame.
+        run: |
+          docker run --rm -v "$PWD":/work -w /work smk-linux bash -ec '
+            (cd / && git config --global --add safe.directory "*")
+            swift build
+            swift test
+            SMK_UI_FREE=1 swift build --build-tests --scratch-path /tmp/ui-free
+            SMK_UI_FREE=1 swift test --scratch-path /tmp/ui-free
+            set +e; timeout 5 .build/debug/SMKConfigurator; code=$?; set -e
+            echo "launch exit $code (124 = still running)"; test "$code" -eq 124
+          '
+
+      - name: Package, and launch the moved app
+        # dist/ is laid out by Scripts/package-linux.sh, then run in a fresh
+        # container that mounts only dist/: no build tree, so the shaders and
+        # icons can come only from beside the executable (MetalUI PX-P).
+        run: |
+          docker run --rm -v "$PWD":/work -w /work smk-linux bash -ec '
+            (cd / && git config --global --add safe.directory "*")
+            bash Scripts/package-linux.sh dist
+          '
+          docker run --rm -v "$PWD/dist":/app:ro smk-linux bash -c '
+            timeout 5 /app/SMKConfigurator; code=$?
+            echo "moved launch exit $code (124 = still running)"; test "$code" -eq 124
+          '
